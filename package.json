@@ -29,7 +29,7 @@
         "@sveltejs/kit": "^2.57.0",
         "@sveltejs/mcp": "^0.1.24",
         "@sveltejs/vite-plugin-svelte": "^7.0.0",
-        "@types/node": "^22",
+        "@types/node": "^26",
         "@vitejs/plugin-basic-ssl": "^2.3.0",
         "jsdom": "^29.1.1",
         "oxfmt": "^0.51.0",
