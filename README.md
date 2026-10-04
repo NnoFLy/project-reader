@@ -27,7 +27,7 @@ An elegant, high-performance, and feature-rich offline-first web-based PDF e-rea
 ### 🔍 Spotter & Command Palette
 
 - **Unified Command Center**: Spotlight-style command palette (`Ctrl+K`) for immediate navigation and action triggering.
-- **Fuzzy Searching**: Fuzzy match search across books, sections, custom settings, and terminal commands using `fuse.js`.
+- **Fuzzy Searching**: Fuzzy match search across available books, navigation actions, and settings commands using `fuse.js`.
 - **Page-Jump Mode**: Input any number in page mode to instantly transition directly to that specific slide or page.
 
 ### 🌐 Localization (I18n)
@@ -69,20 +69,18 @@ The project features a **premium Brutalist-modern hybrid interface** with:
 ├── messages/               # Internationalization message JSONs (en, ru)
 ├── src/
 │   ├── lib/
-│   │   ├── assets/         # App icons and graphics
-│   │   ├── components/     # Reusable Svelte components (VFS UI, Modals, Headers)
-│   │   │   └── ui/         # Base UI building blocks (Buttons, Toggles, Wrappers)
-│   │   ├── stores/         # Svelte 5 reactive Runes stores (VFS, Keymaps, Settings)
-│   │   ├── styles/         # Global custom CSS and breakpoint queries
-│   │   └── pdf.ts          # Core PDF loading, cache, and outline helper class
+│   │   ├── app/            # Application shell and global command registration
+│   │   ├── modules/        # Feature modules (commands, library, PDF, prompt, settings, viewer)
+│   │   │   ├── pdf/        # PDF loading, caching, and document helpers
+│   │   │   └── viewer/      # Viewer commands, state, components, and styles
+│   │   └── shared/         # Shared state, styles, icons, actions, and UI primitives
 │   └── routes/
-│       ├── +layout.svelte  # Global settings wrapper and spotter registry
-│       ├── +page.svelte    # Home library grid dashboard and folder imports
-│       └── viewer/         # PDF Document Viewer route
-│           └── components/ # Specialized viewer panels (Canvas, Settings, Sidebar)
-├── Caddyfile               # Production reverse proxy settings
+│       ├── +layout.svelte  # Global application layout
+│       ├── +page.svelte    # Home library route
+│       └── viewer/         # PDF document viewer route
+├── Caddyfile               # Internal HTTP server and security headers
 ├── Dockerfile              # Multi-stage production container instructions
-└── docker-compose.yml      # Service dependencies definition
+└── docker-compose.yml      # Production service definition
 ```
 
 ---
@@ -147,14 +145,14 @@ pnpm run preview
 
 ## 🐳 Production deployment
 
-The multi-stage `Dockerfile` builds the static SvelteKit application with Node.js 22 and serves it with a pinned Caddy image. Caddy's site address comes from `PRODUCTION_HOST`; no production address is embedded in the image.
+The multi-stage `Dockerfile` builds the static SvelteKit application with Node.js 22 and serves it with a pinned Caddy image. The container serves HTTP on its internal port 80 and is published on host loopback port 8000; public HTTPS is provided by a host Caddy reverse proxy. No production address is embedded in the image.
 
 For a local container check:
 
 ```sh
 docker build --build-arg RELEASE=development -t project-reader:local .
 PRODUCTION_HOST=localhost DEPLOY_IMAGE=project-reader:local docker compose up --detach --wait
-curl -H 'Host: localhost' http://127.0.0.1/health/version
+curl -H 'Host: localhost' http://127.0.0.1:8000/health/version
 ```
 
 Every pull request builds the production bundle and production container without registry or deployment credentials. A successful push to protected `master` scans and publishes the exact tested image by digest, attaches provenance and an SPDX SBOM, then deploys that digest. Activation verifies the revision internally and over public HTTPS; failure restores the previous image with its own immutable Compose configuration.
@@ -165,14 +163,13 @@ Production requires the `PRODUCTION_HOST` and `PRODUCTION_URL` environment varia
 
 ## ⌨️ Essential Keyboard Shortcuts
 
-| Shortcut                    | Action                                           | Scope                     |
-| :-------------------------- | :----------------------------------------------- | :------------------------ |
-| **`Ctrl` + `K`**            | Toggle global Spotter/Command Prompt             | Application-wide          |
-| **`O`**                     | Search/open imported books                       | Application-wide          |
-| **`Shift` + `T`**           | Toggle light / dark / system theme               | Application-wide          |
-| **`Shift` + `A`**           | Toggle micro-animations                          | Application-wide          |
-| **`Shift` + `L`**           | Toggle layouts (Single, Two-Pages, Scroll)       | Application-wide / Viewer |
-| **`J`** / **`Arrow Down`**  | Smooth scroll page down                          | Viewer / Content panels   |
-| **`K`** / **`Arrow Up`**    | Smooth scroll page up                            | Viewer / Content panels   |
-| **`Shift` + `A`** (Library) | Create a new Folder                              | Home Library Screen       |
-| **`Esc`**                   | Close sidebar panels, modals, and Command Prompt | Active popup / menu       |
+| Shortcut                    | Action                                                | Scope                   |
+| :-------------------------- | :---------------------------------------------------- | :---------------------- |
+| **`Ctrl` + `K`**            | Toggle global Spotter/Command Prompt                  | Application-wide        |
+| **`O`**                     | Search/open imported books                            | Application-wide        |
+| **`Shift` + `T`**           | Toggle light / dark / system theme                    | Application-wide        |
+| **`Shift` + `L`**           | Toggle layouts (Single, Two-Pages, Scroll)            | Viewer                  |
+| **`J`** / **`Arrow Down`**  | Smooth scroll page down                               | Viewer / Content panels |
+| **`K`** / **`Arrow Up`**    | Smooth scroll page up                                 | Viewer / Content panels |
+| **`Shift` + `A`** (Library) | Create a new folder (or select all in selection mode) | Home Library Screen     |
+| **`Esc`**                   | Close sidebar panels, modals, and Command Prompt      | Active popup / menu     |

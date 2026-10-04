@@ -100,7 +100,7 @@
     "keymap_toggle_layouts": "Сменить макет",
     "keymap_zoom_out": "Уменьшить масштаб",
     "keymap_zoom_in": "Увеличить масштаб",
-    "keymap_zoom_to_fit": "Оригинальный масштаб",
+    "keymap_zoom_to_fit": "Подогнать по ширине",
     "keymap_jump_back": "Перейти назад",
     "keymap_jump_forward": "Перейти вперед",
     "keymap_open_jumplist": "Открыть список переходов",

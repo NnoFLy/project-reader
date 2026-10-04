@@ -5,7 +5,7 @@
 The repository implements these conservative defaults until maintainers deliberately change them:
 
 - a successful CI run for the current protected `master` tip deploys automatically;
-- brief downtime while the single Caddy container is recreated is acceptable, so blue/green deployment is not enabled;
+- brief downtime while the single application container is recreated is acceptable, so blue/green deployment is not enabled;
 - fixable `CRITICAL` image vulnerabilities block publication;
 - production runs with a rootless Docker daemon. The container keeps only `NET_BIND_SERVICE`; all other capabilities are dropped.
 
@@ -24,7 +24,7 @@ Create a `production` environment restricted to the `master` branch. Set:
 | Environment secret   | `DEPLOY_SSH_KEY`     | Dedicated private deployment key                                |
 | Environment secret   | `DEPLOY_KNOWN_HOSTS` | Pinned `known_hosts` entry for `DEPLOY_HOST`                    |
 
-Point the production DNS `A`/`AAAA` record at the host before the first deployment. Caddy obtains and renews the certificate automatically. `PRODUCTION_HOST` must be a DNS name; IP literals and shell metacharacters are rejected.
+Point the production DNS `A`/`AAAA` record at the host before the first deployment. Configure the host Caddy reverse proxy described below before the first public verification; it terminates HTTPS and obtains and renews the certificate. The Caddy process inside the application container has `auto_https` disabled and serves only internal HTTP. `PRODUCTION_HOST` must be a DNS name; IP literals and shell metacharacters are rejected.
 
 After `Production container check` has run on the default branch, protect `master` with a ruleset that:
 
@@ -48,21 +48,29 @@ The responses must show at least one required approval, `require_code_owner_revi
 - Linux host with current security updates
 - rootless Docker Engine 27 or newer and Compose v2.30 or newer
 - `bash`, `curl`, `flock`, `find`, `awk`, and OpenSSH
-- inbound TCP 22 from the runner path, TCP 80/443, and UDP 443
-- outbound DNS and HTTPS access for GHCR and ACME
+- a host Caddy installation managed separately from the rootless Docker daemon
+- inbound TCP 22 from the runner path and TCP 80/443 for host Caddy (allow UDP 443 if HTTP/3 is enabled)
+- outbound DNS and HTTPS access for GHCR and the host Caddy's ACME issuer
 - `/opt/project-reader` owned by the deployment user with mode `0700`
 - at least 1 GiB free after retained releases and images
 
-For rootless Docker, install it for `DEPLOY_USER`, enable lingering, and select the user's rootless Docker context. To publish ports 80 and 443 without a root daemon, configure the host deliberately:
+For rootless Docker, install it for `DEPLOY_USER`, enable lingering, and select the user's rootless Docker context. The Compose service publishes only `127.0.0.1:8000`, so it does not require permission to bind public ports:
 
 ```sh
-sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
-printf 'net.ipv4.ip_unprivileged_port_start=80\n' | \
-  sudo tee /etc/sysctl.d/99-rootless-docker-ports.conf
 sudo loginctl enable-linger DEPLOY_USER
 ```
 
-Confirm with `docker info` that the daemon is rootless. The Caddy process is container root mapped into the deployment user's subordinate UID range; named volumes remain writable without host-root ownership. The service has a read-only root filesystem, no-new-privileges, a 128 PID limit, 256 MiB memory limit, one CPU, and only `NET_BIND_SERVICE`.
+Confirm with `docker info` that the daemon is rootless. The application container serves HTTP behind the host Caddy and has a read-only root filesystem, no-new-privileges, a 128 PID limit, 256 MiB memory limit, one CPU, and only `NET_BIND_SERVICE`.
+
+Configure the host Caddy instance to proxy the public name to the loopback-only container port. For example, add this site to the host Caddy configuration (not to the repository `Caddyfile`):
+
+```caddyfile
+reader.example.org {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Replace the hostname, validate the host configuration, and reload host Caddy before deployment. Confirm that it owns TCP 80/443 and that `https://PRODUCTION_HOST/health/version` reaches the application after the container starts. The repository `Caddyfile` intentionally disables automatic HTTPS because this host instance owns public TLS.
 
 Bootstrap the top-level directory once as an administrator, then create releases as the deployment user:
 
@@ -110,15 +118,15 @@ flock --exclusive /opt/project-reader/deploy.lock bash -c 'your maintenance comm
 
 ## Backup and disaster recovery
 
-Back up Docker's rootless named volume containing Caddy `/data`; it contains ACME account and certificate state. `/config` and `/opt/project-reader/releases` should also be backed up. Never copy a live volume inconsistently: stop the stack or use a volume-aware snapshot.
+Back up the host Caddy configuration and its persistent data directory; the data directory contains the ACME account and certificate state. For packaged systemd installations this is commonly `/var/lib/caddy/.local/share/caddy`, but verify the active service's configured data directory with `systemctl cat caddy` and `caddy environ`. Also back up `/opt/project-reader/releases`. Never copy live certificate state inconsistently: stop host Caddy or use a filesystem snapshot.
 
 Recovery sequence:
 
-1. restore the Caddy data/config volumes and `/opt/project-reader/releases`;
+1. restore the host Caddy configuration/data and `/opt/project-reader/releases`;
 2. restore DNS and firewall rules;
 3. choose a retained release and pull the digest in its `image-ref` if absent;
 4. run the manual rollback commands above;
-5. verify `https://PRODUCTION_HOST/health/version` and certificate expiry;
+5. verify `https://PRODUCTION_HOST/health/version` and the host Caddy certificate expiry;
 6. verify restart recovery by recreating the service and rebooting during a maintenance window.
 
 Useful diagnostics:
