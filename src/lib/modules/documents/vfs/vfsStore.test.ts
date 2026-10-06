@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { pdfConstructed } = vi.hoisted(() => ({ pdfConstructed: vi.fn() }))
+const { pdfConstructed, pdfLoad, pdfPageCount, pdfAuthor, pdfTitle, pdfPage, pdfCanvas } =
+    vi.hoisted(() => ({
+        pdfConstructed: vi.fn(),
+        pdfLoad: vi.fn(),
+        pdfPageCount: vi.fn(),
+        pdfAuthor: vi.fn(),
+        pdfTitle: vi.fn(),
+        pdfPage: vi.fn(),
+        pdfCanvas: vi.fn(),
+    }))
 
 vi.mock("$app/environment", () => ({ browser: true }))
 vi.mock("$lib/modules/pdf", () => ({
@@ -8,8 +17,23 @@ vi.mock("$lib/modules/pdf", () => ({
         constructor() {
             pdfConstructed()
         }
-        async load() {
-            throw new Error("corrupt PDF")
+        load(...args: unknown[]) {
+            return pdfLoad(...args)
+        }
+        getPageNumber() {
+            return pdfPageCount()
+        }
+        getAuthor() {
+            return pdfAuthor()
+        }
+        getTitle() {
+            return pdfTitle()
+        }
+        getPage(pageNumber: number) {
+            return pdfPage(pageNumber)
+        }
+        getCanvasPage(page: unknown) {
+            return pdfCanvas(page)
         }
         async close() {}
     },
@@ -28,6 +52,12 @@ function handle(name: string): FileSystemFileHandle {
 
 beforeEach(() => {
     pdfConstructed.mockClear()
+    pdfLoad.mockReset().mockResolvedValue(undefined)
+    pdfPageCount.mockReset().mockResolvedValue(2)
+    pdfAuthor.mockReset().mockResolvedValue(null)
+    pdfTitle.mockReset().mockResolvedValue(null)
+    pdfPage.mockReset().mockResolvedValue({})
+    pdfCanvas.mockReset().mockResolvedValue("")
 })
 
 afterEach(() => {
@@ -61,6 +91,136 @@ describe("VFS initialization", () => {
 
         expect(store.nodes.legacy).toBeDefined()
         expect(pdfConstructed).not.toHaveBeenCalled()
+    })
+})
+
+describe("VFS initialization and import ordering", () => {
+    it("does not publish the startup snapshot after disposal", async () => {
+        let resolveFiles!: (files: never[]) => void
+        const close = vi.fn()
+        const initialNodes = {
+            existing: {
+                id: "existing",
+                name: "existing.pdf",
+                type: "file" as const,
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        }
+        const store = new VFSStore(initialNodes)
+        store.db = {
+            folders: { getAll: vi.fn(async () => []) },
+            files: {
+                getAll: () => new Promise<never[]>((resolve) => (resolveFiles = resolve)),
+            },
+            close,
+        } as never
+
+        const initializing = store.init()
+        const disposing = store.dispose()
+        resolveFiles([])
+        await Promise.all([initializing, disposing])
+
+        expect(store.nodes).toEqual(initialNodes)
+        expect(store.initialized).toBe(false)
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("does not overwrite an import that overlaps the startup read", async () => {
+        let resolveFolders!: (folders: never[]) => void
+        let resolveFiles!: (files: never[]) => void
+        const put = vi.fn(async () => undefined)
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        const store = new VFSStore()
+        store.db = {
+            folders: {
+                getAll: () => new Promise<never[]>((resolve) => (resolveFolders = resolve)),
+            },
+            files: {
+                getAll: () => new Promise<never[]>((resolve) => (resolveFiles = resolve)),
+                put,
+            },
+            fileContents: { put },
+            transaction,
+        } as never
+
+        const initializing = store.init()
+        const importing = store.importFiles(
+            [{ name: "overlap.pdf", source: handle("overlap.pdf") }],
+            null,
+        )
+        resolveFolders([])
+        resolveFiles([])
+
+        const [results] = await Promise.all([importing, initializing])
+
+        expect(results[0]).toMatchObject({ status: "imported" })
+        expect(store.nodes[results[0].id]).toMatchObject({ name: "overlap.pdf" })
+    })
+
+    it("does not let enrichment metadata commit after a relink supersedes the import", async () => {
+        pdfLoad.mockResolvedValue(undefined)
+        pdfPageCount.mockResolvedValue(4)
+        pdfAuthor.mockResolvedValue("Author")
+        pdfTitle.mockResolvedValue("Title")
+        pdfCanvas.mockResolvedValue("blob:import-preview")
+
+        let releaseUpdate!: () => void
+        let updateStarted!: () => void
+        const updateReady = new Promise<void>((resolve) => (updateStarted = resolve))
+        const updateGate = new Promise<void>((resolve) => (releaseUpdate = resolve))
+        const store = new VFSStore()
+        const put = vi.fn(async () => undefined)
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        store.db = {
+            folders: { getAll: vi.fn(async () => []) },
+            files: { getAll: vi.fn(async () => []), put },
+            fileContents: { put },
+            previews: { put: vi.fn(async () => "preview"), delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction,
+        } as never
+        const originalUpdateFile = store.updateFile.bind(store)
+        const updateFile = vi
+            .spyOn(store, "updateFile")
+            .mockImplementation(async (id, updates, preserveUpdatedAt, expectedGeneration) => {
+                if (expectedGeneration !== undefined) {
+                    updateStarted()
+                    await updateGate
+                }
+                return originalUpdateFile(id, updates, preserveUpdatedAt, expectedGeneration)
+            })
+        const savePreview = vi.spyOn(store, "savePreview").mockImplementation(async () => undefined)
+
+        const importing = store.importFiles(
+            [{ name: "overlap.pdf", source: handle("overlap.pdf") }],
+            null,
+        )
+        await updateReady
+        const id = store.importJobs[0].id
+        const relinking = store.relinkFile(id, handle("replacement.pdf"))
+        await Promise.resolve()
+        releaseUpdate()
+
+        await expect(relinking).resolves.toBeUndefined()
+        await expect(importing).resolves.toMatchObject([{ id, status: "imported" }])
+        expect(updateFile).toHaveBeenCalledWith(
+            id,
+            expect.objectContaining({ metadata: expect.objectContaining({ totalPages: 4 }) }),
+            true,
+            0,
+        )
+        expect(savePreview).toHaveBeenCalledWith(id, "blob:import-preview", true, 0, 0, 0)
+        expect(store.nodes[id]).toMatchObject({ metadata: { pageNumber: 1 } })
+        expect((store.nodes[id] as any).metadata.totalPages).toBeUndefined()
     })
 })
 
@@ -311,9 +471,1678 @@ describe("VFS metadata enrichment ownership", () => {
     })
 })
 
+describe("VFS file access persistence", () => {
+    it("retries restored access when relinking starts during persistence", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let relinkPromise: Promise<void> | undefined
+        let relinkStarted = false
+        const put = vi.fn(async () => {
+            if (!relinkStarted) {
+                relinkStarted = true
+                relinkPromise = store.relinkFile("book", handle("new-book.pdf"))
+                await Promise.resolve()
+            }
+        })
+        store.db = {
+            files: { put },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        vi.spyOn(store, "getFileUrl").mockResolvedValue("blob:old")
+        store.fileUrls.book = "blob:old"
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.restoreFileAccess("book")).resolves.toBe("blob:old")
+        await relinkPromise
+
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:old")
+    })
+
+    it("rolls back the content generation when relinking cannot read the replacement", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = { files: { put } } as never
+        const invalidations: string[] = []
+        const relinks: string[] = []
+        store.onNodeInvalidated((id) => invalidations.push(id))
+        store.onNodeRelinked((id) => relinks.push(id))
+        const failedHandle = Object.assign(handle("missing.pdf"), {
+            getFile: vi.fn(async () => {
+                throw new Error("file unavailable")
+            }),
+        })
+
+        await expect(store.relinkFile("book", failedHandle)).rejects.toThrow(
+            "Failed to retrieve file object during VFS relinking",
+        )
+
+        expect(store.getContentGeneration("book")).toBe(0)
+        expect(invalidations).toEqual([])
+        expect(relinks).toEqual([])
+        await store.updateFile("book", { metadata: { author: "Original" } }, false, 0)
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book" }))
+    })
+
+    it("does not notify a committed relink or reacquire its URL after rollback", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const transaction = vi.fn(async () => {
+            throw new Error("replacement transaction failed")
+        })
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction,
+        } as never
+        store.fileUrls.book = "blob:old"
+        ;(store as any).fileUrlOwnership.set("book", {
+            url: "blob:old",
+            viewer: 1,
+            temporary: 0,
+        })
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:candidate")
+        vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+        const relinked = vi.fn()
+        const restored = vi.fn()
+        const getFileUrl = vi.spyOn(store, "getFileUrl")
+        store.onNodeRelinked((id) => {
+            relinked(id)
+            void getFileUrl(id)
+        })
+        store.onContentRestored(restored)
+
+        await expect(store.relinkFile("book", handle("replacement.pdf"))).rejects.toThrow(
+            "replacement transaction failed",
+        )
+
+        expect(store.getContentGeneration("book")).toBe(0)
+        expect(store.fileUrls.book).toBe("blob:old")
+        expect(relinked).not.toHaveBeenCalled()
+        expect(getFileUrl).not.toHaveBeenCalled()
+        expect(restored).toHaveBeenCalledWith("book")
+    })
+
+    it("does not replace persisted content when a relink candidate is not a readable PDF", async () => {
+        pdfLoad.mockRejectedValue(new Error("corrupt replacement"))
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 3 },
+            },
+        })
+        const deletePreview = vi.fn(async () => undefined)
+        const deleteIndexedText = vi.fn(async () => undefined)
+        const put = vi.fn(async () => undefined)
+        store.db = {
+            files: { put },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: deletePreview },
+            indexedTexts: { deleteByBookId: deleteIndexedText },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        const invalidations: string[] = []
+        store.onNodeInvalidated((id) => invalidations.push(id))
+
+        await expect(store.relinkFile("book", handle("replacement.pdf"))).rejects.toThrow(
+            "corrupt replacement",
+        )
+
+        expect(store.nodes.book).toMatchObject({ size: 10, metadata: { pageNumber: 3 } })
+        expect(store.getContentGeneration("book")).toBe(0)
+        expect(invalidations).toEqual([])
+        expect(put).not.toHaveBeenCalled()
+        expect(deletePreview).not.toHaveBeenCalled()
+        expect(deleteIndexedText).not.toHaveBeenCalled()
+    })
+
+    it("detects a relink handle without reading an undefined global File", async () => {
+        vi.stubGlobal("File", undefined)
+        const fileHandle = Object.assign(handle("replacement.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+
+        await expect(store.relinkFile("book", fileHandle)).resolves.toBeUndefined()
+        expect(fileHandle.getFile).toHaveBeenCalledOnce()
+    })
+
+    it("persists a relinked handle as locked until permission is restored", async () => {
+        const fileHandle = Object.assign(handle("replacement.pdf"), {
+            queryPermission: vi.fn(async () => "prompt"),
+            requestPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = {
+            files: { put },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+
+        await store.relinkFile("book", fileHandle)
+
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: true }))
+        expect(store.nodes.book).toMatchObject({ isLocked: true })
+        expect(store.isLockedMap.book).toBe(true)
+    })
+
+    it("revalidates permission instead of trusting a temporary cached URL", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "denied"),
+            requestPermission: vi.fn(async () => "denied"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        const put = vi.fn(async () => undefined)
+        store.db = { files: { put }, fileContents: { get: vi.fn() } } as never
+        store.fileUrls.book = "blob:temporary"
+        ;(store as any).fileUrlOwnership.set("book", {
+            url: "blob:temporary",
+            viewer: 0,
+            temporary: 1,
+        })
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.restoreFileAccess("book")).rejects.toThrow(
+            "Failed to restore file access",
+        )
+
+        expect(fileHandle.queryPermission).toHaveBeenCalledWith({ mode: "read" })
+        expect(fileHandle.requestPermission).toHaveBeenCalledWith({ mode: "read" })
+        expect(put).not.toHaveBeenCalledWith(expect.objectContaining({ isLocked: false }))
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+        expect(store.fileUrls.book).toBe("blob:temporary")
+    })
+
+    it("revokes the restore URL when final unlocked persistence fails", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        const put = vi
+            .fn()
+            .mockResolvedValueOnce("book")
+            .mockRejectedValueOnce(new Error("final persistence failed"))
+        store.db = { files: { put } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:restore")
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.restoreFileAccess("book")).rejects.toThrow("final persistence failed")
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:restore")
+        expect(store.fileUrls.book).toBeUndefined()
+    })
+
+    it("releases only restore ownership when persistence fails for a shared URL", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        vi.spyOn(store, "getFileUrl").mockResolvedValue("blob:shared")
+        store.fileUrls.book = "blob:shared"
+        ;(store as any).fileUrlOwnership.set("book", {
+            url: "blob:shared",
+            viewer: 1,
+            temporary: 1,
+        })
+        store.db = {
+            files: { put: vi.fn().mockRejectedValue(new Error("final persistence failed")) },
+        } as never
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.restoreFileAccess("book")).rejects.toThrow("final persistence failed")
+
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+        expect(store.fileUrls.book).toBe("blob:shared")
+        expect((store as any).fileUrlOwnership.get("book")).toMatchObject({
+            viewer: 0,
+            temporary: 1,
+        })
+    })
+
+    it("keeps a concurrent restore lease after its sibling fails", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        vi.spyOn(store, "getFileUrl").mockResolvedValue("blob:shared")
+        store.fileUrls.book = "blob:shared"
+        ;(store as any).fileUrlOwnership.set("book", {
+            url: "blob:shared",
+            viewer: 2,
+            temporary: 0,
+        })
+        const put = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("one restore failed"))
+            .mockResolvedValueOnce("book")
+        store.db = { files: { put } } as never
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        const first = store.restoreFileAccess("book")
+        const second = store.restoreFileAccess("book")
+        await expect(first).rejects.toThrow("one restore failed")
+        await expect(second).resolves.toBe("blob:shared")
+
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+        expect((store as any).fileUrlOwnership.get("book")).toMatchObject({ viewer: 1 })
+    })
+
+    it("persists a restored handle as unlocked", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "prompt"),
+            requestPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = {
+            files: { put },
+            fileContents: {
+                get: vi.fn(async () => ({ id: "book", handle: fileHandle })),
+            },
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:book")
+
+        await store.restoreFileAccess("book")
+
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: false }))
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+        expect(store.isLockedMap.book).toBe(false)
+    })
+
+    it("persists successful lazy handle access as unlocked", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = {
+            files: { put },
+            fileContents: {
+                get: vi.fn(async () => ({ id: "book", handle: fileHandle })),
+            },
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:book")
+
+        await expect(store.getFileUrl("book")).resolves.toBe("blob:book")
+
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: false }))
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+        expect(store.isLockedMap.book).toBe(false)
+    })
+
+    it("deduplicates concurrent file URL creation for one content generation", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolveContent!: (content: { id: string; file: Blob }) => void
+        const getContent = vi.fn(
+            () =>
+                new Promise<{ id: string; file: Blob }>((resolve) => {
+                    resolveContent = resolve
+                }),
+        )
+        store.db = {
+            fileContents: { get: getContent },
+            files: { put: vi.fn(async () => undefined) },
+        } as never
+        const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:file")
+
+        const first = store.getFileUrl("book")
+        const second = store.getFileUrl("book")
+        resolveContent({ id: "book", file: new Blob(["pdf"]) })
+
+        await expect(Promise.all([first, second])).resolves.toEqual(["blob:file", "blob:file"])
+        expect(getContent).toHaveBeenCalledOnce()
+        expect(createObjectURL).toHaveBeenCalledOnce()
+    })
+
+    it("keeps unlocked persistence valid for concurrent deduplicated access", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(async () => new Blob(["pdf"], { type: "application/pdf" })),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        const put = vi.fn(async () => undefined)
+        store.db = { files: { put } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:book")
+
+        const first = store.getFileUrl("book")
+        const second = store.getFileUrl("book")
+
+        await expect(Promise.all([first, second])).resolves.toEqual(["blob:book", "blob:book"])
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: false }))
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+    })
+
+    it("retries an access read that is superseded by a successful relink", async () => {
+        let resolveOldFile!: (file: Blob) => void
+        const oldHandle = Object.assign(handle("old.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(
+                () =>
+                    new Promise<Blob>((resolve) => {
+                        resolveOldFile = resolve
+                    }),
+            ),
+        })
+        const replacementHandle = Object.assign(handle("replacement.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", oldHandle)
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        const createObjectURL = vi
+            .spyOn(URL, "createObjectURL")
+            .mockReturnValueOnce("blob:candidate")
+            .mockReturnValueOnce("blob:new")
+
+        const access = store.getFileUrl("book")
+        await vi.waitFor(() => expect(oldHandle.getFile).toHaveBeenCalledOnce())
+
+        await store.relinkFile("book", replacementHandle)
+        resolveOldFile(new Blob(["old"], { type: "application/pdf" }))
+
+        await expect(access).resolves.toBe("blob:new")
+        expect(createObjectURL).toHaveBeenCalledTimes(2)
+        expect(replacementHandle.queryPermission).toHaveBeenCalledOnce()
+    })
+
+    it("retries an old-handle read after validation-only relink failure", async () => {
+        let resolveOldFile!: (file: Blob) => void
+        const oldHandle = Object.assign(handle("old.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi
+                .fn()
+                .mockImplementationOnce(
+                    () => new Promise<Blob>((resolve) => (resolveOldFile = resolve)),
+                )
+                .mockResolvedValue(new Blob(["old"], { type: "application/pdf" })),
+        })
+        const failedHandle = Object.assign(handle("replacement.pdf"), {
+            getFile: vi.fn(async () => {
+                throw new Error("replacement unavailable")
+            }),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", oldHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:old")
+
+        const access = store.getFileUrl("book")
+        await vi.waitFor(() => expect(oldHandle.getFile).toHaveBeenCalledOnce())
+        await expect(store.relinkFile("book", failedHandle)).rejects.toThrow(
+            "Failed to retrieve file object",
+        )
+        resolveOldFile(new Blob(["old"], { type: "application/pdf" }))
+
+        await expect(access).resolves.toBe("blob:old")
+        expect(oldHandle.getFile).toHaveBeenCalledTimes(2)
+    })
+
+    it("reuses the current URL when permission escalation duplicates a read", async () => {
+        let resolveFirstQuery!: (status: PermissionState) => void
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi
+                .fn()
+                .mockImplementationOnce(
+                    () =>
+                        new Promise<PermissionState>((resolve) => {
+                            resolveFirstQuery = resolve
+                        }),
+                )
+                .mockResolvedValue("granted"),
+            getFile: vi.fn(async () => new Blob(["pdf"])),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        const createObjectURL = vi
+            .spyOn(URL, "createObjectURL")
+            .mockReturnValueOnce("blob:first")
+            .mockReturnValueOnce("blob:extra")
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        const normal = store.getFileUrl("book")
+        await Promise.resolve()
+        const escalated = store.getFileUrl("book", true)
+        resolveFirstQuery("granted")
+
+        await expect(Promise.all([normal, escalated])).resolves.toEqual([
+            "blob:first",
+            "blob:first",
+        ])
+        expect(createObjectURL).toHaveBeenCalledTimes(2)
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:extra")
+        expect(store.fileUrls.book).toBe("blob:first")
+    })
+
+    it("emits one relink notification after overlapping relinks settle", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolveFirst!: (file: Blob) => void
+        let calls = 0
+        const firstHandle = handle("first.pdf")
+        firstHandle.getFile = vi.fn(
+            () =>
+                new Promise<File>((resolve) => {
+                    resolveFirst = (file) => resolve(file as File)
+                }),
+        )
+        const transaction = vi.fn(async (_mode, _tables, callback) => callback())
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction,
+        } as never
+        store.onNodeRelinked(() => calls++)
+
+        const firstRelink = store.relinkFile("book", firstHandle)
+        await Promise.resolve()
+        await store.relinkFile("book", handle("second.pdf"))
+        expect(calls).toBe(0)
+
+        resolveFirst(new Blob(["first"]))
+        await expect(firstRelink).rejects.toMatchObject({ name: "ContentSupersededError" })
+        expect(calls).toBe(1)
+        expect(transaction).toHaveBeenCalledOnce()
+    })
+
+    it("blocks an older relink after a newer relink fails", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolveFirst!: (file: File) => void
+        const firstHandle = handle("first.pdf")
+        firstHandle.getFile = vi.fn(
+            () =>
+                new Promise<File>((resolve) => {
+                    resolveFirst = resolve
+                }),
+        )
+        const failedHandle = handle("failed.pdf")
+        failedHandle.getFile = vi.fn(async () => {
+            throw new Error("replacement unavailable")
+        })
+        const transaction = vi.fn(async (_mode, _tables, callback) => callback())
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction,
+        } as never
+
+        const firstRelink = store.relinkFile("book", firstHandle)
+        await Promise.resolve()
+        await expect(store.relinkFile("book", failedHandle)).rejects.toThrow(
+            "Failed to retrieve file object",
+        )
+        resolveFirst(new Blob(["first"]) as File)
+
+        await expect(firstRelink).rejects.toMatchObject({ name: "ContentSupersededError" })
+        expect(transaction).not.toHaveBeenCalled()
+        expect(store.nodes.book).toMatchObject({ name: "book.pdf", metadata: { pageNumber: 1 } })
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("does not let preview invalidation cancel file restoration", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = {
+            previews: { delete: vi.fn(async () => undefined) },
+            files: { put: vi.fn(async () => undefined) },
+        } as never
+        vi.spyOn(store, "getFileUrl").mockResolvedValue("blob:restored")
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:unused")
+
+        const restoring = store.restoreFileAccess("book")
+        await store.invalidatePreview("book")
+
+        await expect(restoring).resolves.toBe("blob:restored")
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+    })
+
+    it("restores generation state when a deletion transaction fails", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const transaction = vi.fn(async () => {
+            throw new Error("transaction failed")
+        })
+        store.db = { transaction } as never
+        const invalidations: string[] = []
+        const deletionStarts: string[][] = []
+        store.onNodeInvalidated((id) => invalidations.push(id))
+        store.onNodesDeleting((ids) => deletionStarts.push(ids))
+        const generation = store.getContentGeneration("book")
+
+        await expect(store.deleteNode("book")).rejects.toThrow("transaction failed")
+
+        expect(store.nodes.book).toBeDefined()
+        expect(store.getContentGeneration("book")).toBe(generation)
+        expect(invalidations).toEqual(["book", "book"])
+        expect(deletionStarts).toEqual([])
+    })
+
+    it("does not notify content restoration after disposal interrupts deletion rollback", async () => {
+        let releaseTransaction!: () => void
+        const transaction = vi.fn(
+            () =>
+                new Promise<never>((_, reject) => {
+                    releaseTransaction = () => reject(new Error("transaction failed"))
+                }),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const restored = vi.fn()
+        store.onContentRestored(restored)
+        store.db = { transaction, close: vi.fn() } as never
+
+        const deletion = store.deleteNode("book")
+        await vi.waitFor(() => expect(transaction).toHaveBeenCalledOnce())
+        const disposal = store.dispose()
+        releaseTransaction()
+
+        await expect(deletion).rejects.toThrow("transaction failed")
+        await disposal
+        expect(restored).not.toHaveBeenCalled()
+    })
+
+    it("keeps a committed deletion after disposal wins the settlement race", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = {
+            transaction: vi.fn(() => {
+                queueMicrotask(() => void store.dispose())
+                return Promise.resolve()
+            }),
+            close: vi.fn(),
+        } as never
+
+        await expect(store.deleteNode("book")).resolves.toBeUndefined()
+        expect(store.nodes.book).toBeUndefined()
+        expect(store.isNodeDeleting("book")).toBe(false)
+    })
+
+    it("finishes in-memory deletion when disposal follows a committed transaction", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { transaction: vi.fn(async () => undefined), close: vi.fn() } as never
+        store.onNodesDeleting(() => void store.dispose())
+
+        await expect(store.deleteNode("book")).resolves.toBeUndefined()
+        expect(store.nodes.book).toBeUndefined()
+        expect(store.isNodeDeleting("book")).toBe(false)
+    })
+
+    it("retries a pending access request after a failed deletion restores the node", async () => {
+        let resolveFile!: (file: Blob) => void
+        let firstRead = true
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(() => {
+                if (!firstRead) return Promise.resolve(new Blob(["pdf"]))
+                return new Promise<Blob>((resolve) => (resolveFile = resolve))
+            }),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = {
+            transaction: vi.fn(async () => {
+                throw new Error("delete failed")
+            }),
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:restored")
+
+        const access = store.getFileUrl("book")
+        await vi.waitFor(() => expect(fileHandle.getFile).toHaveBeenCalledOnce())
+        await expect(store.deleteNode("book")).rejects.toThrow("delete failed")
+        firstRead = false
+        resolveFile(new Blob(["pdf"], { type: "application/pdf" }))
+
+        await expect(access).resolves.toBe("blob:restored")
+        expect(store.nodes.book).toBeDefined()
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("waits for deletion settlement and stops when deletion commits", async () => {
+        let releaseDeletion!: () => void
+        const transaction = vi.fn(() => new Promise<void>((resolve) => (releaseDeletion = resolve)))
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { transaction } as never
+
+        const deletion = store.deleteNode("book")
+        await vi.waitFor(() => expect(transaction).toHaveBeenCalledOnce())
+        const restoring = store.restoreFileAccess("book")
+        await Promise.resolve()
+        expect(await Promise.race([restoring, Promise.resolve("pending")])).toBe("pending")
+
+        releaseDeletion()
+        await expect(deletion).resolves.toBeUndefined()
+        await expect(restoring).resolves.toBe("")
+        expect(store.nodes.book).toBeUndefined()
+        expect(store.isNodeDeleting("book")).toBe(false)
+    })
+
+    it("retries restoration after deletion rollback", async () => {
+        let rejectDeletion!: (error: Error) => void
+        const transaction = vi.fn(
+            () => new Promise<void>((_resolve, reject) => (rejectDeletion = reject)),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { transaction, files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(store, "getFileUrl").mockResolvedValue("blob:restored")
+        const restoring = store.restoreFileAccess("book")
+        const deletion = store.deleteNode("book")
+        await vi.waitFor(() => expect(transaction).toHaveBeenCalledOnce())
+        rejectDeletion(new Error("delete failed"))
+
+        await expect(deletion).rejects.toThrow("delete failed")
+        await expect(restoring).resolves.toBe("blob:restored")
+        expect(store.nodes.book).toBeDefined()
+        expect(store.isNodeDeleting("book")).toBe(false)
+    })
+
+    it("isolates deletion listener failures and still completes cleanup", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { transaction: vi.fn(async () => undefined) } as never
+        const started = vi.fn(() => {
+            throw new Error("starting listener failed")
+        })
+        const completed = vi.fn(() => {
+            throw new Error("completed listener failed")
+        })
+        const completedSecond = vi.fn()
+        store.onNodesDeleting(started)
+        store.onNodesDeleted(completed)
+        store.onNodesDeleted(completedSecond)
+        vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        await expect(store.deleteNode("book")).resolves.toBeUndefined()
+
+        expect(store.nodes.book).toBeUndefined()
+        expect(store.isNodeDeleting("book")).toBe(false)
+        expect(completedSecond).toHaveBeenCalledWith(["book"])
+    })
+
+    it("isolates a throwing relink listener from later listeners", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        const error = new Error("listener failed")
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+        let laterCalls = 0
+        store.onNodeRelinked(() => {
+            throw error
+        })
+        store.onNodeRelinked(() => {
+            laterCalls++
+        })
+
+        await store.relinkFile("book", handle("replacement.pdf"))
+
+        expect(laterCalls).toBe(1)
+        expect(consoleError).toHaveBeenCalledWith("VFS node relinked listener failed:", error)
+    })
+
+    it("notifies relink listeners after the relinking guard is cleared", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:relinked")
+        let listenerUrlPromise: Promise<string> | undefined
+        store.onNodeRelinked((id) => {
+            listenerUrlPromise = store.getFileUrl(id)
+        })
+
+        await store.relinkFile("book", fileHandle)
+
+        await expect(listenerUrlPromise).resolves.toBe("blob:relinked")
+        expect(store.fileUrls.book).toBe("blob:relinked")
+    })
+
+    it("does not republish a pending handle read after deletion", async () => {
+        let resolveFile!: (file: Blob) => void
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(
+                () =>
+                    new Promise<Blob>((resolve) => {
+                        resolveFile = resolve
+                    }),
+            ),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = {
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+            files: { bulkDelete: vi.fn(async () => undefined) },
+            folders: { bulkDelete: vi.fn(async () => undefined) },
+            previews: { bulkDelete: vi.fn(async () => undefined) },
+            fileContents: { bulkDelete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            userNotes: { deleteByBookId: vi.fn(async () => undefined) },
+            bookmarks: { deleteByBookId: vi.fn(async () => undefined) },
+        } as never
+        const createObjectURL = vi.spyOn(URL, "createObjectURL")
+        const pending = store.getFileUrl("book")
+        await Promise.resolve()
+        await store.deleteNode("book")
+        resolveFile(new Blob(["pdf"], { type: "application/pdf" }))
+
+        await expect(pending).resolves.toBe("")
+        expect(createObjectURL).not.toHaveBeenCalled()
+        await expect(store.getFileUrl("book")).resolves.toBe("")
+        expect(store.getContentGeneration("book")).toBe(1)
+    })
+
+    it("retries a pending old read after replacement validation fails before invalidation", async () => {
+        let resolveOldFile!: (file: Blob) => void
+        let rejectReplacement!: (error: Error) => void
+        let firstRead = true
+        const oldHandle = Object.assign(handle("old.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(() => {
+                if (!firstRead) return Promise.resolve(new Blob(["old"]))
+                firstRead = false
+                return new Promise<Blob>((resolve) => {
+                    resolveOldFile = resolve
+                })
+            }),
+        })
+        const failedHandle = Object.assign(handle("missing.pdf"), {
+            getFile: vi.fn(
+                () =>
+                    new Promise<Blob>((_resolve, reject) => {
+                        rejectReplacement = reject
+                    }),
+            ),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", oldHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:old")
+
+        const access = store.getFileUrl("book")
+        await vi.waitFor(() => expect(oldHandle.getFile).toHaveBeenCalledOnce())
+        const relinking = store.relinkFile("book", failedHandle)
+        await vi.waitFor(() => expect(failedHandle.getFile).toHaveBeenCalledOnce())
+        rejectReplacement(new Error("replacement unavailable"))
+        resolveOldFile(new Blob(["old"], { type: "application/pdf" }))
+
+        await expect(relinking).rejects.toThrow("Failed to retrieve file object")
+        await expect(access).resolves.toBe("blob:old")
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("retries restoration after a failed relink rolls its generation back", async () => {
+        const oldHandle = Object.assign(handle("old.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        let rejectReplacement!: (error: Error) => void
+        const failedHandle = Object.assign(handle("missing.pdf"), {
+            getFile: vi.fn(
+                () =>
+                    new Promise<Blob>((_resolve, reject) => {
+                        rejectReplacement = reject
+                    }),
+            ),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", oldHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:restored")
+
+        const relinking = store.relinkFile("book", failedHandle)
+        await Promise.resolve()
+        const restoring = store.restoreFileAccess("book")
+        rejectReplacement(new Error("replacement unavailable"))
+
+        await expect(relinking).rejects.toThrow("Failed to retrieve file object")
+        await expect(restoring).resolves.toBe("blob:restored")
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("retries a pre-existing access request after a relink fails after invalidation", async () => {
+        let resolveOldFile!: (file: Blob) => void
+        let firstRead = true
+        const oldHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(() => {
+                if (!firstRead)
+                    return Promise.resolve(new Blob(["old"], { type: "application/pdf" }))
+                return new Promise<Blob>((resolve) => {
+                    resolveOldFile = resolve
+                })
+            }),
+        })
+        const replacementHandle = handle("replacement.pdf")
+        const put = vi.fn(async () => undefined)
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", oldHandle)
+        store.db = {
+            files: { put },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(
+                async (_mode: unknown, _tables: unknown, callback: () => unknown) => {
+                    await callback()
+                    throw new Error("replacement persistence failed")
+                },
+            ),
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:restored")
+
+        const access = store.getFileUrl("book")
+        await vi.waitFor(() => expect(oldHandle.getFile).toHaveBeenCalledOnce())
+        const relinking = store.relinkFile("book", replacementHandle)
+        const relinkingFailure = relinking.catch((error: unknown) => error)
+        await vi.waitFor(() => expect(put).toHaveBeenCalled())
+        await expect(relinkingFailure).resolves.toMatchObject({
+            message: "replacement persistence failed",
+        })
+        firstRead = false
+        resolveOldFile(new Blob(["old"], { type: "application/pdf" }))
+
+        await expect(access).resolves.toBe("blob:restored")
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("restores the original state when an older invalidated relink is superseded by failed validation", async () => {
+        let releasePut!: () => void
+        let putStarted!: () => void
+        const putReady = new Promise<void>((resolve) => (putStarted = resolve))
+        const putGate = new Promise<void>((resolve) => (releasePut = resolve))
+        const put = vi.fn(async () => {
+            putStarted()
+            await putGate
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = {
+            files: { put },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: { delete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        } as never
+
+        const older = store.relinkFile("book", handle("older.pdf"))
+        await putReady
+        const newer = store.relinkFile(
+            "book",
+            Object.assign(handle("missing.pdf"), {
+                getFile: vi.fn(async () => {
+                    throw new Error("replacement unavailable")
+                }),
+            }),
+        )
+        await expect(newer).rejects.toThrow("Failed to retrieve file object")
+        releasePut()
+        await expect(older).rejects.toThrow("Relink was superseded")
+        expect(store.getContentGeneration("book")).toBe(0)
+    })
+
+    it("does not retain a failed lock state after a relink invalidates access", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "denied"),
+        })
+        let resolvePut!: () => void
+        const put = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolvePut = resolve
+                }),
+        )
+        const failedHandle = Object.assign(handle("missing.pdf"), {
+            getFile: vi.fn(async () => {
+                throw new Error("replacement unavailable")
+            }),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put } } as never
+
+        const access = store.getFileUrl("book")
+        await Promise.resolve()
+        const relinking = store.relinkFile("book", failedHandle)
+        await expect(relinking).rejects.toThrow("Failed to retrieve file object")
+        resolvePut()
+
+        await expect(access).resolves.toBe("")
+        expect(store.isLockedMap.book).not.toBe(true)
+        expect((store.nodes.book as any).isLocked).toBeUndefined()
+    })
+
+    it("reports denied permission as an access failure, not superseded content", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "denied"),
+            requestPermission: vi.fn(async () => "denied"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+
+        await expect(store.restoreFileAccess("book")).rejects.toMatchObject({
+            name: "Error",
+            message: "Failed to restore file access",
+        })
+        expect(fileHandle.requestPermission).toHaveBeenCalledOnce()
+    })
+
+    it("persists a lock after a successful access URL is revoked and permission is later denied", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi
+                .fn()
+                .mockResolvedValueOnce("granted")
+                .mockResolvedValueOnce("denied"),
+            requestPermission: vi.fn(async () => "denied"),
+        })
+        const put = vi.fn(async () => undefined)
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:book")
+
+        await expect(store.getFileUrl("book", true)).resolves.toBe("blob:book")
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+        expect(store.revokeFileUrl("book")).toBe(true)
+
+        await expect(store.getFileUrl("book", true)).resolves.toBe("")
+        expect(put).toHaveBeenLastCalledWith(expect.objectContaining({ isLocked: true }))
+        expect(store.nodes.book).toMatchObject({ isLocked: true })
+        expect(store.isLockedMap.book).toBe(true)
+    })
+
+    it("does not publish an unlocked node when access persistence fails", async () => {
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+        })
+        const put = vi.fn(async () => {
+            throw new Error("disk full")
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:book")
+        vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        await expect(store.getFileUrl("book", true)).resolves.toBe("blob:book")
+        expect(store.nodes.book).toMatchObject({ isLocked: true })
+        expect(store.isLockedMap.book).not.toBe(false)
+    })
+
+    it("allows an escalated request to proceed past a pending non-escalated request", async () => {
+        let resolveFirstQuery!: (status: PermissionState) => void
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi
+                .fn()
+                .mockImplementationOnce(
+                    () =>
+                        new Promise<PermissionState>((resolve) => {
+                            resolveFirstQuery = resolve
+                        }),
+                )
+                .mockResolvedValue("prompt"),
+            requestPermission: vi.fn(async () => "granted"),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:escalated")
+
+        const normal = store.getFileUrl("book")
+        await Promise.resolve()
+        const escalated = store.getFileUrl("book", true)
+        resolveFirstQuery("prompt")
+
+        await expect(escalated).resolves.toBe("blob:escalated")
+        await expect(normal).resolves.toBe("")
+        expect(store.fileUrls.book).toBe("blob:escalated")
+        expect(store.nodes.book).toMatchObject({ isLocked: false })
+        expect(fileHandle.requestPermission).toHaveBeenCalledOnce()
+    })
+
+    it("does not hang disposal on an uncancellable permission prompt", async () => {
+        let queryStarted!: () => void
+        const queryReady = new Promise<void>((resolve) => (queryStarted = resolve))
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(() => {
+                queryStarted()
+                return new Promise<PermissionState>(() => undefined)
+            }),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        const close = vi.fn()
+        store.db = { close } as never
+
+        const access = store.getFileUrl("book")
+        await queryReady
+        await expect(store.dispose()).resolves.toBeUndefined()
+        await expect(access).resolves.toBe("")
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("does not publish URLs after disposal", async () => {
+        let resolveFile!: (file: Blob) => void
+        const fileHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile: vi.fn(
+                () =>
+                    new Promise<Blob>((resolve) => {
+                        resolveFile = resolve
+                    }),
+            ),
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeHandles.set("book", fileHandle)
+        ;(store as any).importSources.set("book", fileHandle)
+        store.onNodeRelinked(() => undefined)
+        store.db = { close: vi.fn(), files: { put: vi.fn(async () => undefined) } } as never
+        const createObjectURL = vi.spyOn(URL, "createObjectURL")
+        const pending = store.getFileUrl("book")
+        await Promise.resolve()
+        const disposing = store.dispose()
+        resolveFile(new Blob(["pdf"]))
+        await disposing
+
+        await expect(pending).resolves.toBe("")
+        expect(createObjectURL).not.toHaveBeenCalled()
+        expect(store.fileUrls).toEqual({})
+        expect((store as any).nativeHandles.size).toBe(0)
+        expect((store as any).importSources.size).toBe(0)
+        expect((store as any).nodeRelinkedListeners.size).toBe(0)
+    })
+})
+
 describe("VFS preview ownership", () => {
+    it("waits for relinking before reading a preview", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const getPreview = vi.fn(async () => ({ id: "book", data: new Blob(["preview"]) }))
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            previews: {
+                get: getPreview,
+                delete: vi.fn(async () => undefined),
+            },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview")
+
+        const relinking = store.relinkFile("book", handle("new-book.pdf"))
+        const preview = store.getPreviewUrl("book")
+
+        await relinking
+        await expect(preview).resolves.toBe("blob:preview")
+        expect(getPreview).toHaveBeenCalledTimes(2)
+    })
+
     it("deduplicates concurrent cache reads and retains the URL until the last release", async () => {
-        const store = new VFSStore()
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
         let resolvePreview!: (value: { id: string; data: Blob }) => void
         const get = vi.fn(
             () =>
@@ -340,6 +2169,408 @@ describe("VFS preview ownership", () => {
         expect(revokeObjectURL).not.toHaveBeenCalled()
         store.revokePreviewUrl("book")
         expect(revokeObjectURL).toHaveBeenCalledWith("blob:preview")
+    })
+
+    it("waits for active preview invalidation before reusing a cached URL", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let releaseDelete!: () => void
+        const deletePreview = vi.fn(() => new Promise<void>((resolve) => (releaseDelete = resolve)))
+        const getPreview = vi.fn(async () => ({ id: "book", data: new Blob(["fresh"]) }))
+        store.previewUrls.book = "blob:stale"
+        store.db = { previews: { delete: deletePreview, get: getPreview } } as never
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fresh")
+
+        const invalidation = store.invalidatePreview("book")
+        await vi.waitFor(() => expect(deletePreview).toHaveBeenCalledOnce())
+        const fresh = store.getPreviewUrl("book")
+        await Promise.resolve()
+        expect(getPreview).not.toHaveBeenCalled()
+
+        releaseDelete()
+        await invalidation
+        await expect(fresh).resolves.toBe("blob:fresh")
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:stale")
+        expect(getPreview).toHaveBeenCalledOnce()
+    })
+
+    it("starts a fresh preview request after successful invalidation", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolveFirst!: (value: { id: string; data: Blob }) => void
+        let resolveSecond!: (value: { id: string; data: Blob }) => void
+        const get = vi
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<{ id: string; data: Blob }>((resolve) => {
+                        resolveFirst = resolve
+                    }),
+            )
+            .mockImplementationOnce(
+                () =>
+                    new Promise<{ id: string; data: Blob }>((resolve) => {
+                        resolveSecond = resolve
+                    }),
+            )
+        store.db = {
+            previews: {
+                get,
+                delete: vi.fn(async () => undefined),
+            },
+        } as never
+        const createObjectURL = vi
+            .spyOn(URL, "createObjectURL")
+            .mockReturnValueOnce("blob:first")
+            .mockReturnValueOnce("blob:second")
+
+        const first = store.getPreviewUrl("book")
+        await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
+        await store.invalidatePreview("book")
+        const second = store.getPreviewUrl("book")
+        await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+
+        resolveFirst({ id: "book", data: new Blob(["first"]) })
+        resolveSecond({ id: "book", data: new Blob(["second"]) })
+
+        await expect(first).resolves.toBe("")
+        await expect(second).resolves.toBe("blob:second")
+        expect(createObjectURL).toHaveBeenCalledTimes(2)
+    })
+
+    it("does not publish preview state when disposal interrupts invalidation persistence", async () => {
+        let releaseDelete!: () => void
+        const deletePreview = vi.fn(() => new Promise<void>((resolve) => (releaseDelete = resolve)))
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.previewUrls.book = "blob:cached"
+        store.db = { previews: { delete: deletePreview }, close: vi.fn() } as never
+        const invalidated = vi.fn()
+        store.onNodeInvalidated(invalidated)
+
+        const invalidation = store.invalidatePreview("book")
+        await vi.waitFor(() => expect(deletePreview).toHaveBeenCalledOnce())
+        const disposing = store.dispose()
+        releaseDelete()
+
+        await expect(invalidation).rejects.toMatchObject({ name: "VFSDisposedError" })
+        await disposing
+        expect(store.previewUrls).toEqual({})
+        expect(invalidated).not.toHaveBeenCalled()
+    })
+
+    it("rolls back preview invalidation when persistence fails", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.previewUrls.book = "blob:cached"
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+        store.db = {
+            previews: {
+                delete: vi.fn(async () => {
+                    throw new Error("delete failed")
+                }),
+            },
+        } as never
+
+        await expect(store.invalidatePreview("book")).rejects.toThrow("delete failed")
+        await expect(store.getPreviewUrl("book")).resolves.toBe("blob:cached")
+        expect(store.previewUrls.book).toBe("blob:cached")
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+    })
+
+    it("reuses an in-flight preview request when invalidation rolls back", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolvePreview!: (value: { id: string; data: Blob }) => void
+        const get = vi.fn(
+            () =>
+                new Promise<{ id: string; data: Blob }>((resolve) => {
+                    resolvePreview = resolve
+                }),
+        )
+        store.db = {
+            previews: {
+                get,
+                delete: vi.fn(async () => {
+                    throw new Error("delete failed")
+                }),
+            },
+        } as never
+        const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview")
+
+        const first = store.getPreviewUrl("book")
+        await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
+        await expect(store.invalidatePreview("book")).rejects.toThrow("delete failed")
+        resolvePreview({ id: "book", data: new Blob(["preview"]) })
+
+        await expect(first).resolves.toBe("blob:preview")
+        await expect(store.getPreviewUrl("book")).resolves.toBe("blob:preview")
+        expect(get).toHaveBeenCalledOnce()
+        expect(createObjectURL).toHaveBeenCalledOnce()
+    })
+
+    it("restores the exact preview state when concurrent invalidations both fail", async () => {
+        let resolvePreview!: (value: { id: string; data: Blob }) => void
+        const get = vi.fn(
+            () =>
+                new Promise<{ id: string; data: Blob }>((resolve) => {
+                    resolvePreview = resolve
+                }),
+        )
+        const deletePreview = vi.fn(async () => {
+            throw new Error("delete failed")
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { previews: { get, delete: deletePreview } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview")
+
+        const request = store.getPreviewUrl("book")
+        await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
+        const first = store.invalidatePreview("book")
+        const second = store.invalidatePreview("book")
+        await expect(first).rejects.toThrow("delete failed")
+        await expect(second).rejects.toThrow("delete failed")
+        resolvePreview({ id: "book", data: new Blob(["preview"]) })
+
+        await expect(request).resolves.toBe("blob:preview")
+        expect(deletePreview).toHaveBeenCalledTimes(2)
+        expect((store as any).previewGenerations.get("book")).toBe(0)
+        expect((store as any).previewRequestVersions.get("book")).toBe(0)
+    })
+
+    it("does not republish a preview request invalidated by a failed delete", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        let resolveFirst!: (value: { id: string; data: Blob }) => void
+        let resolveSecond!: (value: { id: string; data: Blob }) => void
+        const get = vi
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<{ id: string; data: Blob }>((resolve) => {
+                        resolveFirst = resolve
+                    }),
+            )
+            .mockImplementationOnce(
+                () =>
+                    new Promise<{ id: string; data: Blob }>((resolve) => {
+                        resolveSecond = resolve
+                    }),
+            )
+        const transaction = vi.fn(async () => {
+            throw new Error("delete failed")
+        })
+        store.db = { previews: { get }, transaction } as never
+        const createObjectURL = vi
+            .spyOn(URL, "createObjectURL")
+            .mockReturnValueOnce("blob:stale")
+            .mockReturnValueOnce("blob:fresh")
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        const stalePreview = store.getPreviewUrl("book")
+        await Promise.resolve()
+        await expect(store.deleteNode("book")).rejects.toThrow("delete failed")
+        resolveFirst({ id: "book", data: new Blob(["stale"]) })
+        await expect(stalePreview).resolves.toBe("")
+        store.revokePreviewUrl("book")
+
+        const freshPreview = store.getPreviewUrl("book")
+        resolveSecond({ id: "book", data: new Blob(["fresh"]) })
+        await expect(freshPreview).resolves.toBe("blob:fresh")
+        expect(createObjectURL).toHaveBeenCalledTimes(2)
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:stale")
+
+        store.revokePreviewUrl("book")
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:fresh")
+    })
+
+    it("does not consume a temporary lease when releasing a viewer lease", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.fileUrls.book = "blob:shared"
+        ;(store as any).fileUrlOwnership.set("book", {
+            url: "blob:shared",
+            viewer: 1,
+            temporary: 1,
+        })
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        expect(store.revokeFileUrl("book", "blob:shared")).toBe(true)
+
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+        expect((store as any).fileUrlOwnership.get("book")).toMatchObject({
+            viewer: 0,
+            temporary: 1,
+        })
+    })
+
+    it("releases temporary access without revoking a viewer-owned file URL", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeFiles.set("book", new Blob(["pdf"]))
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:file")
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.getFileUrl("book")).resolves.toBe("blob:file")
+        await expect(store.getFileUrl("book", false, "temporary")).resolves.toBe("blob:file")
+        store.releaseTemporaryFileUrl("book", "blob:file")
+
+        expect(createObjectURL).toHaveBeenCalledOnce()
+        expect(revokeObjectURL).not.toHaveBeenCalled()
+        store.revokeFileUrl("book")
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:file")
+    })
+
+    it("releases a temporary-only cached URL after its consumer finishes", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.fileUrls.book = "blob:cached"
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.getFileUrl("book", false, "temporary")).resolves.toBe("blob:cached")
+        store.releaseTemporaryFileUrl("book", "blob:cached")
+
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:cached")
+        expect(store.fileUrls.book).toBeUndefined()
+    })
+
+    it("revokes a temporary URL once its task releases the only ownership", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        ;(store as any).nativeFiles.set("book", new Blob(["pdf"]))
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:temporary")
+        const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+
+        await expect(store.getFileUrl("book", false, "temporary")).resolves.toBe("blob:temporary")
+        store.releaseTemporaryFileUrl("book", "blob:temporary")
+
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:temporary")
+        expect(store.fileUrls.book).toBeUndefined()
     })
 
     it("revokes a URL created after its only consumer releases", async () => {
@@ -489,6 +2720,139 @@ describe("folder names", () => {
 })
 
 describe("VFS import registration", () => {
+    it("joins concurrent dispose calls to one completion promise", async () => {
+        const store = new VFSStore()
+        const close = vi.fn()
+        store.db = { close } as never
+
+        const first = store.dispose()
+        const second = store.dispose()
+
+        expect(second).toBe(first)
+        await first
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("does not wait for queued initialization or imports during disposal", async () => {
+        const store = new VFSStore()
+        let releaseBlocker!: () => void
+        const blocker = (store as any).serializeNodeMutation(
+            () => new Promise<void>((resolve) => (releaseBlocker = resolve)),
+        )
+        store.db = {
+            folders: { getAll: vi.fn(async () => []) },
+            files: { getAll: vi.fn(async () => []) },
+            close: vi.fn(),
+        } as never
+
+        const initializing = store.init()
+        const importing = store.importFiles(
+            [{ name: "queued.pdf", source: handle("queued.pdf") }],
+            null,
+        )
+        const disposing = store.dispose()
+        await Promise.all([initializing, importing, disposing])
+
+        await expect(importing).resolves.toMatchObject([{ status: "failed" }])
+        expect(store.initialized).toBe(false)
+        releaseBlocker()
+        await blocker
+    })
+
+    it("short-circuits a queued import after disposal", async () => {
+        let sourceStarted!: () => void
+        let resolveFile!: (file: File) => void
+        const sourceReady = new Promise<void>((resolve) => (sourceStarted = resolve))
+        const fileReady = new Promise<File>((resolve) => (resolveFile = resolve))
+        const source = handle("overlap.pdf")
+        source.getFile = vi.fn(async () => {
+            sourceStarted()
+            return fileReady
+        })
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        const close = vi.fn()
+        const store = new VFSStore()
+        store.db = { transaction, close } as never
+
+        const completion = store.importFiles([{ name: "overlap.pdf", source }], null)
+        await sourceReady
+        const disposing = store.dispose()
+        resolveFile(new Blob(["pdf"], { type: "application/pdf" }) as File)
+        const [results] = await Promise.all([completion, disposing])
+
+        expect(results).toMatchObject([{ name: "overlap.pdf", status: "failed" }])
+        expect(transaction).not.toHaveBeenCalled()
+        expect(store.nodes).toEqual({})
+        expect(store.importJobs[0]).toMatchObject({ stage: "saving" })
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("does not publish an import after disposal during persistence", async () => {
+        let releaseFilesPut!: () => void
+        const filesPutReady = new Promise<void>((resolve) => (releaseFilesPut = resolve))
+        const filesPut = vi.fn(async () => {
+            await filesPutReady
+        })
+        const fileContentsPut = vi.fn(async () => undefined)
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        const close = vi.fn()
+        const store = new VFSStore()
+        store.db = {
+            files: { put: filesPut },
+            fileContents: { put: fileContentsPut },
+            transaction,
+            close,
+        } as never
+
+        const completion = store.importFiles(
+            [{ name: "overlap.pdf", source: handle("overlap.pdf") }],
+            null,
+        )
+        await vi.waitFor(() => expect(filesPut).toHaveBeenCalledOnce())
+        const disposing = store.dispose()
+        releaseFilesPut()
+        const [results] = await Promise.all([completion, disposing])
+
+        expect(results).toMatchObject([{ status: "failed" }])
+        expect(fileContentsPut).not.toHaveBeenCalled()
+        expect(store.nodes).toEqual({})
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("cleans the source after a terminal persistence failure", async () => {
+        const store = new VFSStore()
+        const source = handle("failed.pdf")
+        store.db = {
+            transaction: vi.fn(async () => {
+                throw new Error("disk full")
+            }),
+        } as never
+
+        const [result] = await store.importFiles([{ name: "failed.pdf", source }], null)
+
+        expect(result.status).toBe("failed")
+        expect((store as any).importSources.size).toBe(0)
+    })
+
+    it("does not register imports or notify after disposal", async () => {
+        const store = new VFSStore()
+        const onFailure = vi.fn()
+        store.db = { close: vi.fn() } as never
+        await store.dispose()
+
+        await expect(
+            store.importFiles([{ name: "book.pdf", source: handle("book.pdf") }], null, {
+                onFailure,
+            }),
+        ).resolves.toMatchObject([{ status: "failed" }])
+        expect(store.importJobs).toEqual([])
+        expect(onFailure).not.toHaveBeenCalled()
+    })
+
     it("exposes a complete batch synchronously and captures its parent", async () => {
         const store = new VFSStore()
         store.db = {
@@ -551,6 +2915,7 @@ describe("VFS import registration", () => {
     })
 
     it("retains a persisted node when metadata enrichment fails", async () => {
+        pdfLoad.mockRejectedValue(new Error("corrupt PDF"))
         const store = new VFSStore()
         store.db = {
             files: { put: vi.fn(async () => "book") },

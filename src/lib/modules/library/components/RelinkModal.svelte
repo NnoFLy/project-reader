@@ -31,7 +31,7 @@
                 const [handle] = await window.showOpenFilePicker({
                     types: [
                         {
-                            description: "PDF Ebooks",
+                            description: m.pdf_picker_description(),
                             accept: { "application/pdf": [".pdf"] },
                         },
                     ],
@@ -81,6 +81,7 @@
     placement="center"
     onClose={() => void commandsNode.execute("modal.cancel")}
     title={m.relink_modal_title()}
+    closeLabel={m.close()}
     initialFocus={() => locateButton}
     draggable
 >

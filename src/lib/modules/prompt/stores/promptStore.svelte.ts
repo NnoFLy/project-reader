@@ -1,6 +1,7 @@
 import Fuse from "fuse.js"
 import type { PromptItem, PromptRequest, PromptService, PromptSnapshot } from "../prompt.types"
 import * as m from "$lib/paraglide/messages"
+import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 const QUERY_HISTORY_STORAGE_KEY = "project-reader.prompt-query-history"
 const MAX_QUERY_HISTORY = 50
@@ -53,9 +54,8 @@ class PromptStore implements PromptService {
     }
 
     private restoreQueryHistory(): void {
-        if (typeof localStorage === "undefined") return
         try {
-            const stored = JSON.parse(localStorage.getItem(QUERY_HISTORY_STORAGE_KEY) ?? "null")
+            const stored = JSON.parse(safeStorageGet(QUERY_HISTORY_STORAGE_KEY) ?? "null")
             if (!stored || typeof stored !== "object") return
             if (typeof stored.lastQuery === "string") this.lastQuery = stored.lastQuery
             if (!stored.retainedQueries || typeof stored.retainedQueries !== "object") return
@@ -75,9 +75,8 @@ class PromptStore implements PromptService {
     }
 
     private persistQueryHistory(): void {
-        if (typeof localStorage === "undefined") return
         try {
-            localStorage.setItem(
+            safeStorageSet(
                 QUERY_HISTORY_STORAGE_KEY,
                 JSON.stringify({
                     lastQuery: this.lastQuery,

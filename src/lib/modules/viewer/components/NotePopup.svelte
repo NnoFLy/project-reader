@@ -69,6 +69,7 @@
     size="small"
     placement="center"
     title={m.edit_note()}
+    closeLabel={m.close()}
     draggable
     onClose={() => void popupCommandsNode.execute("modal.cancel")}
     initialFocus="first"

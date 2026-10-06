@@ -9,7 +9,7 @@ An elegant, high-performance, and feature-rich offline-first web-based PDF e-rea
 ### 📁 Offline-First Virtual File System (VFS)
 
 - **High-Performance Storage**: Fully managed directory structures and file metadata persisted locally using IndexedDB through **Dexie.js**.
-- **Modern File API Integration**: Support for the **Web File System Access API** (`showOpenFilePicker`), allowing lazy-loaded, secure local file access without duplicating large binary assets into IndexedDB storage.
+- **Modern File API Integration**: Support for the **Web File System Access API** (`showOpenFilePicker`), allowing lazy-loaded, secure local file access without duplicating large binary assets into IndexedDB storage when handles are available. Fallback file and drag-and-drop imports persist their content locally.
 - **Asset Management**: Complete directory tree navigation, breadcrumbs, folder creation, interactive file cards, bulk selection, item movement, and deletion.
 
 ### 📄 Advanced PDF Rendering Engine
@@ -21,7 +21,7 @@ An elegant, high-performance, and feature-rich offline-first web-based PDF e-rea
 
 ### ⌨️ Deep Keymap & Navigation System
 
-- **Hierarchical Keymaps**: Custom state-aware keymap registry (`keymapStore`) allowing dynamic registration and scoping of hotkeys depending on the active component.
+- **Hierarchical Keymaps**: Custom state-aware command registry (`commandsStore` and `CommandScope`) allowing dynamic registration and scoping of hotkeys depending on the active component.
 - **Keyboard-First Interface**: Full keyboard-only workflow for scrolling (`J`/`K` or arrows), sidebar toggling, zooming, folder navigation, and configuration controls.
 
 ### 🔍 Spotter & Command Palette
@@ -32,7 +32,7 @@ An elegant, high-performance, and feature-rich offline-first web-based PDF e-rea
 
 ### 🌐 Localization (I18n)
 
-- **Bilingual Support**: Fully translated into **English** and **Russian** (`en.json`, `ru.json`).
+- **Bilingual Support**: Interface text is translated into **English** and **Russian** (`en.json`, `ru.json`), including native file-picker descriptions.
 - **Svelte I18n Engine**: Powered by `@inlang/paraglide-js` for compile-time typesafe localized messages.
 
 ---
@@ -70,7 +70,7 @@ The project features a **premium Brutalist-modern hybrid interface** with:
 ├── src/
 │   ├── lib/
 │   │   ├── app/            # Application shell and global command registration
-│   │   ├── modules/        # Feature modules (commands, library, PDF, prompt, settings, viewer)
+│   │   ├── modules/        # Feature modules (commands, documents, library, notifications, PDF, prompt, settings, viewer)
 │   │   │   ├── pdf/        # PDF loading, caching, and document helpers
 │   │   │   └── viewer/      # Viewer commands, state, components, and styles
 │   │   └── shared/         # Shared state, styles, icons, actions, and UI primitives
@@ -107,7 +107,7 @@ Run the local development environment:
 pnpm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [https://localhost:5173](https://localhost:5173) in your browser. Your browser may warn about the development certificate.
 
 ### Quality Assurance (Lint & Type-Check)
 
@@ -163,13 +163,13 @@ Production requires the `PRODUCTION_HOST` and `PRODUCTION_URL` environment varia
 
 ## ⌨️ Essential Keyboard Shortcuts
 
-| Shortcut                    | Action                                                | Scope                   |
-| :-------------------------- | :---------------------------------------------------- | :---------------------- |
-| **`Ctrl` + `K`**            | Toggle global Spotter/Command Prompt                  | Application-wide        |
-| **`O`**                     | Search/open imported books                            | Application-wide        |
-| **`Shift` + `T`**           | Toggle light / dark / system theme                    | Application-wide        |
-| **`Shift` + `L`**           | Toggle layouts (Single, Two-Pages, Scroll)            | Viewer                  |
-| **`J`** / **`Arrow Down`**  | Smooth scroll page down                               | Viewer / Content panels |
-| **`K`** / **`Arrow Up`**    | Smooth scroll page up                                 | Viewer / Content panels |
-| **`Shift` + `A`** (Library) | Create a new folder (or select all in selection mode) | Home Library Screen     |
-| **`Esc`**                   | Close sidebar panels, modals, and Command Prompt      | Active popup / menu     |
+| Shortcut                    | Action                                                     | Scope               |
+| :-------------------------- | :--------------------------------------------------------- | :------------------ |
+| **`Ctrl` + `K`**            | Toggle global Spotter/Command Prompt                       | Application-wide    |
+| **`O`**                     | Search/open imported books                                 | Application-wide    |
+| **`Shift` + `T`**           | Choose a light / dark / system theme                       | Application-wide    |
+| **`Shift` + `L`**           | Choose a layout (Single, Two-Pages, Scroll)                | Viewer              |
+| **`J`** / **`Arrow Down`**  | Scroll the reading area down                               | Viewer reading area |
+| **`K`** / **`Arrow Up`**    | Scroll the reading area up                                 | Viewer reading area |
+| **`Shift` + `A`** (Library) | Create a new folder (or select all or exit selection mode) | Home Library Screen |
+| **`Esc`**                   | Close sidebar panels, modals, and Command Prompt           | Active popup / menu |

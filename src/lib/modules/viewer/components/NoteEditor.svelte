@@ -95,7 +95,7 @@
 
         <textarea
             class="editor-textarea"
-            placeholder="Write your note here..."
+            placeholder={m.note_placeholder()}
             value={editorState.noteContent}
             oninput={(event) =>
                 onChange({

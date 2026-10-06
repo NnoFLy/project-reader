@@ -209,7 +209,7 @@
                         >
                             {#if snapshot.isLoading}
                                 <span class="loading-mark" aria-hidden="true"></span>
-                                <p>{snapshot.request.loadingLabel ?? "Loading…"}</p>
+                                <p>{snapshot.request.loadingLabel ?? m.prompt_loading()}</p>
                             {:else if snapshot.errorLabel}
                                 <SearchNoResultsIcon />
                                 <p>{snapshot.errorLabel}</p>

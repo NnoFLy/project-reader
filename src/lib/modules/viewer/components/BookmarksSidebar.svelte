@@ -384,6 +384,7 @@
         placement="center"
         onClose={() => void bookmarkEditScope?.execute("modal.cancel")}
         title={m.rename_bookmark()}
+        closeLabel={m.close()}
         initialFocus={() => document.getElementById("edit-bookmark-name-input")}
         draggable
     >

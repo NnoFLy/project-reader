@@ -6,7 +6,9 @@ import type {
     VFSNodes,
     VFSNode,
     BookMetadata,
+    BookPreview,
     FileContent,
+    IndexedText,
     ImportCallbacks,
     ImportInput,
     ImportJob,
@@ -16,6 +18,42 @@ import { FolderNameError } from "./vfsStore.types"
 import { Database } from "../db/db"
 import { PDFDocument } from "$lib/modules/pdf"
 import pLimit from "p-limit"
+
+interface ImportGenerations {
+    content: number
+    preview: number
+    request: number
+}
+
+type FileUrlOwner = "viewer" | "temporary"
+
+interface FileUrlOwnership {
+    url: string
+    // Each viewer claim is an independent lease. A failed restore must release only
+    // the lease it acquired, not the claims held by concurrent restores/viewers.
+    viewer: number
+    temporary: number
+}
+
+export class ContentSupersededError extends Error {
+    constructor(message = "File content changed while restoring access") {
+        super(message)
+        this.name = "ContentSupersededError"
+    }
+}
+
+export class VFSDisposedError extends Error {
+    constructor() {
+        super("VFS store was disposed")
+        this.name = "VFSDisposedError"
+    }
+}
+
+interface FileUrlRequest {
+    promise: Promise<string>
+    requestPermission: boolean
+    accessAttempt: number
+}
 
 export class VFSStore {
     nodes = $state<VFSNodes>({})
@@ -67,11 +105,42 @@ export class VFSStore {
     private importSources = new Map<string, File | FileSystemFileHandle>()
     private previewUrlRefs: Record<string, number> = {}
     private previewUrlRequests = new Map<string, Promise<string>>()
+    private previewInvalidationTails = new Map<string, Promise<void>>()
+    private previewRequestVersions = new Map<string, number>()
+    private fileUrlRequests = new Map<string, FileUrlRequest>()
+    private fileUrlOwnership = new Map<string, FileUrlOwnership>()
+    private accessAttemptGenerations = new Map<string, number>()
+    private contentRetryVersions = new Map<string, number>()
+    private contentGenerations = new Map<string, number>()
+    private successfulAccessAttempts = new Map<string, { generation: number; attempt: number }>()
+    private previewGenerations = new Map<string, number>()
+    private deletingFileIds = new Set<string>()
+    private relinkingCounts = new Map<string, number>()
+    private relinkEpochs = new Map<string, number>()
+    // The epoch that currently owns the in-memory content generation. Relink epochs remain
+    // monotonic, while this owner lets a failed older operation roll back only its own state.
+    private relinkStateOwners = new Map<string, number>()
+    private relinkRetryEpochs = new Map<string, number>()
+    private committedRelinks = new Set<string>()
+    private restoredRelinks = new Set<string>()
     private persistenceQueue = pLimit(1)
+    private activeSourceTasks = new Set<Promise<unknown>>()
+    private activeNodeMutations = new Set<Promise<unknown>>()
     private nodeMutationTail: Promise<void> | undefined
+    private readonly nodeDeletionStartingListeners = new Set<(ids: string[]) => void>()
+    private readonly nodeDeletionListeners = new Set<(ids: string[]) => void>()
+    private readonly deletionWaiters = new Map<string, Set<() => void>>()
+    private readonly nodeInvalidatedListeners = new Set<(id: string) => void>()
+    private readonly contentRestoredListeners = new Set<(id: string) => void>()
+    private readonly nodeRelinkedListeners = new Set<(id: string) => void>()
+    private readonly relinkWaiters = new Map<string, Set<() => void>>()
     metadataQueue = pLimit(1)
     private initializationPromise: Promise<void> | null = null
     private metadataEnrichmentOwners = 0
+    private disposed = false
+    private readonly disposalPromise: Promise<void>
+    private disposalCompletion: Promise<void> | null = null
+    private resolveDisposal!: () => void
     private metadataEnrichmentController: AbortController | null = null
     private metadataEnrichmentTask: Promise<void> | null = null
     private metadataEnrichmentIdleId: number | null = null
@@ -82,24 +151,132 @@ export class VFSStore {
     }
 
     constructor(initialNodes: VFSNodes = {}) {
+        this.disposalPromise = new Promise<void>((resolve) => {
+            this.resolveDisposal = resolve
+        })
         this.nodes = initialNodes
         this.rootIds = Object.values(initialNodes)
             .filter((node) => node.parentId === null)
             .map((node) => node.id)
     }
 
+    onNodesDeleting(listener: (ids: string[]) => void): () => void {
+        this.nodeDeletionStartingListeners.add(listener)
+        return () => this.nodeDeletionStartingListeners.delete(listener)
+    }
+
+    onNodesDeleted(listener: (ids: string[]) => void): () => void {
+        this.nodeDeletionListeners.add(listener)
+        return () => this.nodeDeletionListeners.delete(listener)
+    }
+
+    onNodeInvalidated(listener: (id: string) => void): () => void {
+        this.nodeInvalidatedListeners.add(listener)
+        return () => this.nodeInvalidatedListeners.delete(listener)
+    }
+
+    onContentRestored(listener: (id: string) => void): () => void {
+        this.contentRestoredListeners.add(listener)
+        return () => this.contentRestoredListeners.delete(listener)
+    }
+
+    onNodeRelinked(listener: (id: string) => void): () => void {
+        this.nodeRelinkedListeners.add(listener)
+        return () => this.nodeRelinkedListeners.delete(listener)
+    }
+
+    private trackSourceTask<T>(task: Promise<T>): Promise<T> {
+        this.activeSourceTasks.add(task)
+        void task.then(
+            () => this.activeSourceTasks.delete(task),
+            () => this.activeSourceTasks.delete(task),
+        )
+        return task
+    }
+
+    get isDisposed(): boolean {
+        return this.disposed
+    }
+
+    private throwIfDisposed(): void {
+        if (this.disposed) throw new VFSDisposedError()
+    }
+
+    private async awaitUnlessDisposed<T>(promise: Promise<T>): Promise<T> {
+        this.throwIfDisposed()
+        return Promise.race([
+            promise,
+            this.disposalPromise.then(() => {
+                throw new VFSDisposedError()
+            }),
+        ])
+    }
+
     private serializeNodeMutation<T>(mutation: () => Promise<T>): Promise<T> {
         const predecessor = this.nodeMutationTail
-        const result = predecessor ? predecessor.then(mutation) : mutation()
+        const result = (async () => {
+            this.throwIfDisposed()
+            if (predecessor) await this.awaitUnlessDisposed(predecessor)
+            this.throwIfDisposed()
+            return mutation()
+        })()
         const tail = result.then(
             () => undefined,
             () => undefined,
         )
         this.nodeMutationTail = tail
+        this.activeNodeMutations.add(result)
+        void result.then(
+            () => this.activeNodeMutations.delete(result),
+            () => this.activeNodeMutations.delete(result),
+        )
         void tail.then(() => {
             if (this.nodeMutationTail === tail) this.nodeMutationTail = undefined
         })
         return result
+    }
+
+    serializeBookMutation<T>(bookId: string, mutation: () => Promise<T>): Promise<T | undefined> {
+        return this.serializeNodeMutation(async () => {
+            if (this.deletingFileIds.has(bookId) || this.nodes[bookId]?.type !== "file") {
+                return undefined
+            }
+            this.throwIfDisposed()
+            const result = await this.awaitUnlessDisposed(mutation())
+            this.throwIfDisposed()
+            return result
+        })
+    }
+
+    /**
+     * Serializes metadata-only mutations with node deletion and other VFS mutations.
+     * Unlike serializeBookMutation, this remains usable after an orphaned record's file
+     * node has disappeared.
+     */
+    serializeMetadataMutation<T>(mutation: () => Promise<T>): Promise<T | undefined> {
+        return this.serializeNodeMutation(async () => {
+            this.throwIfDisposed()
+            const result = await mutation()
+            this.throwIfDisposed()
+            return result
+        })
+    }
+
+    saveIndexedTexts(
+        bookId: string,
+        records: IndexedText[],
+        expectedGeneration = this.contentGeneration(bookId),
+    ): Promise<boolean> {
+        return this.serializeNodeMutation(async () => {
+            if (
+                this.deletingFileIds.has(bookId) ||
+                this.nodes[bookId]?.type !== "file" ||
+                !this.isCurrentContent(bookId, expectedGeneration)
+            )
+                return false
+            await this.awaitUnlessDisposed(this.db.indexedTexts.bulkPut(records))
+            return this.isCurrentContent(bookId, expectedGeneration)
+        })
     }
 
     pushForwardHistory(id: string | null) {
@@ -154,40 +331,52 @@ export class VFSStore {
         if (!browser || this.initialized) return Promise.resolve()
         if (this.initializationPromise) return this.initializationPromise
 
-        const initialization = (async () => {
+        const initialization = this.serializeNodeMutation(async () => {
             try {
-                // Only load metadata on startup; previews and Object URLs remain lazy.
-                const [allFolders, allFiles] = await Promise.all([
-                    this.db.folders.getAll(),
-                    this.db.files.getAll(),
-                ])
+                this.throwIfDisposed()
+                // Read and publish the startup snapshot as one serialized mutation. This keeps
+                // imports and other node mutations from being overwritten by a late snapshot.
+                const [allFolders, allFiles] = await this.awaitUnlessDisposed(
+                    Promise.all([this.db.folders.getAll(), this.db.files.getAll()]),
+                )
+                this.throwIfDisposed()
 
                 const newNodes: VFSNodes = {}
                 const lockedMap: Record<string, boolean> = {}
                 for (const folder of allFolders) newNodes[folder.id] = folder
                 for (const fileNode of allFiles) {
-                    newNodes[fileNode.id] = fileNode
-                    lockedMap[fileNode.id] = fileNode.isLocked ?? true
+                    const normalizedFile = { ...fileNode, isLocked: fileNode.isLocked ?? true }
+                    newNodes[fileNode.id] = normalizedFile
+                    lockedMap[fileNode.id] = normalizedFile.isLocked
                 }
 
+                this.throwIfDisposed()
                 this.nodes = newNodes
                 this.isLockedMap = lockedMap
                 this.rootIds = Object.values(newNodes)
                     .filter((node) => node.parentId === null)
                     .map((node) => node.id)
                 this.initialized = true
-            } catch (err) {
+            } catch (error) {
                 this.initialized = false
-                console.error("VFS initialization failed:", err)
+                if (!(error instanceof VFSDisposedError)) {
+                    console.error("VFS initialization failed:", error)
+                }
             }
-        })()
+        }).catch((error: unknown) => {
+            if (error instanceof VFSDisposedError) return
+            throw error
+        })
 
         this.initializationPromise = initialization
-        void initialization.finally(() => {
-            if (this.initializationPromise === initialization) {
-                this.initializationPromise = null
-            }
-        })
+        void initialization.then(
+            () => {
+                if (this.initializationPromise === initialization) this.initializationPromise = null
+            },
+            () => {
+                if (this.initializationPromise === initialization) this.initializationPromise = null
+            },
+        )
         return initialization
     }
 
@@ -267,25 +456,36 @@ export class VFSStore {
     private async enrichLegacyMetadata(id: string, signal: AbortSignal) {
         const node = this.nodes[id]
         if (!node || node.type !== "file" || node.metadata.totalPages) return
-        const url = await this.getFileUrl(id)
-        if (!url || signal.aborted) return
+        const generation = this.contentGeneration(id)
+        const url = await this.getFileUrl(id, false, "temporary")
+        if (!url || signal.aborted || !this.isCurrentContent(id, generation)) {
+            if (url) this.releaseTemporaryFileUrl(id, url)
+            return
+        }
 
         const doc = new PDFDocument(url)
         this.activeMetadataDocument = doc
         try {
-            await doc.load()
+            await this.awaitUnlessDisposed(doc.load())
             if (signal.aborted) return
-            const [totalPages, author] = await Promise.all([doc.getPageNumber(), doc.getAuthor()])
-            if (signal.aborted) return
-            await this.updateFile(id, { metadata: { totalPages, author: author ?? null } }, true)
+            const [totalPages, author] = await this.awaitUnlessDisposed(
+                Promise.all([doc.getPageNumber(), doc.getAuthor()]),
+            )
+            if (signal.aborted || !this.isCurrentContent(id, generation)) return
+            await this.updateFile(
+                id,
+                { metadata: { totalPages, author: author ?? null } },
+                true,
+                generation,
+            )
         } catch (error) {
             if (!signal.aborted) {
                 console.warn(`[VFSStore] Failed to enrich metadata for node ${id}:`, error)
             }
         } finally {
             if (this.activeMetadataDocument === doc) this.activeMetadataDocument = null
-            await doc.close()
-            if (this.isLockedMap[id]) this.revokeFileUrl(id)
+            await this.awaitUnlessDisposed(doc.close()).catch(() => undefined)
+            this.releaseTemporaryFileUrl(id, url)
         }
     }
 
@@ -303,25 +503,89 @@ export class VFSStore {
         void this.activeMetadataDocument?.close()
     }
 
-    async dispose() {
+    dispose(): Promise<void> {
+        if (this.disposalCompletion) return this.disposalCompletion
+        this.disposed = true
+        this.resolveDisposal()
+        this.disposalCompletion = this.completeDispose()
+        return this.disposalCompletion
+    }
+
+    private async completeDispose(): Promise<void> {
         this.metadataEnrichmentOwners = 0
-        if (browser) {
+        if (browser && typeof document !== "undefined") {
             document.removeEventListener("visibilitychange", this.handleMetadataVisibilityChange)
         }
         this.pauseMetadataEnrichment()
         await this.metadataEnrichmentTask?.catch(() => undefined)
         this.metadataEnrichmentTask = null
-        for (const id of Object.keys(this.fileUrls)) this.revokeFileUrl(id)
+        for (const waiters of this.relinkWaiters.values()) {
+            for (const resolve of waiters) resolve()
+        }
+        this.relinkWaiters.clear()
+        for (const waiters of this.deletionWaiters.values()) {
+            for (const resolve of waiters) resolve()
+        }
+        this.deletionWaiters.clear()
+
+        this.fileUrlRequests.clear()
+        this.previewUrlRequests.clear()
+        // Every mutation checks disposal after persistence awaits, so no late continuation can
+        // publish state after this point. Do not wait on arbitrary user/database operations.
+        for (const id of Object.keys(this.fileUrls)) this.revokeFileUrl(id, undefined, true)
         for (const id of Object.keys(this.previewUrls)) this.revokePreviewUrl(id, true)
-        const close = (this.db as unknown as { close?: () => void }).close
-        close?.call(this.db)
+        for (const id of Object.keys(this.previewUrlRefs)) delete this.previewUrlRefs[id]
+        this.nativeFiles.clear()
+        this.nativeHandles.clear()
+        this.importSources.clear()
+        this.activeSourceTasks.clear()
+        this.activeNodeMutations.clear()
+        this.nodeDeletionStartingListeners.clear()
+        this.nodeDeletionListeners.clear()
+        this.nodeInvalidatedListeners.clear()
+        this.contentRestoredListeners.clear()
+        this.nodeRelinkedListeners.clear()
+        this.db.close()
     }
 
     /**
      * Lazily fetches and creates an Object URL for a node's preview.
      */
     async getPreviewUrl(id: string): Promise<string> {
+        if (this.disposed || this.deletingFileIds.has(id)) return ""
         this.previewUrlRefs[id] = (this.previewUrlRefs[id] || 0) + 1
+        if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+            try {
+                await this.awaitUnlessDisposed(
+                    new Promise<void>((resolve) => {
+                        const waiters = this.relinkWaiters.get(id) ?? new Set<() => void>()
+                        waiters.add(resolve)
+                        this.relinkWaiters.set(id, waiters)
+                    }),
+                )
+            } catch (error) {
+                if (error instanceof VFSDisposedError) return ""
+                throw error
+            }
+            if (this.disposed) return ""
+            return this.loadOrReusePreviewUrl(id)
+        }
+        if (this.disposed) return ""
+        return this.loadOrReusePreviewUrl(id)
+    }
+
+    private async loadOrReusePreviewUrl(id: string): Promise<string> {
+        if (this.disposed) return ""
+        const invalidation = this.previewInvalidationTails.get(id)
+        if (invalidation) {
+            try {
+                await this.awaitUnlessDisposed(invalidation)
+            } catch (error) {
+                if (error instanceof VFSDisposedError) return ""
+                throw error
+            }
+        }
+        if (this.disposed) return ""
         if (this.previewUrls[id]) return this.previewUrls[id]
 
         const pending = this.previewUrlRequests.get(id)
@@ -337,28 +601,66 @@ export class VFSStore {
     }
 
     private async loadPreviewUrl(id: string): Promise<string> {
+        if (this.disposed || this.deletingFileIds.has(id)) return ""
+        const generation = this.contentGeneration(id)
+        const previewGeneration = this.previewGeneration(id)
+        const requestVersion = this.previewRequestVersion(id)
         try {
-            const cachedPreview = await this.db.previews.get(id)
+            const cachedPreview = await this.awaitUnlessDisposed(this.db.previews.get(id))
+            if (this.disposed) return ""
             if (cachedPreview) {
-                return this.publishPreviewUrl(id, URL.createObjectURL(cachedPreview.data))
+                return this.publishPreviewUrl(
+                    id,
+                    URL.createObjectURL(cachedPreview.data),
+                    generation,
+                    previewGeneration,
+                    requestVersion,
+                )
             }
 
-            const fileUrl = await this.getFileUrl(id)
+            const fileUrl = await this.getFileUrl(id, false, "temporary")
+            if (this.disposed) {
+                if (fileUrl) this.releaseTemporaryFileUrl(id, fileUrl)
+                return ""
+            }
             if (fileUrl) {
                 const doc = new PDFDocument(fileUrl)
                 try {
-                    await doc.load()
-                    const page = await doc.getPage(1)
-                    const pageUrl = await doc.getCanvasPage(page)
+                    await this.awaitUnlessDisposed(doc.load())
+                    if (this.disposed) return ""
+                    const page = await this.awaitUnlessDisposed(doc.getPage(1))
+                    const pageUrl = await this.awaitUnlessDisposed(doc.getCanvasPage(page))
                     if (pageUrl) {
-                        await this.savePreview(id, pageUrl)
-                        URL.revokeObjectURL(pageUrl)
+                        try {
+                            await this.savePreview(
+                                id,
+                                pageUrl,
+                                false,
+                                generation,
+                                previewGeneration,
+                                requestVersion,
+                            )
+                        } finally {
+                            URL.revokeObjectURL(pageUrl)
+                        }
 
-                        const newCachedPreview = await this.db.previews.get(id)
+                        if (
+                            !this.isCurrentContent(id, generation) ||
+                            !this.isCurrentPreview(id, previewGeneration) ||
+                            !this.isCurrentPreviewRequest(id, requestVersion)
+                        )
+                            return ""
+                        const newCachedPreview = await this.awaitUnlessDisposed(
+                            this.db.previews.get(id),
+                        )
+                        if (this.disposed) return ""
                         if (newCachedPreview) {
                             return this.publishPreviewUrl(
                                 id,
                                 URL.createObjectURL(newCachedPreview.data),
+                                generation,
+                                previewGeneration,
+                                requestVersion,
                             )
                         }
                     }
@@ -368,10 +670,8 @@ export class VFSStore {
                         err,
                     )
                 } finally {
-                    await doc.close()
-                    if (this.isLockedMap[id]) {
-                        this.revokeFileUrl(id)
-                    }
+                    await this.awaitUnlessDisposed(doc.close()).catch(() => undefined)
+                    this.releaseTemporaryFileUrl(id, fileUrl)
                 }
             }
         } catch (e) {
@@ -380,20 +680,233 @@ export class VFSStore {
         return ""
     }
 
-    private publishPreviewUrl(id: string, url: string): string {
-        if (!this.previewUrlRefs[id]) {
+    private publishPreviewUrl(
+        id: string,
+        url: string,
+        generation = this.contentGeneration(id),
+        previewGeneration = this.previewGeneration(id),
+        requestVersion = this.previewRequestVersion(id),
+    ): string {
+        if (
+            this.disposed ||
+            !this.previewUrlRefs[id] ||
+            this.nodes[id]?.type !== "file" ||
+            !this.isCurrentContent(id, generation) ||
+            !this.isCurrentPreview(id, previewGeneration) ||
+            !this.isCurrentPreviewRequest(id, requestVersion)
+        ) {
             URL.revokeObjectURL(url)
             return ""
         }
+        const existingUrl = this.previewUrls[id]
+        if (existingUrl && existingUrl !== url) URL.revokeObjectURL(existingUrl)
         this.previewUrls[id] = url
         return url
     }
 
+    getContentGeneration(id: string): number {
+        return this.contentGenerations.get(id) ?? 0
+    }
+
+    private contentGeneration(id: string): number {
+        return this.getContentGeneration(id)
+    }
+
+    private contentRetryVersion(id: string): number {
+        return this.contentRetryVersions.get(id) ?? 0
+    }
+
+    private nextAccessAttempt(id: string): number {
+        const attempt = (this.accessAttemptGenerations.get(id) ?? 0) + 1
+        this.accessAttemptGenerations.set(id, attempt)
+        return attempt
+    }
+
+    private isCurrentAccessAttempt(id: string, attempt: number): boolean {
+        return this.accessAttemptGenerations.get(id) === attempt
+    }
+
+    private retireAccessAttempt(id: string): void {
+        this.accessAttemptGenerations.set(id, (this.accessAttemptGenerations.get(id) ?? 0) + 1)
+        this.successfulAccessAttempts.delete(id)
+    }
+
+    private previewGeneration(id: string): number {
+        return this.previewGenerations.get(id) ?? 0
+    }
+
+    private previewRequestVersion(id: string): number {
+        return this.previewRequestVersions.get(id) ?? 0
+    }
+
+    private isCurrentPreview(id: string, generation: number): boolean {
+        return this.previewGeneration(id) === generation
+    }
+
+    private isCurrentPreviewRequest(id: string, version: number): boolean {
+        return this.previewRequestVersion(id) === version
+    }
+
+    isCurrentContent(id: string, generation: number): boolean {
+        return (
+            !this.disposed &&
+            !this.deletingFileIds.has(id) &&
+            this.nodes[id]?.type === "file" &&
+            this.contentGeneration(id) === generation
+        )
+    }
+
+    isCurrentFileUrl(id: string, url: string, generation = this.contentGeneration(id)): boolean {
+        return (
+            !this.deletingFileIds.has(id) &&
+            this.isCurrentContent(id, generation) &&
+            this.nodes[id]?.type === "file" &&
+            this.fileUrls[id] === url
+        )
+    }
+
+    isNodeDeleting(id: string): boolean {
+        return this.deletingFileIds.has(id)
+    }
+
+    private settleDeletion(id: string): void {
+        const waiters = this.deletionWaiters.get(id)
+        if (!waiters) return
+        this.deletionWaiters.delete(id)
+        for (const resolve of waiters) resolve()
+    }
+
+    private async waitForDeletion(id: string): Promise<void> {
+        if (!this.deletingFileIds.has(id)) return
+        await this.awaitUnlessDisposed(
+            new Promise<void>((resolve) => {
+                const waiters = this.deletionWaiters.get(id) ?? new Set<() => void>()
+                waiters.add(resolve)
+                this.deletionWaiters.set(id, waiters)
+            }),
+        )
+    }
+
+    async waitForRelink(id: string): Promise<void> {
+        if ((this.relinkingCounts.get(id) ?? 0) <= 0) return
+        await new Promise<void>((resolve) => {
+            const waiters = this.relinkWaiters.get(id) ?? new Set<() => void>()
+            waiters.add(resolve)
+            this.relinkWaiters.set(id, waiters)
+        })
+    }
+
+    private markSupersededFileRead(id: string, relinkEpoch: number) {
+        if ((this.relinkEpochs.get(id) ?? 0) !== relinkEpoch) {
+            this.contentRetryVersions.set(id, this.contentRetryVersion(id) + 1)
+        }
+    }
+
+    private async retryAfterContentSuperseded(
+        id: string,
+        generation: number,
+        relinkEpoch: number,
+        relinkObserved: boolean,
+    ): Promise<boolean> {
+        if (this.disposed) return false
+        if (this.deletingFileIds.has(id)) {
+            await this.waitForDeletion(id)
+            return this.nodes[id]?.type === "file"
+        }
+        if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+            await this.awaitUnlessDisposed(this.waitForRelink(id))
+            return this.nodes[id]?.type === "file"
+        }
+        if (this.isCurrentContent(id, generation)) {
+            return relinkObserved || (this.relinkEpochs.get(id) ?? 0) !== relinkEpoch
+        }
+        return this.nodes[id]?.type === "file"
+    }
+
+    private notifyNodeInvalidated(id: string) {
+        if (this.disposed) return
+        for (const listener of this.nodeInvalidatedListeners) {
+            if (this.disposed) return
+            try {
+                listener(id)
+            } catch (error) {
+                console.error("VFS node invalidation listener failed:", error)
+            }
+        }
+    }
+
+    private notifyContentRestored(id: string) {
+        if (this.disposed) return
+        for (const listener of this.contentRestoredListeners) {
+            if (this.disposed) return
+            try {
+                listener(id)
+            } catch (error) {
+                console.error("VFS content restored listener failed:", error)
+            }
+        }
+    }
+
+    private invalidateContent(id: string, notify = true): number {
+        const generation = this.contentGeneration(id) + 1
+        this.contentGenerations.set(id, generation)
+        this.previewGenerations.set(id, this.previewGeneration(id) + 1)
+        this.previewRequestVersions.set(id, this.previewRequestVersion(id) + 1)
+        this.successfulAccessAttempts.delete(id)
+        this.previewUrlRequests.delete(id)
+        if (notify) this.notifyNodeInvalidated(id)
+        return generation
+    }
+
     async invalidatePreview(id: string) {
-        await this.db.previews.delete(id)
-        const url = this.previewUrls[id]
-        if (url) URL.revokeObjectURL(url)
-        delete this.previewUrls[id]
+        if (this.disposed) return
+        const predecessor = this.previewInvalidationTails.get(id) ?? Promise.resolve()
+        const operation = predecessor.then(() => this.invalidatePreviewOnce(id))
+        const settled = operation.catch(() => undefined)
+        this.previewInvalidationTails.set(id, settled)
+        try {
+            await this.awaitUnlessDisposed(operation)
+        } finally {
+            if (this.previewInvalidationTails.get(id) === settled) {
+                this.previewInvalidationTails.delete(id)
+            }
+        }
+    }
+
+    private async invalidatePreviewOnce(id: string) {
+        if (this.disposed) return
+        const previousPreviewGeneration = this.previewGeneration(id)
+        const previousRequestVersion = this.previewRequestVersion(id)
+        const nextPreviewGeneration = previousPreviewGeneration + 1
+        const nextRequestVersion = previousRequestVersion + 1
+        this.previewGenerations.set(id, nextPreviewGeneration)
+        this.previewRequestVersions.set(id, nextRequestVersion)
+        // Keep an in-flight request attached while invalidation is pending. If persistence
+        // fails and generations are restored, callers must continue sharing that request.
+        try {
+            await this.serializeNodeMutation(async () => {
+                await this.awaitUnlessDisposed(this.db.previews.delete(id))
+                this.throwIfDisposed()
+                const url = this.previewUrls[id]
+                if (url) URL.revokeObjectURL(url)
+                delete this.previewUrls[id]
+            })
+        } catch (error) {
+            // Operations for one preview are serialized, so this restores the exact state
+            // observed by this operation rather than a version already advanced by a sibling.
+            if (
+                !this.disposed &&
+                this.previewGeneration(id) === nextPreviewGeneration &&
+                this.previewRequestVersion(id) === nextRequestVersion
+            ) {
+                this.previewGenerations.set(id, previousPreviewGeneration)
+                this.previewRequestVersions.set(id, previousRequestVersion)
+            }
+            throw error
+        }
+        if (this.disposed) return
+        this.previewUrlRequests.delete(id)
+        this.notifyNodeInvalidated(id)
     }
 
     revokePreviewUrl(id: string, force = false) {
@@ -417,9 +930,104 @@ export class VFSStore {
     /**
      * Lazily fetches and creates an Object URL for a file's content.
      */
-    async getFileUrl(id: string, requestPermission = false): Promise<string> {
-        if (this.fileUrls[id]) return this.fileUrls[id]
+    async getFileUrl(
+        id: string,
+        requestPermission = false,
+        owner: FileUrlOwner = "viewer",
+        bypassCachedUrl = false,
+    ): Promise<string> {
+        while (true) {
+            if (this.disposed || this.deletingFileIds.has(id) || this.nodes[id]?.type !== "file")
+                return ""
+            if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+                await this.awaitUnlessDisposed(this.waitForRelink(id))
+                continue
+            }
+            if (this.fileUrls[id] && !bypassCachedUrl) {
+                this.claimFileUrl(id, this.fileUrls[id], owner)
+                return this.fileUrls[id]
+            }
 
+            const generation = this.contentGeneration(id)
+            const retryVersion = this.contentRetryVersion(id)
+            const key = `${id}\u0000${generation}\u0000${bypassCachedUrl ? "revalidate" : "cached"}`
+            const pending = this.fileUrlRequests.get(key)
+            const relinkEpoch = this.relinkEpochs.get(id) ?? 0
+            const sharesPending =
+                !bypassCachedUrl && pending && (pending.requestPermission || !requestPermission)
+            const accessAttempt = sharesPending ? pending.accessAttempt : this.nextAccessAttempt(id)
+            const request = sharesPending
+                ? pending.promise
+                : this.loadFileUrl(
+                      id,
+                      requestPermission,
+                      generation,
+                      relinkEpoch,
+                      accessAttempt,
+                      bypassCachedUrl,
+                  )
+            const entry =
+                pending && sharesPending
+                    ? pending
+                    : { promise: request, requestPermission, accessAttempt }
+            if (!sharesPending) this.fileUrlRequests.set(key, entry)
+            try {
+                let url: string
+                try {
+                    url = await this.awaitUnlessDisposed(request)
+                } catch (error) {
+                    if (error instanceof VFSDisposedError) return ""
+                    throw error
+                }
+                if (url) {
+                    this.claimFileUrl(id, url, owner)
+                    return url
+                }
+                if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+                    await this.waitForRelink(id)
+                    continue
+                }
+                if (
+                    this.contentGeneration(id) !== generation ||
+                    this.contentRetryVersion(id) !== retryVersion
+                )
+                    continue
+                return ""
+            } finally {
+                if (this.fileUrlRequests.get(key) === entry) this.fileUrlRequests.delete(key)
+            }
+        }
+    }
+
+    private isCurrentFileRead(id: string, generation: number, relinkEpoch: number): boolean {
+        return (
+            this.isCurrentContent(id, generation) &&
+            (this.relinkEpochs.get(id) ?? 0) === relinkEpoch &&
+            (this.relinkingCounts.get(id) ?? 0) === 0
+        )
+    }
+
+    private isCurrentRelink(id: string, generation: number, relinkEpoch: number): boolean {
+        return (
+            this.isCurrentContent(id, generation) &&
+            (this.relinkEpochs.get(id) ?? 0) === relinkEpoch
+        )
+    }
+
+    private async loadFileUrl(
+        id: string,
+        requestPermission: boolean,
+        generation: number,
+        relinkEpoch: number,
+        accessAttempt: number,
+        bypassCachedUrl: boolean,
+    ): Promise<string> {
+        if (
+            this.disposed ||
+            (this.relinkingCounts.get(id) ?? 0) > 0 ||
+            this.deletingFileIds.has(id)
+        )
+            return ""
         const node = this.nodes[id]
         if (!node || node.type !== "file") return ""
 
@@ -428,7 +1036,7 @@ export class VFSStore {
             let nativeHandle = this.nativeHandles.get(id)
 
             if (!nativeFile && !nativeHandle) {
-                const content = await this.db.fileContents.get(id)
+                const content = await this.awaitUnlessDisposed(this.db.fileContents.get(id))
                 if (content) {
                     if (content.file) {
                         nativeFile = content.file
@@ -440,39 +1048,201 @@ export class VFSStore {
                     }
                 }
             }
+            if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                this.markSupersededFileRead(id, relinkEpoch)
+                return ""
+            }
 
             if (nativeFile) {
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) return ""
                 const url = URL.createObjectURL(nativeFile)
-                this.fileUrls[id] = url
-                this.isLockedMap[id] = false
-                return url
+                this.successfulAccessAttempts.set(id, { generation, attempt: accessAttempt })
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                    URL.revokeObjectURL(url)
+                    return ""
+                }
+                await this.persistUnlockedAccess(id, generation, relinkEpoch, accessAttempt)
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                    URL.revokeObjectURL(url)
+                    this.markSupersededFileRead(id, relinkEpoch)
+                    return ""
+                }
+                return this.publishFileUrl(id, url, generation, relinkEpoch)
             } else if (nativeHandle) {
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) return ""
                 let status = await nativeHandle.queryPermission({ mode: "read" })
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                    if (status === "granted") this.markSupersededFileRead(id, relinkEpoch)
+                    return ""
+                }
                 if (status !== "granted" && requestPermission) {
                     status = await nativeHandle.requestPermission({ mode: "read" })
+                    if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                        if (status === "granted") this.markSupersededFileRead(id, relinkEpoch)
+                        return ""
+                    }
                 }
                 if (status === "granted") {
                     const fileObj = await nativeHandle.getFile()
+                    if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                        // A validation-only relink can fail before invalidating content. Record
+                        // this superseded read explicitly so its caller retries the old handle.
+                        this.markSupersededFileRead(id, relinkEpoch)
+                        return ""
+                    }
                     const url = URL.createObjectURL(fileObj)
-                    this.fileUrls[id] = url
-                    this.isLockedMap[id] = false
-                    return url
+                    this.successfulAccessAttempts.set(id, { generation, attempt: accessAttempt })
+                    if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                        URL.revokeObjectURL(url)
+                        this.markSupersededFileRead(id, relinkEpoch)
+                        return ""
+                    }
+                    await this.persistUnlockedAccess(id, generation, relinkEpoch, accessAttempt)
+                    if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+                        URL.revokeObjectURL(url)
+                        this.markSupersededFileRead(id, relinkEpoch)
+                        return ""
+                    }
+                    return this.publishFileUrl(id, url, generation, relinkEpoch)
                 }
             }
         } catch (e) {
             console.error(`Failed to create file URL for node ${id}:`, e)
         }
 
-        this.isLockedMap[id] = true
+        if (
+            !bypassCachedUrl &&
+            this.fileUrls[id] &&
+            this.isCurrentFileRead(id, generation, relinkEpoch)
+        )
+            return this.fileUrls[id]
+        if (!this.isCurrentFileRead(id, generation, relinkEpoch)) return ""
+        try {
+            await this.serializeNodeMutation(async () => {
+                if (
+                    !this.isCurrentFileRead(id, generation, relinkEpoch) ||
+                    !this.isCurrentAccessAttempt(id, accessAttempt) ||
+                    (this.successfulAccessAttempts.get(id)?.generation === generation &&
+                        this.successfulAccessAttempts.get(id)?.attempt === accessAttempt)
+                )
+                    return
+                const currentNode = this.nodes[id]
+                if (currentNode?.type !== "file") return
+                if (currentNode.isLocked) {
+                    this.isLockedMap[id] = true
+                    return
+                }
+                const lockedNode: FileNode = { ...$state.snapshot(currentNode), isLocked: true }
+                await this.awaitUnlessDisposed(this.db.files.put(lockedNode))
+                if (!this.isCurrentFileRead(id, generation, relinkEpoch)) return
+                this.nodes[id] = lockedNode
+                this.isLockedMap[id] = true
+            })
+        } catch (error) {
+            console.error(`Failed to persist locked state for node ${id}:`, error)
+        }
         return ""
     }
 
-    revokeFileUrl(id: string) {
+    private publishFileUrl(
+        id: string,
+        url: string,
+        generation: number,
+        relinkEpoch: number,
+    ): string {
+        if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
+            URL.revokeObjectURL(url)
+            return ""
+        }
+        const existingUrl = this.fileUrls[id]
+        if (existingUrl) {
+            if (existingUrl !== url) URL.revokeObjectURL(url)
+            return existingUrl
+        }
+        this.fileUrls[id] = url
+        return url
+    }
+
+    private async persistUnlockedAccess(
+        id: string,
+        generation: number,
+        relinkEpoch: number,
+        accessAttempt: number,
+    ): Promise<void> {
+        try {
+            await this.serializeNodeMutation(async () => {
+                if (
+                    !this.isCurrentFileRead(id, generation, relinkEpoch) ||
+                    !this.isCurrentAccessAttempt(id, accessAttempt)
+                )
+                    return
+                const node = this.nodes[id]
+                if (!node || node.type !== "file" || node.isLocked === false) {
+                    if (node?.type === "file") this.isLockedMap[id] = false
+                    return
+                }
+                const unlockedNode: FileNode = { ...$state.snapshot(node), isLocked: false }
+                await this.saveFileToDb(unlockedNode)
+                if (
+                    this.isCurrentFileRead(id, generation, relinkEpoch) &&
+                    this.isCurrentAccessAttempt(id, accessAttempt)
+                ) {
+                    this.nodes[id] = unlockedNode
+                    this.isLockedMap[id] = false
+                }
+            })
+        } catch (error) {
+            if (!(error instanceof VFSDisposedError))
+                console.error(`Failed to persist unlocked state for node ${id}:`, error)
+        }
+    }
+
+    private claimFileUrl(id: string, url: string, owner: FileUrlOwner) {
+        const currentUrl = this.fileUrls[id]
+        if (currentUrl !== url) return
+        const existing = this.fileUrlOwnership.get(id)
+        const ownership: FileUrlOwnership =
+            existing?.url === url ? existing : { url, viewer: 0, temporary: 0 }
+        if (owner === "viewer") ownership.viewer += 1
+        else ownership.temporary += 1
+        this.fileUrlOwnership.set(id, ownership)
+    }
+
+    releaseTemporaryFileUrl(id: string, url: string) {
+        const ownership = this.fileUrlOwnership.get(id)
+        if (!ownership || ownership.url !== url || ownership.temporary <= 0) return
+        ownership.temporary -= 1
+        if (ownership.temporary > 0 || ownership.viewer > 0 || this.fileUrls[id] !== url) return
+        this.retireAccessAttempt(id)
+        URL.revokeObjectURL(url)
+        delete this.fileUrls[id]
+        this.fileUrlOwnership.delete(id)
+    }
+
+    revokeFileUrl(id: string, expectedUrl?: string, force = false): boolean {
         const url = this.fileUrls[id]
-        if (url) {
+        if (!url || (expectedUrl !== undefined && url !== expectedUrl)) return false
+        const ownership = this.fileUrlOwnership.get(id)
+        if (!force && ownership?.url === url) {
+            // Release one operation's lease. In particular, a failed restore must not
+            // revoke a URL still claimed by another concurrent restore.
+            // revokeFileUrl releases a viewer lease. Temporary consumers use
+            // releaseTemporaryFileUrl so releasing one viewer cannot consume or retire
+            // an unrelated temporary access attempt.
+            if (ownership.viewer <= 0) return true
+            ownership.viewer -= 1
+            if (ownership.viewer > 0 || ownership.temporary > 0) return true
+            this.retireAccessAttempt(id)
             URL.revokeObjectURL(url)
             delete this.fileUrls[id]
+            this.fileUrlOwnership.delete(id)
+            return true
         }
+        this.retireAccessAttempt(id)
+        URL.revokeObjectURL(url)
+        delete this.fileUrls[id]
+        this.fileUrlOwnership.delete(id)
+        return true
     }
 
     importFiles(
@@ -480,9 +1250,27 @@ export class VFSStore {
         parentId: string | null,
         callbacks: ImportCallbacks = {},
     ): Promise<ImportResult[]> {
+        if (this.disposed) {
+            return Promise.resolve(
+                inputs.map((input) => ({
+                    id: crypto.randomUUID(),
+                    name: input.name,
+                    status: "failed" as const,
+                })),
+            )
+        }
+
         const rejected = new Map<number, ImportResult>()
         const acceptedIndexes: number[] = []
         const accepted = inputs.flatMap((input, inputIndex) => {
+            if (this.disposed) {
+                rejected.set(inputIndex, {
+                    id: crypto.randomUUID(),
+                    name: input.name,
+                    status: "failed",
+                })
+                return []
+            }
             const isPdf =
                 input.name.toLowerCase().endsWith(".pdf") ||
                 (this.isFileSource(input.source) && input.source.type === "application/pdf")
@@ -493,7 +1281,7 @@ export class VFSStore {
                     status: "rejected",
                 }
                 rejected.set(inputIndex, result)
-                callbacks.onFailure?.(result, "validation")
+                if (!this.disposed) callbacks.onFailure?.(result, "validation")
                 return []
             }
             const job: ImportJob = {
@@ -508,34 +1296,51 @@ export class VFSStore {
         })
 
         // One assignment makes the complete batch observable before any persistence starts.
-        this.importJobs = [...this.importJobs, ...accepted]
+        if (!this.disposed) this.importJobs = [...this.importJobs, ...accepted]
 
         const saveTasks = accepted.map((job) =>
             this.persistenceQueue(() =>
                 this.serializeNodeMutation(() => this.persistImport(job, callbacks)),
-            ),
+            ).catch((error: unknown) => {
+                if (error instanceof VFSDisposedError || this.disposed) return null
+                throw error
+            }),
         )
         const completionTasks = accepted.map((job, index) =>
             this.metadataQueue(async () => {
-                const persisted = await saveTasks[index]
-                if (!persisted) {
+                if (this.disposed) {
                     return { id: job.id, name: job.name, status: "failed" } as ImportResult
                 }
-                return this.enrichImport(job, callbacks)
+                try {
+                    const generations = await this.awaitUnlessDisposed(saveTasks[index])
+                    if (!generations) {
+                        return { id: job.id, name: job.name, status: "failed" } as ImportResult
+                    }
+                    return await this.awaitUnlessDisposed(
+                        this.enrichImport(job, callbacks, generations),
+                    )
+                } catch (error) {
+                    if (error instanceof VFSDisposedError || this.disposed) {
+                        return { id: job.id, name: job.name, status: "failed" } as ImportResult
+                    }
+                    throw error
+                }
             }),
         )
 
-        return Promise.all(completionTasks).then((results) => {
-            const imported = new Map(
-                acceptedIndexes.map((inputIndex, resultIndex) => [
-                    inputIndex,
-                    results[resultIndex],
-                ]),
-            )
-            return inputs.map(
-                (_, inputIndex) => rejected.get(inputIndex) ?? imported.get(inputIndex)!,
-            )
-        })
+        return this.trackSourceTask(
+            Promise.all(completionTasks).then((results) => {
+                const imported = new Map(
+                    acceptedIndexes.map((inputIndex, resultIndex) => [
+                        inputIndex,
+                        results[resultIndex],
+                    ]),
+                )
+                return inputs.map(
+                    (_, inputIndex) => rejected.get(inputIndex) ?? imported.get(inputIndex)!,
+                )
+            }),
+        )
     }
 
     private isFileSource(source: File | FileSystemFileHandle): source is File {
@@ -543,17 +1348,20 @@ export class VFSStore {
     }
 
     private updateImportJob(id: string, updates: Partial<ImportJob>) {
+        if (this.disposed) return
         this.importJobs = this.importJobs.map((job) =>
             job.id === id ? { ...job, ...updates } : job,
         )
     }
 
     private removeImportJob(id: string) {
-        this.importJobs = this.importJobs.filter((job) => job.id !== id)
         this.importSources.delete(id)
+        if (this.disposed) return
+        this.importJobs = this.importJobs.filter((job) => job.id !== id)
     }
 
     clearFailedImports() {
+        if (this.disposed) return
         const failedIds = new Set(
             this.importJobs.filter((job) => job.stage === "failed").map((job) => job.id),
         )
@@ -561,14 +1369,33 @@ export class VFSStore {
         for (const id of failedIds) this.importSources.delete(id)
     }
 
-    private async persistImport(job: ImportJob, callbacks: ImportCallbacks): Promise<boolean> {
+    private async persistImport(
+        job: ImportJob,
+        callbacks: ImportCallbacks,
+    ): Promise<ImportGenerations | null> {
+        if (this.disposed) return null
         this.updateImportJob(job.id, { stage: "saving" })
+        if (job.parentId !== null) {
+            const parent = this.nodes[job.parentId]
+            if (!parent || parent.type !== "folder") {
+                this.updateImportJob(job.id, { stage: "failed", failure: "persistence" })
+                this.importSources.delete(job.id)
+                if (!this.disposed) {
+                    callbacks.onFailure?.(
+                        { id: job.id, name: job.name, status: "failed" },
+                        "persistence",
+                    )
+                }
+                return null
+            }
+        }
         const source = this.importSources.get(job.id)
-        if (!source) return false
+        if (!source) return null
 
         try {
             const isFile = this.isFileSource(source)
-            const file = isFile ? source : await source.getFile()
+            const file = isFile ? source : await this.awaitUnlessDisposed(source.getFile())
+            this.throwIfDisposed()
             const now = Date.now()
             const siblingTimestamps = Object.values(this.nodes)
                 .filter((node) => node.parentId === job.parentId && node.type === "file")
@@ -590,9 +1417,13 @@ export class VFSStore {
                 ? { id: job.id, file: new Blob([file], { type: file.type }) }
                 : { id: job.id, handle: source }
 
+            this.throwIfDisposed()
             await this.db.transaction("rw", ["books", "folders", "fileContents"], async () => {
+                this.throwIfDisposed()
                 await this.db.files.put(node)
+                this.throwIfDisposed()
                 await this.db.fileContents.put(content)
+                this.throwIfDisposed()
                 if (job.parentId !== null) {
                     const parent = this.nodes[job.parentId]
                     if (parent?.type === "folder") {
@@ -603,12 +1434,15 @@ export class VFSStore {
                                 updatedAt: now,
                             }) as FolderNode,
                         )
+                        this.throwIfDisposed()
                     }
                 }
             })
+            this.throwIfDisposed()
 
             if (isFile) this.nativeFiles.set(job.id, content.file!)
             else this.nativeHandles.set(job.id, source)
+            this.throwIfDisposed()
             this.nodes[job.id] = node
             this.isLockedMap[job.id] = !isFile
             if (job.parentId === null) {
@@ -621,62 +1455,116 @@ export class VFSStore {
                 }
             }
             this.updateImportJob(job.id, { stage: "metadata" })
-            return true
+            return {
+                content: this.contentGeneration(job.id),
+                preview: this.previewGeneration(job.id),
+                request: this.previewRequestVersion(job.id),
+            }
         } catch (error) {
+            if (error instanceof VFSDisposedError || this.disposed) return null
             console.error(`[VFSStore] Failed to persist import ${job.name}:`, error)
             this.updateImportJob(job.id, { stage: "failed", failure: "persistence" })
-            callbacks.onFailure?.({ id: job.id, name: job.name, status: "failed" }, "persistence")
-            return false
+            this.importSources.delete(job.id)
+            if (!this.disposed) {
+                callbacks.onFailure?.(
+                    { id: job.id, name: job.name, status: "failed" },
+                    "persistence",
+                )
+            }
+            return null
         }
     }
 
-    private async enrichImport(job: ImportJob, callbacks: ImportCallbacks): Promise<ImportResult> {
+    private async enrichImport(
+        job: ImportJob,
+        callbacks: ImportCallbacks,
+        generations: ImportGenerations,
+    ): Promise<ImportResult> {
         const source = this.importSources.get(job.id)
         let tempUrl = ""
         let doc: PDFDocument | null = null
         let previewUrl = ""
         let failed = false
         try {
+            this.throwIfDisposed()
             if (!source) throw new Error("Import source is unavailable")
-            const file = this.isFileSource(source) ? source : await source.getFile()
+            const file = this.isFileSource(source)
+                ? source
+                : await this.awaitUnlessDisposed(source.getFile())
+            this.throwIfDisposed()
             tempUrl = URL.createObjectURL(file)
             doc = new PDFDocument(tempUrl)
-            await doc.load()
+            await this.awaitUnlessDisposed(doc.load())
+            this.throwIfDisposed()
 
-            const [totalPages, author, pdfTitle] = await Promise.all([
-                doc.getPageNumber(),
-                doc.getAuthor(),
-                doc.getTitle(),
-            ])
-            await this.updateFile(
-                job.id,
-                {
-                    metadata: {
-                        pageNumber: 1,
-                        totalPages,
-                        author,
-                        pdfTitle: pdfTitle?.trim() || null,
-                    },
-                },
-                true,
+            const [totalPages, author, pdfTitle] = await this.awaitUnlessDisposed(
+                Promise.all([doc.getPageNumber(), doc.getAuthor(), doc.getTitle()]),
             )
+            this.throwIfDisposed()
+            await this.awaitUnlessDisposed(
+                this.updateFile(
+                    job.id,
+                    {
+                        metadata: {
+                            pageNumber: 1,
+                            totalPages,
+                            author,
+                            pdfTitle: pdfTitle?.trim() || null,
+                        },
+                    },
+                    true,
+                    generations.content,
+                ),
+            )
+            this.throwIfDisposed()
 
-            const page = await doc.getPage(1)
-            previewUrl = await doc.getCanvasPage(page)
-            if (previewUrl) await this.savePreview(job.id, previewUrl, true)
+            const page = await this.awaitUnlessDisposed(doc.getPage(1))
+            this.throwIfDisposed()
+            previewUrl = await this.awaitUnlessDisposed(doc.getCanvasPage(page))
+            this.throwIfDisposed()
+            if (previewUrl) {
+                await this.awaitUnlessDisposed(
+                    this.savePreview(
+                        job.id,
+                        previewUrl,
+                        true,
+                        generations.content,
+                        generations.preview,
+                        generations.request,
+                    ),
+                )
+                this.throwIfDisposed()
+            }
         } catch (error) {
             failed = true
-            console.error(`[VFSStore] Failed to enrich import ${job.name}:`, error)
-            callbacks.onFailure?.({ id: job.id, name: job.name, status: "imported" }, "metadata")
+            if (!(error instanceof VFSDisposedError) && !this.disposed) {
+                console.error(`[VFSStore] Failed to enrich import ${job.name}:`, error)
+                if (!this.disposed) {
+                    callbacks.onFailure?.(
+                        { id: job.id, name: job.name, status: "imported" },
+                        "metadata",
+                    )
+                }
+            }
         } finally {
             if (previewUrl) URL.revokeObjectURL(previewUrl)
-            await doc?.close()
+            try {
+                await this.awaitUnlessDisposed(doc?.close() ?? Promise.resolve()).catch(
+                    () => undefined,
+                )
+            } catch (error) {
+                if (!(error instanceof VFSDisposedError) && !this.disposed) throw error
+            }
             if (tempUrl) URL.revokeObjectURL(tempUrl)
             this.removeImportJob(job.id)
         }
 
+        if (this.disposed) return { id: job.id, name: job.name, status: "failed" }
         const result: ImportResult = { id: job.id, name: job.name, status: "imported" }
-        await callbacks.onImported?.(result)
+        if (!this.disposed) {
+            await this.awaitUnlessDisposed(Promise.resolve(callbacks.onImported?.(result)))
+        }
+        if (this.disposed) return { id: job.id, name: job.name, status: "failed" }
         if (failed && this.isLockedMap[job.id]) this.revokeFileUrl(job.id)
         return result
     }
@@ -723,7 +1611,8 @@ export class VFSStore {
         if (name === node.name) return
 
         const updated: FolderNode = { ...$state.snapshot(node), name, updatedAt: Date.now() }
-        await this.db.folders.put(updated)
+        await this.awaitUnlessDisposed(this.db.folders.put(updated))
+        this.throwIfDisposed()
         this.nodes[id] = updated
     }
 
@@ -735,8 +1624,10 @@ export class VFSStore {
         const node = this.nodes[id]
         if (!node || node.isPinned === isPinned) return
 
-        if (node.type === "folder") await this.db.folders.update(id, { isPinned })
-        else await this.db.files.update(id, { isPinned })
+        if (node.type === "folder")
+            await this.awaitUnlessDisposed(this.db.folders.update(id, { isPinned }))
+        else await this.awaitUnlessDisposed(this.db.files.update(id, { isPinned }))
+        this.throwIfDisposed()
 
         const current = this.nodes[id]
         if (current) current.isPinned = isPinned
@@ -747,6 +1638,12 @@ export class VFSStore {
     }
 
     private async createFolderUnlocked(name: string, parentId: string | null): Promise<string> {
+        if (parentId !== null) {
+            const parent = this.nodes[parentId]
+            if (!parent || parent.type !== "folder") {
+                throw new Error("Folder parent must be an existing folder")
+            }
+        }
         const normalizedName = this.normalizeFolderName(name, parentId)
         const id = crypto.randomUUID()
         const now = Date.now()
@@ -762,7 +1659,9 @@ export class VFSStore {
         }
 
         await this.db.transaction("rw", ["folders"], async () => {
+            this.throwIfDisposed()
             await this.db.folders.put(newFolder)
+            this.throwIfDisposed()
             if (parentId !== null) {
                 const parent = this.nodes[parentId]
                 if (parent && parent.type === "folder") {
@@ -772,9 +1671,11 @@ export class VFSStore {
                         updatedAt: now,
                     }
                     await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
+                    this.throwIfDisposed()
                 }
             }
         })
+        this.throwIfDisposed()
 
         this.nodes[id] = newFolder
         if (parentId === null) {
@@ -813,56 +1714,124 @@ export class VFSStore {
 
         const fileIds = nodesToDelete.filter((n) => n.type === "file").map((n) => n.id)
         const folderIds = nodesToDelete.filter((n) => n.type === "folder").map((n) => n.id)
-        const now = Date.now()
-
-        // PHASE 4 OPTIMIZATION: Use bulkDelete for efficient batch removal
-        await this.db.transaction(
-            "rw",
-            [
-                "books",
-                "folders",
-                "previews",
-                "fileContents",
-                "indexedTexts",
-                "userNotes",
-                "bookmarks",
-            ],
-            async () => {
-                if (fileIds.length > 0) {
-                    await this.db.files.bulkDelete(fileIds)
-                    await this.db.previews.bulkDelete(fileIds)
-                    await this.db.fileContents.bulkDelete(fileIds)
-                    await Promise.all([
-                        ...fileIds.map((fid) => this.db.indexedTexts.deleteByBookId(fid)),
-                        ...fileIds.map((fid) => this.db.userNotes.deleteByBookId(fid)),
-                        ...fileIds.map((fid) => this.db.bookmarks.deleteByBookId(fid)),
-                    ])
-                }
-                if (folderIds.length > 0) {
-                    await this.db.folders.bulkDelete(folderIds)
-                }
-
-                if (rootNode.parentId !== null) {
-                    const parent = this.nodes[rootNode.parentId]
-                    if (parent && parent.type === "folder") {
-                        const updatedParent = {
-                            ...parent,
-                            childrenIds: parent.childrenIds.filter((cid) => cid !== id),
-                            updatedAt: now,
-                        }
-                        await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
-                    }
-                }
-            },
+        const previousGenerations = new Map(
+            fileIds.map((fileId) => [
+                fileId,
+                {
+                    content: this.contentGeneration(fileId),
+                    preview: this.previewGeneration(fileId),
+                },
+            ]),
         )
+        for (const fileId of fileIds) {
+            this.deletingFileIds.add(fileId)
+            this.invalidateContent(fileId)
+        }
+        const now = Date.now()
+        let deletionCommitted = false
 
+        try {
+            // PHASE 4 OPTIMIZATION: Use bulkDelete for efficient batch removal
+            await this.db.transaction(
+                "rw",
+                [
+                    "books",
+                    "folders",
+                    "previews",
+                    "fileContents",
+                    "indexedTexts",
+                    "userNotes",
+                    "bookmarks",
+                ],
+                async () => {
+                    this.throwIfDisposed()
+                    if (fileIds.length > 0) {
+                        await this.db.files.bulkDelete(fileIds)
+                        this.throwIfDisposed()
+                        await this.db.previews.bulkDelete(fileIds)
+                        this.throwIfDisposed()
+                        await this.db.fileContents.bulkDelete(fileIds)
+                        this.throwIfDisposed()
+                        for (const fileId of fileIds) {
+                            await this.db.indexedTexts.deleteByBookId(fileId)
+                            this.throwIfDisposed()
+                            await this.db.userNotes.deleteByBookId(fileId)
+                            this.throwIfDisposed()
+                            await this.db.bookmarks.deleteByBookId(fileId)
+                            this.throwIfDisposed()
+                        }
+                    }
+                    if (folderIds.length > 0) {
+                        await this.db.folders.bulkDelete(folderIds)
+                        this.throwIfDisposed()
+                    }
+
+                    if (rootNode.parentId !== null) {
+                        const parent = this.nodes[rootNode.parentId]
+                        if (parent && parent.type === "folder") {
+                            const updatedParent = {
+                                ...parent,
+                                childrenIds: parent.childrenIds.filter((cid) => cid !== id),
+                                updatedAt: now,
+                            }
+                            await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
+                            this.throwIfDisposed()
+                        }
+                    }
+                },
+            )
+            // The transaction's resolution is the commit point. Disposal can race the
+            // continuation immediately afterwards; never restore deletion state once the DB
+            // has committed.
+            deletionCommitted = true
+            this.throwIfDisposed()
+        } catch (error) {
+            if (!deletionCommitted) {
+                for (const fileId of fileIds) {
+                    const previous = previousGenerations.get(fileId)!
+                    this.deletingFileIds.delete(fileId)
+                    this.settleDeletion(fileId)
+                    this.contentGenerations.set(fileId, previous.content)
+                    this.previewGenerations.set(fileId, previous.preview)
+                    this.contentRetryVersions.set(fileId, this.contentRetryVersion(fileId) + 1)
+                    this.previewRequestVersions.set(fileId, this.previewRequestVersion(fileId) + 1)
+                    this.previewUrlRequests.delete(fileId)
+                    this.notifyNodeInvalidated(fileId)
+                    this.notifyContentRestored(fileId)
+                }
+                throw error
+            }
+            // Disposal may reject the post-commit continuation. Cleanup below still owns the
+            // in-memory deletion and must run even though listeners/database are closed.
+        }
+
+        // Persistence has committed. Listener failures must not prevent the in-memory
+        // deletion cleanup below or leave access requests waiting forever.
+        if (!this.disposed) {
+            for (const listener of this.nodeDeletionStartingListeners) {
+                try {
+                    listener(fileIds)
+                } catch (error) {
+                    console.error("VFS node deletion listener failed:", error)
+                }
+            }
+        }
+        for (const fileId of fileIds) this.deletingFileIds.delete(fileId)
+
+        const deletedIds = nodesToDelete
+            .filter((node) => node.type === "file")
+            .map((node) => node.id)
         for (const node of nodesToDelete) {
             if (node.type === "file") {
                 this.nativeFiles.delete(node.id)
                 this.nativeHandles.delete(node.id)
-                this.revokeFileUrl(node.id)
+                this.revokeFileUrl(node.id, undefined, true)
                 this.revokePreviewUrl(node.id, true)
                 delete this.isLockedMap[node.id]
+                // Keep generation tombstones so a late read cannot become current for a reused id.
+                for (const key of this.fileUrlRequests.keys()) {
+                    if (key.startsWith(`${node.id}\u0000`)) this.fileUrlRequests.delete(key)
+                }
             }
             if (this.selectedId === node.id) this.selectedId = null
             if (this.activeFileId === node.id) this.activeFileId = null
@@ -880,15 +1849,27 @@ export class VFSStore {
                 parent.updatedAt = now
             }
         }
+        for (const fileId of fileIds) this.settleDeletion(fileId)
+
+        if (!this.disposed) {
+            for (const listener of this.nodeDeletionListeners) {
+                try {
+                    listener(deletedIds)
+                } catch (error) {
+                    console.error("VFS node deleted listener failed:", error)
+                }
+            }
+        }
     }
 
     async updateFile(
         id: string,
         updates: Omit<Partial<FileNode>, "metadata"> & { metadata?: Partial<BookMetadata> },
         preserveUpdatedAt = false,
+        expectedGeneration?: number,
     ) {
         return this.serializeNodeMutation(() =>
-            this.updateFileUnlocked(id, updates, preserveUpdatedAt),
+            this.updateFileUnlocked(id, updates, preserveUpdatedAt, expectedGeneration),
         )
     }
 
@@ -896,17 +1877,33 @@ export class VFSStore {
         id: string,
         updates: Omit<Partial<FileNode>, "metadata"> & { metadata?: Partial<BookMetadata> },
         preserveUpdatedAt: boolean,
+        expectedGeneration?: number,
     ) {
+        if (expectedGeneration !== undefined && !this.isCurrentContent(id, expectedGeneration)) {
+            return
+        }
         const node = this.nodes[id]
         if (node && node.type === "file") {
-            if (updates.name !== undefined) node.name = updates.name
-            if (updates.metadata !== undefined) {
-                node.metadata = { ...node.metadata, ...updates.metadata }
+            const updated: FileNode = {
+                ...$state.snapshot(node),
+                ...(updates.name !== undefined ? { name: updates.name } : {}),
+                ...(updates.metadata !== undefined
+                    ? { metadata: { ...node.metadata, ...updates.metadata } }
+                    : {}),
+                updatedAt: preserveUpdatedAt ? node.updatedAt : Date.now(),
             }
-            if (updates.isLocked !== undefined) this.isLockedMap[id] = updates.isLocked
-
-            if (!preserveUpdatedAt) node.updatedAt = Date.now()
-            await this.saveFileToDb(node)
+            const nextLocked = updates.isLocked ?? this.isLockedMap[id] ?? updated.isLocked
+            updated.isLocked = nextLocked
+            await this.saveFileToDb(updated)
+            this.throwIfDisposed()
+            if (
+                expectedGeneration !== undefined &&
+                !this.isCurrentContent(id, expectedGeneration)
+            ) {
+                return
+            }
+            this.nodes[id] = updated
+            this.isLockedMap[id] = nextLocked
         }
     }
 
@@ -920,12 +1917,17 @@ export class VFSStore {
             if (!current || current.type !== "folder") return
 
             const folderUpdates = updates as Partial<FolderNode>
-            if (folderUpdates.name !== undefined) current.name = folderUpdates.name
-            if (folderUpdates.childrenIds !== undefined)
-                current.childrenIds = folderUpdates.childrenIds
-
-            current.updatedAt = Date.now()
-            await this.db.folders.put($state.snapshot(current) as FolderNode)
+            const updated: FolderNode = {
+                ...$state.snapshot(current),
+                ...(folderUpdates.name !== undefined ? { name: folderUpdates.name } : {}),
+                ...(folderUpdates.childrenIds !== undefined
+                    ? { childrenIds: [...folderUpdates.childrenIds] }
+                    : {}),
+                updatedAt: Date.now(),
+            }
+            await this.awaitUnlessDisposed(this.db.folders.put(updated))
+            this.throwIfDisposed()
+            this.nodes[id] = updated
         })
     }
 
@@ -933,12 +1935,18 @@ export class VFSStore {
         id: string,
         previewDataUrl: string,
         preserveUpdatedAt = false,
+        expectedGeneration = this.contentGeneration(id),
+        expectedPreviewGeneration = this.previewGeneration(id),
+        expectedPreviewRequestVersion = this.previewRequestVersion(id),
     ): Promise<void> {
+        if (this.disposed || !this.isCurrentPreviewRequest(id, expectedPreviewRequestVersion))
+            return
         let blob: Blob
         if (previewDataUrl.startsWith("blob:") || previewDataUrl.startsWith("data:")) {
             try {
-                const response = await fetch(previewDataUrl)
-                blob = await response.blob()
+                const response = await this.awaitUnlessDisposed(fetch(previewDataUrl))
+                blob = await this.awaitUnlessDisposed(response.blob())
+                if (this.disposed) return
             } catch (e) {
                 console.error("Failed to fetch blob for preview", e)
                 return
@@ -947,79 +1955,362 @@ export class VFSStore {
             return
         }
 
-        await this.db.previews.put({ id, data: blob })
-
-        await this.serializeNodeMutation(async () => {
-            const node = this.nodes[id]
-            if (node && node.type === "file") {
+        try {
+            await this.serializeNodeMutation(async () => {
+                this.throwIfDisposed()
+                if (
+                    !this.isCurrentContent(id, expectedGeneration) ||
+                    !this.isCurrentPreview(id, expectedPreviewGeneration) ||
+                    !this.isCurrentPreviewRequest(id, expectedPreviewRequestVersion)
+                )
+                    return
+                const node = this.nodes[id]
+                if (!node || node.type !== "file") return
+                const updated: FileNode = {
+                    ...$state.snapshot(node),
+                    updatedAt: preserveUpdatedAt ? node.updatedAt : Date.now(),
+                }
+                await this.db.transaction("rw", ["books", "previews"], async () => {
+                    this.throwIfDisposed()
+                    await this.db.previews.put({ id, data: blob })
+                    this.throwIfDisposed()
+                    await this.saveFileToDb(updated)
+                    this.throwIfDisposed()
+                })
+                this.throwIfDisposed()
                 const existingUrl = this.previewUrls[id]
                 if (existingUrl) URL.revokeObjectURL(existingUrl)
                 delete this.previewUrls[id]
-                if (!preserveUpdatedAt) node.updatedAt = Date.now()
-                await this.saveFileToDb(node)
-            }
-        })
+                if (
+                    !this.isCurrentContent(id, expectedGeneration) ||
+                    !this.isCurrentPreview(id, expectedPreviewGeneration) ||
+                    !this.isCurrentPreviewRequest(id, expectedPreviewRequestVersion)
+                )
+                    return
+                this.nodes[id] = updated
+            })
+        } catch (error) {
+            if (!(error instanceof VFSDisposedError)) throw error
+        }
     }
 
     async restoreFileAccess(id: string): Promise<string> {
-        this.revokeFileUrl(id)
-        const url = await this.getFileUrl(id, true)
-        if (!url) throw new Error("Failed to restore file access")
-
-        await this.serializeNodeMutation(async () => {
-            const node = this.nodes[id]
-            if (node && node.type === "file") {
-                node.updatedAt = Date.now()
-                await this.saveFileToDb(node)
+        while (true) {
+            if (this.deletingFileIds.has(id)) await this.waitForDeletion(id)
+            // A committed deletion is a normal terminal result for a restore request;
+            // there is no node left whose access can be restored. A rollback, however,
+            // leaves the node present and falls through to a fresh access attempt.
+            if (this.nodes[id]?.type !== "file") return ""
+            const generation = this.contentGeneration(id)
+            const relinkEpoch = this.relinkEpochs.get(id) ?? 0
+            const relinkObserved = (this.relinkingCounts.get(id) ?? 0) > 0
+            const url = await this.awaitUnlessDisposed(this.getFileUrl(id, true, "viewer", true))
+            if (!this.isCurrentContent(id, generation)) {
+                if (url && !this.revokeFileUrl(id, url)) URL.revokeObjectURL(url)
+                if (
+                    await this.retryAfterContentSuperseded(
+                        id,
+                        generation,
+                        relinkEpoch,
+                        relinkObserved,
+                    )
+                )
+                    continue
+                if (this.nodes[id]?.type !== "file") return ""
+                throw new ContentSupersededError()
             }
-        })
+            if (!url) {
+                if (
+                    await this.retryAfterContentSuperseded(
+                        id,
+                        generation,
+                        relinkEpoch,
+                        relinkObserved,
+                    )
+                )
+                    continue
+                if (this.nodes[id]?.type !== "file") return ""
+                throw new Error("Failed to restore file access")
+            }
 
-        return url
+            let committed = false
+            try {
+                await this.serializeNodeMutation(async () => {
+                    if (!this.isCurrentContent(id, generation)) return
+                    const node = this.nodes[id]
+                    if (!node || node.type !== "file") return
+                    const updated: FileNode = {
+                        ...$state.snapshot(node),
+                        isLocked: false,
+                        updatedAt: Date.now(),
+                    }
+                    await this.saveFileToDb(updated)
+                    if (!this.isCurrentContent(id, generation)) return
+                    this.nodes[id] = updated
+                    committed = true
+                })
+            } catch (error) {
+                if (!this.revokeFileUrl(id, url)) URL.revokeObjectURL(url)
+                throw error
+            }
+
+            if (!committed || !this.isCurrentContent(id, generation)) {
+                if (!this.revokeFileUrl(id, url)) URL.revokeObjectURL(url)
+                if (
+                    await this.retryAfterContentSuperseded(
+                        id,
+                        generation,
+                        relinkEpoch,
+                        relinkObserved,
+                    )
+                )
+                    continue
+                if (this.nodes[id]?.type !== "file") return ""
+                throw new ContentSupersededError()
+            }
+            return url
+        }
     }
 
     async relinkFile(id: string, fileSource: File | FileSystemFileHandle): Promise<void> {
-        const isFile = fileSource instanceof File
-        let fileObj: File | null = null
+        return this.trackSourceTask(this.relinkFileUnlocked(id, fileSource))
+    }
+
+    private async relinkFileUnlocked(
+        id: string,
+        fileSource: File | FileSystemFileHandle,
+    ): Promise<void> {
+        this.relinkingCounts.set(id, (this.relinkingCounts.get(id) ?? 0) + 1)
+        const relinkEpoch = (this.relinkEpochs.get(id) ?? 0) + 1
+        this.relinkEpochs.set(id, relinkEpoch)
+        const previousGeneration = this.contentGeneration(id)
+        const previousPreviewGeneration = this.previewGeneration(id)
+        const previousStateOwner = this.relinkStateOwners.get(id) ?? 0
+        let generation = previousGeneration
+        let invalidated = false
+        let committed = false
+        let failed = false
+        let failure: unknown
+        let superseded = false
+        let restored = false
         try {
-            fileObj = isFile
-                ? (fileSource as File)
-                : await (fileSource as FileSystemFileHandle).getFile()
-        } catch (e) {
-            console.error("Failed to retrieve file object during VFS relinking:", e)
-        }
-
-        const fileContent: FileContent = { id }
-        if (isFile) {
-            const file = fileObj || (fileSource as File)
-            fileContent.file = new Blob([file], { type: file.type })
-        } else {
-            fileContent.handle = fileSource as FileSystemFileHandle
-        }
-
-        await this.db.fileContents.put(fileContent)
-
-        if (isFile) {
-            this.nativeFiles.set(id, fileContent.file!)
-            this.nativeHandles.delete(id)
-        } else {
-            this.nativeHandles.set(id, fileContent.handle!)
-            this.nativeFiles.delete(id)
-        }
-
-        await this.serializeNodeMutation(async () => {
-            const node = this.nodes[id]
-            if (node && node.type === "file") {
-                node.isLocked = false
-                this.isLockedMap[id] = false
-                node.updatedAt = Date.now()
-                await this.saveFileToDb(node)
+            const isFile = this.isFileSource(fileSource)
+            let fileObj: File | null = null
+            try {
+                fileObj = isFile
+                    ? (fileSource as File)
+                    : await this.awaitUnlessDisposed((fileSource as FileSystemFileHandle).getFile())
+            } catch (e) {
+                console.error("Failed to retrieve file object during VFS relinking:", e)
+                throw new Error("Failed to retrieve file object during VFS relinking", { cause: e })
             }
-        })
+
+            if (!fileObj) throw new Error("Failed to retrieve file object during VFS relinking")
+            const candidateUrl = URL.createObjectURL(fileObj)
+            const candidateDocument = new PDFDocument(candidateUrl)
+            try {
+                await this.awaitUnlessDisposed(candidateDocument.load())
+            } finally {
+                try {
+                    await this.awaitUnlessDisposed(candidateDocument.close()).catch(() => undefined)
+                } finally {
+                    URL.revokeObjectURL(candidateUrl)
+                }
+            }
+
+            const fileContent: FileContent = { id }
+            if (isFile) {
+                const file = fileObj || (fileSource as File)
+                fileContent.file = new Blob([file], { type: file.type })
+            } else {
+                fileContent.handle = fileSource as FileSystemFileHandle
+            }
+
+            await this.serializeNodeMutation(async () => {
+                const node = this.nodes[id]
+                if (!node || node.type !== "file") throw new Error("Cannot relink a missing file")
+                if (
+                    (this.relinkEpochs.get(id) ?? 0) !== relinkEpoch ||
+                    this.deletingFileIds.has(id)
+                ) {
+                    superseded = true
+                    return
+                }
+                generation = this.invalidateContent(id)
+                this.relinkStateOwners.set(id, relinkEpoch)
+                invalidated = true
+                const updated: FileNode = {
+                    ...$state.snapshot(node),
+                    size: fileObj?.size ?? node.size,
+                    metadata: { pageNumber: 1 },
+                    isLocked: !isFile,
+                    updatedAt: Date.now(),
+                }
+                const filesTable = this.db.files as typeof this.db.files & {
+                    get?: (fileId: string) => Promise<FileNode | undefined>
+                    delete?: (fileId: string) => Promise<void>
+                }
+                const fileContentsTable = this.db.fileContents as typeof this.db.fileContents & {
+                    get?: (fileId: string) => Promise<FileContent | undefined>
+                    delete?: (fileId: string) => Promise<void>
+                }
+                const previewsTable = this.db.previews as typeof this.db.previews & {
+                    get?: (fileId: string) => Promise<BookPreview | undefined>
+                }
+                const indexedTextsTable = this.db.indexedTexts as typeof this.db.indexedTexts & {
+                    getByBookId?: (bookId: string) => Promise<IndexedText[]>
+                    bulkPut?: (records: IndexedText[]) => Promise<string[]>
+                }
+                const previousFile = filesTable.get
+                    ? await this.awaitUnlessDisposed(filesTable.get(id))
+                    : undefined
+                const previousContent = fileContentsTable.get
+                    ? await this.awaitUnlessDisposed(fileContentsTable.get(id))
+                    : undefined
+                const previousPreview = previewsTable.get
+                    ? await this.awaitUnlessDisposed(previewsTable.get(id))
+                    : undefined
+                const previousIndexedTexts = indexedTextsTable.getByBookId
+                    ? await this.awaitUnlessDisposed(indexedTextsTable.getByBookId(id))
+                    : undefined
+                await this.db.transaction(
+                    "rw",
+                    ["books", "fileContents", "previews", "indexedTexts"],
+                    async () => {
+                        this.throwIfDisposed()
+                        await this.db.fileContents.put(fileContent)
+                        this.throwIfDisposed()
+                        await this.db.previews.delete(id)
+                        this.throwIfDisposed()
+                        await this.db.indexedTexts.deleteByBookId(id)
+                        this.throwIfDisposed()
+                        await this.saveFileToDb(updated)
+                        this.throwIfDisposed()
+                    },
+                )
+                this.throwIfDisposed()
+                if (!this.isCurrentRelink(id, generation, relinkEpoch)) {
+                    // A newer relink may have invalidated ownership while the transaction was
+                    // committing. Restore every record touched above before the next mutation.
+                    await this.db.transaction(
+                        "rw",
+                        ["books", "fileContents", "previews", "indexedTexts"],
+                        async () => {
+                            this.throwIfDisposed()
+                            if (previousFile) await filesTable.put(previousFile)
+                            else if (filesTable.delete) await filesTable.delete(id)
+                            this.throwIfDisposed()
+                            if (previousContent) await fileContentsTable.put(previousContent)
+                            else if (fileContentsTable.delete) await fileContentsTable.delete(id)
+                            this.throwIfDisposed()
+                            if (previousPreview) await this.db.previews.put(previousPreview)
+                            else await this.db.previews.delete(id)
+                            this.throwIfDisposed()
+                            await this.db.indexedTexts.deleteByBookId(id)
+                            this.throwIfDisposed()
+                            if (previousIndexedTexts?.length && indexedTextsTable.bulkPut)
+                                await indexedTextsTable.bulkPut(previousIndexedTexts)
+                            this.throwIfDisposed()
+                        },
+                    )
+                    this.throwIfDisposed()
+                    // The newer relink has not necessarily invalidated content yet. Restore
+                    // this operation's generation so a newer failed validation cannot strand
+                    // access requests; a newer operation may invalidate it again later.
+                    this.contentGenerations.set(id, previousGeneration)
+                    this.previewGenerations.set(id, previousPreviewGeneration)
+                    this.previewRequestVersions.set(id, this.previewRequestVersion(id) + 1)
+                    this.relinkStateOwners.set(id, previousStateOwner)
+                    this.relinkRetryEpochs.set(id, relinkEpoch)
+                    this.previewUrlRequests.delete(id)
+                    superseded = true
+                    return
+                }
+                this.revokeFileUrl(id, undefined, true)
+                const previewRefs = this.previewUrlRefs[id]
+                this.revokePreviewUrl(id, true)
+                if (previewRefs) this.previewUrlRefs[id] = previewRefs
+                this.nativeFiles.delete(id)
+                this.nativeHandles.delete(id)
+                if (isFile) this.nativeFiles.set(id, fileContent.file!)
+                else this.nativeHandles.set(id, fileContent.handle!)
+                this.isLockedMap[id] = updated.isLocked ?? false
+                this.nodes[id] = updated
+                this.relinkStateOwners.set(id, relinkEpoch)
+                committed = true
+            })
+        } catch (error) {
+            failed = true
+            failure = error
+        }
+
+        if (failed) {
+            // Validation happens before content is invalidated. Still mark this epoch as a
+            // retry boundary so reads that were already waiting on the old handle do not
+            // settle with an empty result after the failed replacement attempt.
+            if (
+                !invalidated &&
+                (this.relinkEpochs.get(id) ?? 0) === relinkEpoch &&
+                this.nodes[id]?.type === "file" &&
+                !this.deletingFileIds.has(id)
+            ) {
+                this.relinkRetryEpochs.set(id, relinkEpoch)
+            }
+            if (
+                invalidated &&
+                this.isCurrentContent(id, generation) &&
+                this.relinkStateOwners.get(id) === relinkEpoch &&
+                this.nodes[id]?.type === "file" &&
+                !this.deletingFileIds.has(id)
+            ) {
+                this.contentGenerations.set(id, previousGeneration)
+                this.previewGenerations.set(id, previousPreviewGeneration)
+                this.previewRequestVersions.set(id, this.previewRequestVersion(id) + 1)
+                this.relinkStateOwners.set(id, previousStateOwner)
+                this.relinkRetryEpochs.set(id, relinkEpoch)
+                this.previewUrlRequests.delete(id)
+                this.notifyNodeInvalidated(id)
+                this.restoredRelinks.add(id)
+                restored = true
+            }
+        }
+
+        const count = (this.relinkingCounts.get(id) ?? 1) - 1
+        if (count > 0) this.relinkingCounts.set(id, count)
+        else {
+            this.relinkingCounts.delete(id)
+            const waiters = this.relinkWaiters.get(id)
+            this.relinkWaiters.delete(id)
+            for (const resolve of waiters ?? []) resolve()
+        }
+        // A rollback restores the previous content; it is not a committed relink. Only a
+        // successfully persisted replacement may notify viewers to acquire a new URL.
+        if (committed) this.committedRelinks.add(id)
+        if (count <= 0) {
+            const hasRestoredRelink = this.restoredRelinks.delete(id)
+            if (hasRestoredRelink) this.notifyContentRestored(id)
+            const hasSettledRelink = this.committedRelinks.delete(id)
+            if (hasSettledRelink && !this.disposed) {
+                for (const listener of this.nodeRelinkedListeners) {
+                    if (this.disposed) break
+                    try {
+                        listener(id)
+                    } catch (error) {
+                        console.error("VFS node relinked listener failed:", error)
+                    }
+                }
+            }
+        }
+
+        if (failed) throw failure
+        if (superseded) {
+            throw new ContentSupersededError("Relink was superseded by a newer request")
+        }
     }
 
     private async saveFileToDb(node: FileNode): Promise<void> {
         const plainNode = $state.snapshot(node)
-        plainNode.isLocked = this.isLockedMap[node.id]
+        plainNode.isLocked = node.isLocked
         if (plainNode.metadata) {
             plainNode.metadata.pageNumber = plainNode.metadata.pageNumber || 1
         }
@@ -1034,6 +2325,12 @@ export class VFSStore {
         const node = this.nodes[id]
         if (!node) return
 
+        if (newParentId !== null) {
+            const target = this.nodes[newParentId]
+            if (!target || target.type !== "folder") {
+                throw new Error("Move target must be an existing folder")
+            }
+        }
         if (node.type === "folder" && newParentId !== null) {
             let currentId: string | null = newParentId
             while (currentId) {
@@ -1049,60 +2346,43 @@ export class VFSStore {
         if (oldParentId === newParentId) return
 
         const now = Date.now()
-        node.parentId = newParentId
-        node.updatedAt = now
+        const updatedNode = { ...$state.snapshot(node), parentId: newParentId, updatedAt: now }
+        const oldParent = oldParentId ? this.nodes[oldParentId] : null
+        const newParent = newParentId ? this.nodes[newParentId] : null
+        const updatedOldParent =
+            oldParent?.type === "folder"
+                ? {
+                      ...$state.snapshot(oldParent),
+                      childrenIds: oldParent.childrenIds.filter((cid) => cid !== id),
+                      updatedAt: now,
+                  }
+                : null
+        const updatedNewParent =
+            newParent?.type === "folder"
+                ? {
+                      ...$state.snapshot(newParent),
+                      childrenIds: [...newParent.childrenIds, id],
+                      updatedAt: now,
+                  }
+                : null
 
         await this.db.transaction("rw", ["books", "folders"], async () => {
-            if (node.type === "file") {
-                await this.saveFileToDb(node as FileNode)
-            } else {
-                await this.db.folders.put($state.snapshot(node) as FolderNode)
-            }
-
-            if (oldParentId !== null) {
-                const oldParent = this.nodes[oldParentId]
-                if (oldParent && oldParent.type === "folder") {
-                    const updatedOldParent = {
-                        ...oldParent,
-                        childrenIds: oldParent.childrenIds.filter((cid) => cid !== id),
-                        updatedAt: now,
-                    }
-                    await this.db.folders.put($state.snapshot(updatedOldParent) as FolderNode)
-                }
-            }
-
-            if (newParentId !== null) {
-                const newParent = this.nodes[newParentId]
-                if (newParent && newParent.type === "folder") {
-                    const updatedNewParent = {
-                        ...newParent,
-                        childrenIds: [...newParent.childrenIds, id],
-                        updatedAt: now,
-                    }
-                    await this.db.folders.put($state.snapshot(updatedNewParent) as FolderNode)
-                }
-            }
+            this.throwIfDisposed()
+            if (updatedNode.type === "file") await this.saveFileToDb(updatedNode as FileNode)
+            else await this.db.folders.put(updatedNode as FolderNode)
+            this.throwIfDisposed()
+            if (updatedOldParent) await this.db.folders.put(updatedOldParent as FolderNode)
+            this.throwIfDisposed()
+            if (updatedNewParent) await this.db.folders.put(updatedNewParent as FolderNode)
+            this.throwIfDisposed()
         })
+        this.throwIfDisposed()
 
-        if (oldParentId === null) {
-            this.rootIds = this.rootIds.filter((rid) => rid !== id)
-        } else {
-            const oldParent = this.nodes[oldParentId]
-            if (oldParent && oldParent.type === "folder") {
-                oldParent.childrenIds = oldParent.childrenIds.filter((cid) => cid !== id)
-                oldParent.updatedAt = now
-            }
-        }
-
-        if (newParentId === null) {
-            this.rootIds.push(id)
-        } else {
-            const newParent = this.nodes[newParentId]
-            if (newParent && newParent.type === "folder") {
-                newParent.childrenIds.push(id)
-                newParent.updatedAt = now
-            }
-        }
+        this.nodes[id] = updatedNode
+        if (oldParentId === null) this.rootIds = this.rootIds.filter((rid) => rid !== id)
+        if (newParentId === null) this.rootIds.push(id)
+        if (updatedOldParent) this.nodes[oldParentId!] = updatedOldParent
+        if (updatedNewParent) this.nodes[newParentId!] = updatedNewParent
     }
 
     selectNode(id: string | null) {
@@ -1193,15 +2473,27 @@ if (import.meta.hot) {
 
 export function usePreviewUrl(nodeId: () => string) {
     let url = $state("")
+    let requestGeneration = 0
     $effect(() => {
         const id = nodeId()
+        requestGeneration++
         if (!id) return
-        let active = true
-        vfsStore.getPreviewUrl(id).then((val) => {
-            if (active) url = val
+        const load = () => {
+            const loadGeneration = ++requestGeneration
+            void vfsStore.getPreviewUrl(id).then((val) => {
+                if (loadGeneration === requestGeneration) url = val
+            })
+        }
+        const stopInvalidation = vfsStore.onNodeInvalidated?.((invalidatedId) => {
+            if (invalidatedId !== id) return
+            url = ""
+            vfsStore.revokePreviewUrl(id)
+            load()
         })
+        load()
         return () => {
-            active = false
+            requestGeneration++
+            stopInvalidation?.()
             vfsStore.revokePreviewUrl(id)
         }
     })
@@ -1212,8 +2504,10 @@ export function usePreviewUrl(nodeId: () => string) {
         async regenerate() {
             const id = nodeId()
             if (!id) return
+            const generation = ++requestGeneration
             await vfsStore.invalidatePreview(id)
-            url = await vfsStore.getPreviewUrl(id)
+            const nextUrl = await vfsStore.getPreviewUrl(id)
+            if (generation === requestGeneration) url = nextUrl
             vfsStore.revokePreviewUrl(id)
         },
     }

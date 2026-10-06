@@ -1,4 +1,4 @@
-export { usePreviewUrl, vfsStore } from "./vfs/vfsStore.svelte"
+export { ContentSupersededError, usePreviewUrl, vfsStore } from "./vfs/vfsStore.svelte"
 export { FolderNameError } from "./vfs/vfsStore.types"
 export type {
     Bookmark,

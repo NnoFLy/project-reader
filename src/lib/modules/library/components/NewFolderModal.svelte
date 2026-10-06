@@ -101,6 +101,7 @@
     placement="center"
     onClose={() => handleClose()}
     title={m.new_folder()}
+    closeLabel={m.close()}
     initialFocus={() => document.getElementById("folder-name-input")}
     draggable
 >

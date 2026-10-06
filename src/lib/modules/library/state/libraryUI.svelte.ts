@@ -1,4 +1,5 @@
 import { createContext } from "svelte"
+import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 export const LIBRARY_CARD_SIZE_LEVELS = [9, 11, 13, 15] as const
 export const DEFAULT_LIBRARY_CARD_SIZE_LEVEL = 1
@@ -26,11 +27,9 @@ export class LibraryUIController {
     folderToRenameId = $state<string | null>(null)
 
     constructor() {
-        if (typeof localStorage !== "undefined") {
-            this.#cardSizeLevel = parseLibraryCardSizeLevel(
-                localStorage.getItem(LIBRARY_CARD_SIZE_STORAGE_KEY),
-            )
-        }
+        this.#cardSizeLevel = parseLibraryCardSizeLevel(
+            safeStorageGet(LIBRARY_CARD_SIZE_STORAGE_KEY),
+        )
     }
 
     get cardSizeLevel(): number {
@@ -61,11 +60,7 @@ export class LibraryUIController {
         const nextLevel = Math.max(0, Math.min(LIBRARY_CARD_SIZE_LEVELS.length - 1, level))
         if (nextLevel === this.#cardSizeLevel) return
         this.#cardSizeLevel = nextLevel
-        try {
-            localStorage.setItem(LIBRARY_CARD_SIZE_STORAGE_KEY, String(nextLevel))
-        } catch {
-            // Card sizing remains usable when storage is unavailable.
-        }
+        safeStorageSet(LIBRARY_CARD_SIZE_STORAGE_KEY, String(nextLevel))
     }
 
     get isSelectionMode(): boolean {

@@ -45,11 +45,119 @@ class NotesStore {
     private pageRanges = new SvelteMap<number, { noteId: string; range: Range; color: string }[]>()
     private highlightUpdatePending = false
     private pendingNoteWrites = new Map<string, ReturnType<typeof setTimeout>>()
+    private bookWriteGenerations = new Map<string, number>()
+    private noteWriteGenerations = new Map<string, number>()
+    private pendingDeletionBookIds = new Set<string>()
+    private pendingDeletionNoteIds = new Set<string>()
+    private loadGeneration = 0
+    private lifecycleEpoch = 0
+    private disposed = false
+    private bookLoadGenerations = new Map<string, number>()
+    private readonly vfsUnsubscribers: (() => void)[] = []
+
+    constructor() {
+        this.vfsUnsubscribers.push(
+            vfsStore.onNodesDeleting?.((bookIds) => {
+                for (const bookId of bookIds) {
+                    this.pendingDeletionBookIds.add(bookId)
+                    this.invalidateBookWrites(bookId)
+                    this.invalidateBookLoad(bookId)
+                }
+            }) ?? (() => undefined),
+        )
+        this.vfsUnsubscribers.push(
+            vfsStore.onNodesDeleted?.((bookIds) => {
+                for (const bookId of bookIds) this.removeByBookId(bookId)
+            }) ?? (() => undefined),
+        )
+    }
+
+    dispose() {
+        this.disposed = true
+        this.lifecycleEpoch++
+        this.loadGeneration++
+        for (const unsubscribe of this.vfsUnsubscribers.splice(0)) unsubscribe()
+        for (const timeout of this.pendingNoteWrites.values()) clearTimeout(timeout)
+        this.pendingNoteWrites.clear()
+        if (this.highlightUpdateFrame !== null && typeof cancelAnimationFrame !== "undefined") {
+            cancelAnimationFrame(this.highlightUpdateFrame)
+            this.highlightUpdateFrame = null
+        }
+        this.notes = []
+        this.activePopup = null
+        this.activeSelection = null
+        this.editingNote = null
+        this.editorCoords = null
+        this.scrollingToNoteId = null
+        this.pageRanges.clear()
+        this.clearCSSHighlights()
+    }
+
+    private invalidateBookWrites(bookId: string) {
+        this.bookWriteGenerations.set(bookId, (this.bookWriteGenerations.get(bookId) ?? 0) + 1)
+    }
+
+    private invalidateBookLoad(bookId: string) {
+        this.bookLoadGenerations.set(bookId, (this.bookLoadGenerations.get(bookId) ?? 0) + 1)
+    }
+
+    private removeByBookId(bookId: string) {
+        this.bookLoadGenerations.set(bookId, (this.bookLoadGenerations.get(bookId) ?? 0) + 1)
+        const deletedNoteIds = new Set(
+            this.notes.filter((note) => note.bookId === bookId).map((note) => note.id),
+        )
+        for (const [noteId, pending] of this.pendingNoteWrites) {
+            if (deletedNoteIds.has(noteId)) {
+                clearTimeout(pending)
+                this.pendingNoteWrites.delete(noteId)
+            }
+        }
+        this.notes = this.notes.filter((note) => note.bookId !== bookId)
+        if (this.activePopup?.note.bookId === bookId) this.activePopup = null
+        if (this.activeSelection?.bookId === bookId) this.activeSelection = null
+        if (this.editingNote?.bookId === bookId) {
+            this.editingNote = null
+            this.editorCoords = null
+        }
+        if (this.scrollingToNoteId && deletedNoteIds.has(this.scrollingToNoteId)) {
+            this.scrollingToNoteId = null
+        }
+        for (const [pageNumber, ranges] of this.pageRanges) {
+            const remaining = ranges.filter((range) => !deletedNoteIds.has(range.noteId))
+            if (remaining.length > 0) this.pageRanges.set(pageNumber, remaining)
+            else this.pageRanges.delete(pageNumber)
+        }
+        this.updateCSSHighlights()
+    }
+
+    private clearStaleVisualState(bookId: string) {
+        if (this.notes.some((note) => note.bookId !== bookId)) this.notes = []
+        this.activePopup = null
+        this.activeSelection = null
+        this.editingNote = null
+        this.editorCoords = null
+        this.scrollingToNoteId = null
+        this.pageRanges.clear()
+        this.clearCSSHighlights()
+    }
 
     async loadNotesForBook(bookId: string) {
-        if (!browser) return
+        if (!browser || this.disposed || vfsStore.isDisposed) return
+        // Remove the previous book's notes and highlights before waiting on storage. A
+        // reload of the same book keeps its in-flight editing target available.
+        const generation = ++this.loadGeneration
+        this.clearStaleVisualState(bookId)
+        const lifecycleEpoch = this.lifecycleEpoch
+        const bookGeneration = this.bookLoadGenerations.get(bookId) ?? 0
         try {
             const loaded = await vfsStore.db.userNotes.getByBookId(bookId)
+            if (
+                vfsStore.isDisposed ||
+                lifecycleEpoch !== this.lifecycleEpoch ||
+                generation !== this.loadGeneration ||
+                bookGeneration !== (this.bookLoadGenerations.get(bookId) ?? 0)
+            )
+                return
             this.notes = loaded.sort((a, b) => a.createdAt - b.createdAt)
             this.activePopup = null
             this.activeSelection = null
@@ -62,6 +170,29 @@ class NotesStore {
         }
     }
 
+    private bookExists(bookId: string): boolean {
+        if (
+            this.pendingDeletionBookIds.has(bookId) &&
+            !vfsStore.isNodeDeleting(bookId) &&
+            vfsStore.nodes?.[bookId]?.type === "file"
+        ) {
+            // A fresh file with a reused id is no longer covered by the old tombstone.
+            this.pendingDeletionBookIds.delete(bookId)
+        }
+        return !this.pendingDeletionBookIds.has(bookId) && vfsStore.nodes?.[bookId]?.type === "file"
+    }
+
+    private isWriteAllowed(bookId: string, noteId?: string): boolean {
+        return (
+            !this.disposed &&
+            (noteId === undefined || !this.pendingDeletionNoteIds.has(noteId)) &&
+            this.bookExists(bookId) &&
+            !this.pendingDeletionBookIds.has(bookId) &&
+            !vfsStore.isNodeDeleting(bookId) &&
+            !vfsStore.isDisposed
+        )
+    }
+
     async addNote(
         bookId: string,
         pageNumber: number,
@@ -71,6 +202,7 @@ class NotesStore {
         noteContent: string,
         color: "yellow" | "green" | "blue" | "pink" | "purple",
     ) {
+        if (!this.isWriteAllowed(bookId)) return null
         const note: UserNote = {
             id: crypto.randomUUID(),
             bookId,
@@ -83,8 +215,36 @@ class NotesStore {
             createdAt: Date.now(),
         }
 
+        const lifecycleEpoch = this.lifecycleEpoch
+        this.invalidateBookLoad(bookId)
+        const generation = this.bookWriteGenerations.get(bookId) ?? 0
         try {
-            await vfsStore.db.userNotes.put(note)
+            if (
+                (this.bookWriteGenerations.get(bookId) ?? 0) !== generation ||
+                !this.isWriteAllowed(bookId)
+            )
+                return null
+            const written = await vfsStore.serializeBookMutation(bookId, async () => {
+                if (!this.isWriteAllowed(bookId, note.id)) return false
+                await vfsStore.db.userNotes.put(note)
+                return true
+            })
+            if (
+                !written ||
+                this.disposed ||
+                lifecycleEpoch !== this.lifecycleEpoch ||
+                this.pendingDeletionBookIds.has(bookId) ||
+                this.pendingDeletionNoteIds.has(note.id) ||
+                (this.bookWriteGenerations.get(bookId) ?? 0) !== generation ||
+                !this.bookExists(bookId) ||
+                vfsStore.isNodeDeleting(bookId) ||
+                vfsStore.isDisposed
+            ) {
+                // Store disposal/lifecycle invalidation only suppresses publication. A
+                // persisted note belongs to the database until an actual deletion owns its
+                // cleanup; in particular, never compensate a store-only HMR race with delete.
+                return null
+            }
             this.notes.push(note)
             this.notes = [...this.notes] // force reactivity update
             this.activePopup = null
@@ -97,6 +257,8 @@ class NotesStore {
         } catch (e) {
             console.error("[NotesStore] Failed to add note:", e)
             return null
+        } finally {
+            this.invalidateBookLoad(bookId)
         }
     }
 
@@ -105,10 +267,12 @@ class NotesStore {
         noteContent: string,
         color: "yellow" | "green" | "blue" | "pink" | "purple",
     ): void {
+        if (this.disposed || vfsStore.isDisposed) return
         const idx = this.notes.findIndex((note) => note.id === id)
-        if (idx === -1) return
+        if (idx === -1 || this.pendingDeletionNoteIds.has(id)) return
 
         const updated = { ...this.notes[idx], noteContent, color }
+        this.invalidateBookLoad(updated.bookId)
         this.notes[idx] = updated
         this.notes = [...this.notes]
         if (this.editingNote && "id" in this.editingNote && this.editingNote.id === id) {
@@ -139,11 +303,42 @@ class NotesStore {
 
     private async persistNote(id: string): Promise<void> {
         const note = this.notes.find((candidate) => candidate.id === id)
-        if (!note) return
+        if (!note || !this.isWriteAllowed(note.bookId, id)) return
+        const lifecycleEpoch = this.lifecycleEpoch
+        this.invalidateBookLoad(note.bookId)
+        const generation = this.bookWriteGenerations.get(note.bookId) ?? 0
+        const noteGeneration = this.noteWriteGenerations.get(id) ?? 0
         try {
-            await vfsStore.db.userNotes.put($state.snapshot(note))
+            if (
+                (this.bookWriteGenerations.get(note.bookId) ?? 0) !== generation ||
+                (this.noteWriteGenerations.get(id) ?? 0) !== noteGeneration ||
+                !this.isWriteAllowed(note.bookId, id)
+            )
+                return
+            const written = await vfsStore.serializeBookMutation(note.bookId, async () => {
+                if (!this.isWriteAllowed(note.bookId, id)) return false
+                await vfsStore.db.userNotes.put($state.snapshot(note))
+                return true
+            })
+            if (
+                !written ||
+                this.disposed ||
+                lifecycleEpoch !== this.lifecycleEpoch ||
+                this.pendingDeletionBookIds.has(note.bookId) ||
+                this.pendingDeletionNoteIds.has(id) ||
+                (this.noteWriteGenerations.get(id) ?? 0) !== noteGeneration ||
+                (this.bookWriteGenerations.get(note.bookId) ?? 0) !== generation ||
+                !this.bookExists(note.bookId) ||
+                vfsStore.isNodeDeleting(note.bookId) ||
+                vfsStore.isDisposed
+            ) {
+                // An active deletion tombstone is serialized after this write and owns cleanup.
+                // Store disposal likewise must not delete an already persisted note.
+            }
         } catch (e) {
             console.error("[NotesStore] Failed to update note:", e)
+        } finally {
+            this.invalidateBookLoad(note.bookId)
         }
     }
 
@@ -170,12 +365,49 @@ class NotesStore {
         if (editingNote && "id" in editingNote) await this.flushNoteUpdate(editingNote.id)
     }
 
+    private clearFailedNoteDeletion(id: string, generation: number) {
+        if ((this.noteWriteGenerations.get(id) ?? 0) === generation)
+            this.pendingDeletionNoteIds.delete(id)
+    }
+
+    private async deleteUnknownNote(id: string): Promise<boolean> {
+        const deleted = await vfsStore.serializeMetadataMutation(async () => {
+            if (this.disposed || vfsStore.isDisposed) return false
+            await vfsStore.db.userNotes.delete(id)
+            return true
+        })
+        return deleted === true
+    }
+
     async deleteNote(id: string) {
+        if (this.disposed || vfsStore.isDisposed) return
+        const note = this.notes.find((candidate) => candidate.id === id)
+        this.pendingDeletionNoteIds.add(id)
+        const generation = (this.noteWriteGenerations.get(id) ?? 0) + 1
+        this.noteWriteGenerations.set(id, generation)
+        if (note) {
+            this.invalidateBookLoad(note.bookId)
+        }
         const pending = this.pendingNoteWrites.get(id)
         if (pending) clearTimeout(pending)
         this.pendingNoteWrites.delete(id)
+        const lifecycleEpoch = this.lifecycleEpoch
+        let deleted = false
         try {
-            await vfsStore.db.userNotes.delete(id)
+            if (note) {
+                deleted = !!(await vfsStore.serializeBookMutation(note.bookId, async () => {
+                    if (this.disposed || vfsStore.isDisposed) return false
+                    await vfsStore.db.userNotes.delete(id)
+                    return true
+                }))
+                if (!deleted) return
+            }
+            if (!note) {
+                deleted = await this.deleteUnknownNote(id)
+                if (!deleted) return
+            }
+            if (vfsStore.isDisposed || this.disposed || lifecycleEpoch !== this.lifecycleEpoch)
+                return
             const noteToDelete = this.notes.find((n) => n.id === id)
             this.notes = this.notes.filter((n) => n.id !== id)
 
@@ -193,19 +425,30 @@ class NotesStore {
             this.queueHighlightUpdate()
         } catch (e) {
             console.error("[NotesStore] Failed to delete note:", e)
+        } finally {
+            // Clear only this deletion's tombstone. A newer deletion generation remains
+            // protected while a completed deletion does not leave the note permanently blocked.
+            this.clearFailedNoteDeletion(id, generation)
+            if (note) this.invalidateBookLoad(note.bookId)
         }
     }
 
     clear() {
+        this.loadGeneration++
         for (const pending of this.pendingNoteWrites.values()) clearTimeout(pending)
         this.pendingNoteWrites.clear()
+        if (this.highlightUpdateFrame !== null && typeof cancelAnimationFrame !== "undefined") {
+            cancelAnimationFrame(this.highlightUpdateFrame)
+            this.highlightUpdateFrame = null
+        }
+        this.highlightUpdatePending = false
         this.notes = []
         this.activePopup = null
         this.activeSelection = null
         this.editingNote = null
         this.editorCoords = null
         this.pageRanges.clear()
-        this.updateCSSHighlights()
+        this.clearCSSHighlights()
     }
 
     registerPageRanges(
@@ -233,13 +476,16 @@ class NotesStore {
         }
     }
 
+    private highlightUpdateFrame: number | null = null
+
     queueHighlightUpdate() {
-        if (this.highlightUpdatePending) return
+        if (this.disposed || this.highlightUpdatePending) return
         this.highlightUpdatePending = true
         if (typeof requestAnimationFrame !== "undefined") {
-            requestAnimationFrame(() => {
+            this.highlightUpdateFrame = requestAnimationFrame(() => {
+                this.highlightUpdateFrame = null
                 this.highlightUpdatePending = false
-                this.updateCSSHighlights()
+                if (!this.disposed) this.updateCSSHighlights()
             })
         } else {
             this.highlightUpdatePending = false
@@ -247,8 +493,21 @@ class NotesStore {
         }
     }
 
-    private updateCSSHighlights() {
+    private clearCSSHighlights() {
         if (typeof CSS === "undefined" || !CSS.highlights) return
+        for (const name of [
+            "user-note-yellow",
+            "user-note-green",
+            "user-note-blue",
+            "user-note-pink",
+            "user-note-purple",
+            "user-note-active",
+        ])
+            CSS.highlights.delete(name)
+    }
+
+    private updateCSSHighlights() {
+        if (this.disposed || typeof CSS === "undefined" || !CSS.highlights) return
 
         untrack(() => {
             const yellowRanges: Range[] = []
@@ -309,6 +568,10 @@ class NotesStore {
 }
 
 export const notesStore = new NotesStore()
+
+if (import.meta.hot) {
+    import.meta.hot.dispose(() => notesStore.dispose())
+}
 
 // Helper Functions for offset calculation and range matching
 export function getGlobalOffset(

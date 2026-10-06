@@ -1,4 +1,5 @@
 import { version } from "$app/environment"
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from "./safeStorage"
 
 const STORAGE_KEY = "pending_app_update_version"
 const SKIP_WAITING_MESSAGE = "SKIP_WAITING"
@@ -59,11 +60,11 @@ class AppUpdateState {
     updating = $state(false)
 
     initialize() {
-        const pendingVersion = localStorage.getItem(STORAGE_KEY)
+        const pendingVersion = safeStorageGet(STORAGE_KEY)
         this.available = pendingVersion === version
 
         if (pendingVersion && pendingVersion !== version) {
-            localStorage.removeItem(STORAGE_KEY)
+            safeStorageRemove(STORAGE_KEY)
         }
 
         const handleStorage = (event: StorageEvent) => {
@@ -88,7 +89,7 @@ class AppUpdateState {
     markAvailable() {
         if (this.available) return
         this.available = true
-        localStorage.setItem(STORAGE_KEY, version)
+        safeStorageSet(STORAGE_KEY, version)
     }
 
     async update() {

@@ -1,5 +1,6 @@
 import { browser } from "$app/environment"
 import { motionPreferences } from "$lib/shared/state/motion.svelte"
+import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 export type Theme = "light" | "dark" | "system"
 export type Layout = "single" | "split" | "scroll"
@@ -84,7 +85,7 @@ class SettingsStore {
 
     constructor() {
         if (browser) {
-            const savedSettings = localStorage.getItem("settings")
+            const savedSettings = safeStorageGet("settings")
             if (savedSettings) {
                 try {
                     const parsed = JSON.parse(savedSettings)
@@ -97,7 +98,7 @@ class SettingsStore {
                     console.error("Failed to parse settings from localStorage", e)
                 }
             } else {
-                this.theme = (localStorage.getItem("theme") as Theme) || "system"
+                this.theme = (safeStorageGet("theme") as Theme) || "system"
             }
 
             motionPreferences.enabled = this.settings.animations
@@ -123,7 +124,7 @@ class SettingsStore {
         // when unrelated settings such as scale, theme, or animations change.
         this.settings[key] = value
         if (browser) {
-            localStorage.setItem("settings", JSON.stringify(this.settings))
+            safeStorageSet("settings", JSON.stringify(this.settings))
         }
     }
 

@@ -22,6 +22,7 @@
     import { resolveModalPresentation } from "./modalPresentation"
     import { shouldCloseOnBackdrop } from "./modalPolicy"
     import type { ModalCloseReason, ModalProps } from "./modal.types"
+    import * as m from "$lib/paraglide/messages"
 
     let props: ModalProps = $props()
 
@@ -320,8 +321,12 @@
             role="toolbar"
             tabindex={isDraggable ? 0 : undefined}
             aria-label={isDraggable
-                ? `Move ${props.title ?? "dialog"}`
-                : `${props.title ?? "Dialog"} header`}
+                ? props.title
+                    ? `${m.move()} ${props.title}`
+                    : m.move()
+                : props.title
+                  ? `${props.title} ${m.dialog_header()}`
+                  : m.dialog_header()}
             onpointerdown={handleHeaderPointerDown}
             onpointermove={handleHeaderPointerMove}
             onpointerup={handleHeaderPointerUp}

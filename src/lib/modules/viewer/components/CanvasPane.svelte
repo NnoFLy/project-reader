@@ -6,6 +6,7 @@
     import { type PDFDocument } from "$lib/modules/pdf"
     import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
+    import { safeStorageGet } from "$lib/shared/state/safeStorage"
     import { searchStore } from "../stores/searchStore.svelte"
     import {
         notesStore,
@@ -110,7 +111,7 @@
             if (!viewport.isCompact) {
                 const hasSavedScale = (() => {
                     try {
-                        const saved = localStorage.getItem("settings")
+                        const saved = safeStorageGet("settings")
                         if (saved) {
                             const parsed = JSON.parse(saved)
                             return typeof parsed.scale === "number"

@@ -21,6 +21,7 @@
     size="small"
     placement="center"
     {title}
+    closeLabel={m.close()}
     {message}
     confirmLabel={m.delete()}
     cancelLabel={m.cancel()}

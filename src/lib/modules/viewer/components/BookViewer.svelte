@@ -32,6 +32,7 @@
     import { localizedPath } from "$lib/modules/settings"
     import { DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
     import { motionPreferences } from "$lib/shared/state/motion.svelte"
+    import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { cubicInOut } from "svelte/easing"
     import {
@@ -458,7 +459,7 @@
     }
 
     onMount(() => {
-        gestureHintDismissed = localStorage.getItem("viewer-gesture-hint-dismissed") === "1"
+        gestureHintDismissed = safeStorageGet("viewer-gesture-hint-dismissed") === "1"
         vfsStore.clearForwardHistory()
         if (vfsStore.initialized && !viewerStore.getCurrentBook()) {
             goto(resolve(localizedPath("/") as any))
@@ -534,6 +535,8 @@
             const sPos = viewerStore.scrollPosition
             const activeBook = viewerStore.getCurrentBook()
             if (!activeBook) return
+            const bookSwitchGeneration = viewerStore.getBookSwitchGeneration()
+            const contentGeneration = vfsStore.getContentGeneration(activeBook.id)
 
             untrack(() => {
                 // Update reactive state immediately for responsiveness
@@ -553,11 +556,15 @@
                         viewerStore.lastSetPageState = state
                         replaceState("", state)
                     }
-                    viewerStore.updateBook({
-                        ...activeBook,
-                        pageNumber: cPage,
-                        scrollPosition: sPos,
-                    })
+                    viewerStore.updateBook(
+                        {
+                            ...activeBook,
+                            pageNumber: cPage,
+                            scrollPosition: sPos,
+                        },
+                        contentGeneration,
+                        bookSwitchGeneration,
+                    )
                 }, 500)
             })
 
@@ -574,13 +581,19 @@
         return () => {
             const activeBook = untrack(() => viewerStore.getCurrentBook())
             if (activeBook && isLoaded) {
+                const contentGeneration = vfsStore.getContentGeneration(activeBook.id)
+                const bookSwitchGeneration = viewerStore.getBookSwitchGeneration()
                 const finalPage = untrack(() => viewerStore.currentPage)
                 const finalScroll = untrack(() => viewerStore.scrollPosition)
-                viewerStore.updateBook({
-                    ...activeBook,
-                    pageNumber: finalPage,
-                    scrollPosition: finalScroll,
-                })
+                viewerStore.updateBook(
+                    {
+                        ...activeBook,
+                        pageNumber: finalPage,
+                        scrollPosition: finalScroll,
+                    },
+                    contentGeneration,
+                    bookSwitchGeneration,
+                )
             }
         }
     })
@@ -630,6 +643,9 @@
 
         let canceled = false
         let loadedDoc: PDFDocument | null = null
+        let closeLoadedDoc: (() => Promise<void>) | null = null
+        const loadingBookId = bookId
+        const loadingContentGeneration = vfsStore.getContentGeneration(bookId)
 
         untrack(() => {
             isLoaded = false
@@ -640,46 +656,77 @@
             viewerStore.scrollPosition = currentBook?.scrollPosition || 0
 
             const loadPdf = async (pdfUrl: string) => {
+                let doc: PDFDocument | null = null
+                let closed = false
+                const closeDoc = async () => {
+                    if (closed || !doc) return
+                    closed = true
+                    await doc.close()
+                }
+                closeLoadedDoc = closeDoc
+
                 try {
-                    const doc = new PDFDocument(pdfUrl)
-                    await doc.load(settingsStore.scale)
+                    const currentDoc = new PDFDocument(pdfUrl)
+                    doc = currentDoc
+                    await currentDoc.load(settingsStore.scale)
 
-                    if (!canceled) {
-                        loadedDoc = doc
-                        pdf = doc
-                        const [pagesCount, author] = await Promise.all([
-                            doc.getPageNumber(),
-                            doc.getAuthor(),
-                        ])
-                        totalPages = pagesCount
-                        if (viewerStore.currentPage > pagesCount) {
-                            viewerStore.currentPage = pagesCount
-                        }
-                        if (viewerStore.currentPage < 1) {
-                            viewerStore.currentPage = 1
-                        }
-                        isLoaded = true
-                        searchStore.initPdf({ pdf: doc, bookId })
+                    if (
+                        canceled ||
+                        viewerStore.getCurrentBook()?.id !== loadingBookId ||
+                        !vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
+                    ) {
+                        await closeDoc()
+                        return
+                    }
+                    loadedDoc = currentDoc
+                    pdf = currentDoc
+                    const [pagesCount, author] = await Promise.all([
+                        currentDoc.getPageNumber(),
+                        currentDoc.getAuthor(),
+                    ])
+                    if (
+                        canceled ||
+                        viewerStore.getCurrentBook()?.id !== loadingBookId ||
+                        !vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
+                    ) {
+                        loadedDoc = null
+                        await closeDoc()
+                        return
+                    }
+                    totalPages = pagesCount
+                    if (viewerStore.currentPage > pagesCount) {
+                        viewerStore.currentPage = pagesCount
+                    }
+                    if (viewerStore.currentPage < 1) {
+                        viewerStore.currentPage = 1
+                    }
+                    isLoaded = true
+                    searchStore.initPdf({ pdf: currentDoc, bookId })
 
-                        const currentBook = viewerStore.getCurrentBook()
-                        if (
-                            currentBook &&
-                            (currentBook.totalPages !== pagesCount ||
-                                currentBook.author === undefined)
-                        ) {
-                            void viewerStore.updateBook({
+                    const currentBook = viewerStore.getCurrentBook()
+                    if (
+                        currentBook &&
+                        (currentBook.totalPages !== pagesCount || currentBook.author === undefined)
+                    ) {
+                        void viewerStore.updateBook(
+                            {
                                 ...currentBook,
                                 totalPages: pagesCount,
                                 author:
                                     currentBook.author === undefined ? author : currentBook.author,
-                            })
-                        }
-                    } else {
-                        await doc.close()
+                            },
+                            loadingContentGeneration,
+                        )
                     }
                 } catch (err) {
+                    loadedDoc = loadedDoc === doc ? null : loadedDoc
+                    await closeDoc()
                     console.error("Failed to load PDF:", err)
-                    if (!canceled) {
+                    if (
+                        !canceled &&
+                        viewerStore.getCurrentBook()?.id === loadingBookId &&
+                        vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
+                    ) {
                         isLoaded = false
                         viewerStore.setCurrentBook(null)
                         goto(resolve(localizedPath("/") as any))
@@ -692,9 +739,10 @@
 
         return () => {
             canceled = true
-            if (loadedDoc) {
-                loadedDoc.close()
-            }
+            loadedDoc = null
+            const closeDoc = closeLoadedDoc
+            closeLoadedDoc = null
+            void closeDoc?.()
         }
     })
 
@@ -1031,7 +1079,7 @@
 
     function dismissGestureHint() {
         gestureHintDismissed = true
-        localStorage.setItem("viewer-gesture-hint-dismissed", "1")
+        safeStorageSet("viewer-gesture-hint-dismissed", "1")
     }
 
     function resolvePageMove(direction: SliderDirection) {

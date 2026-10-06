@@ -86,6 +86,7 @@
     placement="center"
     onClose={() => void commandsNode.execute("modal.cancel")}
     title={m.rename_folder()}
+    closeLabel={m.close()}
     initialFocus={() => document.getElementById("rename-folder-input")}
     draggable
 >

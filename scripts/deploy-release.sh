@@ -110,6 +110,17 @@ if [[ -n "$previous_container" ]]; then
         chmod 444 "$previous_dir/.successful"
         chmod 555 "$previous_dir"
     fi
+elif [[ -e "$CURRENT" ]]; then
+    previous_dir="$(readlink -f "$CURRENT")"
+    previous_revision="$(basename "$previous_dir")"
+    if [[ ! -f "$previous_dir/image-ref" ]] || ! IFS= read -r previous_image < "$previous_dir/image-ref"; then
+        echo "The active release is not a valid rollback target" >&2
+        exit 1
+    fi
+    if ! validate_release_dir "$previous_dir" "$previous_revision" "$previous_image"; then
+        echo "The active release is not a valid rollback target" >&2
+        exit 1
+    fi
 fi
 
 printf '%s\n%s\n%s\n' "$previous_image" "$previous_dir" "$previous_revision" > "$ROLLBACK_FILE.tmp"
@@ -219,5 +230,4 @@ docker system df
 free_kb="$(df -Pk /opt/project-reader | awk 'NR == 2 {print $4}')"
 if (( free_kb < MIN_FREE_KB )); then
     echo "Deployment succeeded, but less than 1 GiB remains; manual cleanup is required" >&2
-    exit 1
 fi

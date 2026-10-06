@@ -123,6 +123,7 @@
     placement="center"
     onClose={() => void commandsNode.execute("modal.cancel")}
     title={m.edit_book_metadata()}
+    closeLabel={m.close()}
     initialFocus={() => document.getElementById("book-title-input")}
     draggable
 >

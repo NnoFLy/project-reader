@@ -118,6 +118,7 @@
         placement="center"
         onClose={() => void bookmarkAddScope?.execute("modal.cancel")}
         title={m.add_bookmark()}
+        closeLabel={m.close()}
         initialFocus={() => document.getElementById("header-bookmark-name-input")}
         draggable
     >

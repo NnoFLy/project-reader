@@ -207,9 +207,10 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
             run: async (payload) => {
                 const node = payload?.nodeId ? vfsStore.nodes[payload.nodeId] : undefined
                 if (!node || node.type !== "file") return
+                const expectedGeneration = vfsStore.getContentGeneration(node.id)
                 let total = node.metadata.totalPages
                 if (!total) {
-                    const url = await vfsStore.getFileUrl(node.id)
+                    const url = await vfsStore.getFileUrl(node.id, false, "temporary")
                     if (url) {
                         const doc = new PDFDocument(url)
                         try {
@@ -219,20 +220,26 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                             console.error("Failed to read the PDF page count:", error)
                         } finally {
                             await doc.close()
-                            if (vfsStore.isLockedMap[node.id]) vfsStore.revokeFileUrl(node.id)
+                            vfsStore.releaseTemporaryFileUrl(node.id, url)
                         }
                     }
                 }
+                if (!vfsStore.isCurrentContent(node.id, expectedGeneration)) return
                 total ||= 1
                 const isRead = (node.metadata.pageNumber || 1) === total
                 const targetPage = (payload?.markAsRead ?? !isRead) ? total : 1
-                await vfsStore.updateFile(node.id, {
-                    metadata: {
-                        ...node.metadata,
-                        pageNumber: targetPage,
-                        totalPages: total,
+                await vfsStore.updateFile(
+                    node.id,
+                    {
+                        metadata: {
+                            ...node.metadata,
+                            pageNumber: targetPage,
+                            totalPages: total,
+                        },
                     },
-                })
+                    false,
+                    expectedGeneration,
+                )
             },
         },
         "library.folder.open": {
@@ -479,14 +486,19 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                 }
                 const node = vfsStore.nodes[payload.nodeId]
                 if (!node || node.type !== "file") return
-                await vfsStore.updateFile(node.id, {
-                    name: payload.name,
-                    metadata: {
-                        ...node.metadata,
-                        author: payload.author ?? null,
-                        pageNumber: payload.pageNumber,
+                const contentGeneration = vfsStore.getContentGeneration(node.id)
+                await vfsStore.updateFile(
+                    node.id,
+                    {
+                        name: payload.name,
+                        metadata: {
+                            author: payload.author ?? null,
+                            pageNumber: payload.pageNumber,
+                        },
                     },
-                })
+                    false,
+                    contentGeneration,
+                )
                 libraryUI.isEditMetadataModalOpen = false
             },
         },

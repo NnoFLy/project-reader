@@ -28,6 +28,7 @@
     import { openCommandPalette } from "$lib/modules/prompt"
     import { createViewerOpenCommand } from "$lib/modules/viewer"
     import { createViewerBookmarkCommands } from "$lib/modules/viewer"
+    import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
     import {
         LibraryRelinkHost,
         libraryBookOpenCommand,
@@ -201,7 +202,7 @@
             pathname === "/en" ||
             pathname === "/en/viewer"
         ) {
-            localStorage.setItem("last_visited_url", pathname + search)
+            safeStorageSet("last_visited_url", pathname + search)
         }
     })
 
@@ -222,7 +223,7 @@
 
             // Special case for root: try to restore last visited URL first
             if (page.url.pathname === "/" && page.url.search === "") {
-                const lastVisitedUrl = localStorage.getItem("last_visited_url")
+                const lastVisitedUrl = safeStorageGet("last_visited_url")
                 if (lastVisitedUrl && lastVisitedUrl !== "/") {
                     targetHref = lastVisitedUrl
                 }
@@ -231,7 +232,9 @@
             const localizedPath = localizeHref(targetHref, { locale: "en" })
 
             // Initialize VFS even when redirecting to avoid empty state during transition
-            vfsStore.init().then(() => viewerStore.syncWithBooks())
+            vfsStore.init().then(() => {
+                if (vfsStore.initialized) void viewerStore.syncWithBooks()
+            })
 
             window.location.replace(resolve(localizedPath as any))
             return
@@ -239,12 +242,14 @@
 
         // 3. Normal initialization
         vfsStore.init().then(async () => {
+            if (!vfsStore.initialized) return
+
             await viewerStore.syncWithBooks()
             await bookmarksStore.loadAllBookmarks()
 
             // Restore last visited URL if landing on the root page with no search params
             if (page.url.pathname === "/" && page.url.search === "") {
-                const lastVisitedUrl = localStorage.getItem("last_visited_url")
+                const lastVisitedUrl = safeStorageGet("last_visited_url")
                 if (lastVisitedUrl && lastVisitedUrl !== "/") {
                     const [p, s] = lastVisitedUrl.split("?")
                     const localizedPathname = localizeHref(p, {

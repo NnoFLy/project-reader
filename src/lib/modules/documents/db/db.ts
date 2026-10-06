@@ -119,6 +119,9 @@ export interface IDatabase {
     transaction<T>(mode: "r" | "rw", tables: TableName[], callback: () => Promise<T>): Promise<T>
 }
 
+let activeDatabaseOwners = 0
+let sharedOpenPromise: Promise<void> | null = null
+
 const db = new Dexie("Database") as Dexie & {
     books: EntityTable<FileNode, "id">
     previews: EntityTable<BookPreview, "id">
@@ -333,16 +336,75 @@ class DBBookmarks implements IDBBookmarks {
     }
 }
 
+function ensureDatabaseOpen(): Promise<void> | null {
+    // Dexie probes indexedDB while opening. Avoid that probe during SSR, where the
+    // global is intentionally unavailable.
+    if (typeof indexedDB === "undefined") return null
+    if (sharedOpenPromise) return sharedOpenPromise
+
+    let openResult: PromiseLike<unknown>
+    try {
+        openResult = db.open()
+    } catch (error) {
+        openResult = Promise.reject(error)
+    }
+    const openPromise: Promise<void> = Promise.resolve(openResult).then(() => undefined)
+    let handledPromise: Promise<void>
+    handledPromise = openPromise.catch((error: unknown) => {
+        // A rejected open must not poison all future owners. Dexie can retry once a
+        // later owner asks for the shared connection again.
+        if (sharedOpenPromise === handledPromise) sharedOpenPromise = null
+        throw error
+    })
+    sharedOpenPromise = handledPromise
+    return handledPromise
+}
+
 export class Database implements IDatabase {
-    files = new DBBooks()
-    previews = new DBBookPreviews()
-    folders = new DBFolders()
-    fileContents = new DBFileContents()
-    indexedTexts = new DBIndexedTexts()
-    userNotes = new DBUserNotes()
-    bookmarks = new DBBookmarks()
+    private closed = false
+
+    files = this.guardTable(new DBBooks())
+    previews = this.guardTable(new DBBookPreviews())
+    folders = this.guardTable(new DBFolders())
+    fileContents = this.guardTable(new DBFileContents())
+    indexedTexts = this.guardTable(new DBIndexedTexts())
+    userNotes = this.guardTable(new DBUserNotes())
+    bookmarks = this.guardTable(new DBBookmarks())
+
+    constructor() {
+        activeDatabaseOwners += 1
+        // Constructors are synchronous, so retain the promise for operations while
+        // consuming the constructor's rejection to avoid an unhandled rejection.
+        void ensureDatabaseOpen()?.catch(() => undefined)
+    }
+
+    private guardTable<T extends object>(table: T): T {
+        return new Proxy(table, {
+            get: (target, property, receiver) => {
+                const value = Reflect.get(target, property, receiver)
+                if (typeof value !== "function") return value
+                return (...args: unknown[]) => {
+                    if (this.closed) {
+                        return Promise.reject(new Error("Database wrapper is closed"))
+                    }
+                    return Reflect.apply(value, target, args)
+                }
+            },
+        })
+    }
 
     transaction<T>(mode: "r" | "rw", tables: TableName[], callback: () => Promise<T>): Promise<T> {
+        if (this.closed) return Promise.reject(new Error("Database wrapper is closed"))
         return db.transaction(mode, tables, callback)
+    }
+
+    close(): void {
+        if (this.closed) return
+        this.closed = true
+        activeDatabaseOwners -= 1
+        if (activeDatabaseOwners === 0) {
+            db.close()
+            sharedOpenPromise = null
+        }
     }
 }

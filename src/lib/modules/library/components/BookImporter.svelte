@@ -73,7 +73,7 @@
                 const handles = await window.showOpenFilePicker({
                     types: [
                         {
-                            description: "PDF Ebooks",
+                            description: m.pdf_picker_description(),
                             accept: { "application/pdf": [".pdf"] },
                         },
                     ],

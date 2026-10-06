@@ -5,7 +5,12 @@ import { LocalSearchHistoryRepository, normalizeHistory } from "../stores/search
 import { vfsStore } from "$lib/modules/documents"
 import { type PDFDocument } from "$lib/modules/pdf"
 
-afterEach(() => searchStore.reset())
+afterEach(() => {
+    searchStore.reset()
+    delete vfsStore.nodes["cached-book"]
+    delete vfsStore.nodes["search-book"]
+    delete vfsStore.nodes["cancelled-book"]
+})
 
 describe("viewer Prompt item builders", () => {
     it("parses and clamps page input", () => {
@@ -61,6 +66,7 @@ describe("viewer Prompt item builders", () => {
 
 describe("viewer search indexing", () => {
     it("reruns a waiting query after uncached full indexing", async () => {
+        vfsStore.nodes["search-book"] = { id: "search-book", type: "file" } as any
         vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
         vi.spyOn(vfsStore.db.indexedTexts, "bulkPut").mockResolvedValueOnce("search-book_1")
         const pdf = {
@@ -78,7 +84,61 @@ describe("viewer search indexing", () => {
         expect(searchStore.pageTexts.get(1)?.original).toBe("needle")
     })
 
+    it("does not let cancelled indexing clear replacement indexing state", async () => {
+        const store = new SearchStore()
+        vfsStore.nodes["replacement-book"] = { id: "replacement-book", type: "file" } as any
+        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValue([])
+        const resolvers: ((value: { items: { str: string }[] }) => void)[] = []
+        const pdf = {
+            pagesCount: 1,
+            getTextContent: vi.fn(
+                () =>
+                    new Promise<{ items: { str: string }[] }>((resolve) => {
+                        resolvers.push(resolve)
+                    }),
+            ),
+        } as unknown as PDFDocument
+        store.initPdf({ pdf, bookId: "replacement-book" })
+
+        const firstIndex = store.startIndexing()
+        await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+        ;(store as any).restartIndexing()
+        await vi.waitFor(() => expect(resolvers).toHaveLength(2))
+        expect(store.isIndexing).toBe(true)
+
+        resolvers[0]({ items: [{ str: "stale" }] })
+        await firstIndex
+        expect(store.isIndexing).toBe(true)
+
+        resolvers[1]({ items: [{ str: "fresh" }] })
+        await vi.waitFor(() => expect(store.isIndexing).toBe(false))
+        expect(store.pageTexts.get(1)?.original).toBe("fresh")
+        store.dispose()
+    })
+
+    it("retries a failed page extraction before completing indexing", async () => {
+        vfsStore.nodes["retry-book"] = { id: "retry-book", type: "file" } as any
+        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
+        vi.spyOn(vfsStore.db.indexedTexts, "bulkPut").mockResolvedValueOnce("retry-book_1")
+        const pdf = {
+            pagesCount: 1,
+            getTextContent: vi
+                .fn()
+                .mockRejectedValueOnce(new Error("temporary extraction failure"))
+                .mockResolvedValueOnce({ items: [{ str: "retried" }] }),
+        } as unknown as PDFDocument
+        searchStore.initPdf({ pdf, bookId: "retry-book" })
+
+        await searchStore.startIndexing()
+
+        expect(pdf.getTextContent).toHaveBeenCalledTimes(2)
+        expect(searchStore.pageTexts.get(1)?.original).toBe("retried")
+        expect(searchStore.isIndexing).toBe(false)
+        delete vfsStore.nodes["retry-book"]
+    })
+
     it("stops requesting pages after reset during extraction", async () => {
+        vfsStore.nodes["cancelled-book"] = { id: "cancelled-book", type: "file" } as any
         vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
         const textResolvers: ((value: { items: { str: string }[] }) => void)[] = []
         const pdf = {
@@ -104,6 +164,17 @@ describe("viewer search indexing", () => {
     })
 
     it("loads cached text by the explicit book id", async () => {
+        vfsStore.nodes["cached-book"] = {
+            id: "cached-book",
+            name: "cached-book.pdf",
+            type: "file",
+            parentId: null,
+            size: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+            metadata: { pageNumber: 1 },
+        }
         const getByBookId = vi
             .spyOn(vfsStore.db.indexedTexts, "getByBookId")
             .mockResolvedValueOnce([
@@ -117,6 +188,7 @@ describe("viewer search indexing", () => {
         expect(getByBookId).toHaveBeenCalledWith("cached-book")
         expect(pdf.getTextContent).not.toHaveBeenCalled()
         expect(searchStore.pageTexts.get(1)?.original).toBe("cached")
+        delete vfsStore.nodes["cached-book"]
     })
 })
 

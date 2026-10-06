@@ -3,6 +3,7 @@ import { viewerStore } from "./viewerStore.svelte"
 import { vfsStore } from "$lib/modules/documents"
 import { createSearchWorker, type PDFDocument } from "$lib/modules/pdf"
 import { browser } from "$app/environment"
+import { getSafeStorage } from "$lib/shared/state/safeStorage"
 import { untrack } from "svelte"
 import {
     LocalSearchHistoryRepository,
@@ -41,10 +42,43 @@ export class SearchStore {
 
     constructor(
         historyRepository: SearchHistoryRepository = new LocalSearchHistoryRepository(
-            browser ? localStorage : null,
+            getSafeStorage(),
         ),
     ) {
         this.historyRepository = historyRepository
+        this.vfsUnsubscribe = vfsStore.onContentRestored((bookId) => {
+            if (this.currentBookId !== bookId || !this.currentPdf) return
+            this.restartIndexing()
+        })
+    }
+
+    private restartIndexing() {
+        const pdf = this.currentPdf
+        const bookId = this.currentBookId
+        if (!pdf || !bookId) return
+
+        const query = this.query
+        this.searchRequestId += 1
+        this.documentGeneration += 1
+        this.workerCorpusGeneration = -1
+        this.matches = []
+        this.notifyMatchesChanged()
+        this._currentMatchIndex = -1
+        this.isSearching = false
+        this.pageTexts.clear()
+        this.pageRanges.clear()
+        this.currentSearchAbortController?.abort()
+        this.currentSearchAbortController = null
+        this.indexingAbortController?.abort()
+        this.indexingAbortController = null
+        if (this.worker) {
+            this.worker.terminate()
+            this.worker = null
+        }
+        this.isActive = Boolean(query.trim())
+        this.isIndexing = false
+        this.updateCSSHighlights()
+        void this.startIndexing()
     }
 
     addToHistory(q: string) {
@@ -70,6 +104,7 @@ export class SearchStore {
     private currentSearchAbortController: AbortController | null = null
     private indexingAbortController: AbortController | null = null
     private worker: Worker | null = null
+    private readonly vfsUnsubscribe: () => void
     private searchRequestId = 0
     private documentGeneration = 0
     private workerCorpusGeneration = -1
@@ -134,6 +169,7 @@ export class SearchStore {
         this.indexingAbortController = controller
         const { signal } = controller
         const totalPages = pdf.pagesCount
+        const generation = vfsStore.getContentGeneration(bookId)
 
         try {
             // 1. Try to load from IndexedDB first
@@ -142,7 +178,8 @@ export class SearchStore {
                 cachedTexts &&
                 cachedTexts.length === totalPages &&
                 this.currentPdf === pdf &&
-                this.currentBookId === bookId
+                this.currentBookId === bookId &&
+                vfsStore.isCurrentContent(bookId, generation)
             ) {
                 const tempMap = new Map<number, { original: string }>()
                 for (const record of cachedTexts) {
@@ -150,39 +187,67 @@ export class SearchStore {
                 }
                 // Batch update to SvelteMap
                 for (const [pageNum, text] of tempMap) {
+                    if (
+                        this.currentPdf !== pdf ||
+                        this.currentBookId !== bookId ||
+                        !vfsStore.isCurrentContent(bookId, generation)
+                    )
+                        return
                     this.pageTexts.set(pageNum, text)
                 }
                 return
             }
 
             // 2. Extract through a bounded queue instead of allocating one promise per page.
-            const generation = this.documentGeneration
+            const documentGeneration = this.documentGeneration
             let nextPage = 1
             let recordsToSave: { pageNumber: number; text: string }[] = []
             const isCurrent = () =>
                 !signal.aborted &&
-                this.documentGeneration === generation &&
+                this.documentGeneration === documentGeneration &&
                 this.currentPdf === pdf &&
-                this.currentBookId === bookId
+                this.currentBookId === bookId &&
+                vfsStore.isCurrentContent(bookId, generation)
             const flushRecords = async () => {
                 if (!recordsToSave.length || !isCurrent()) return
                 const batch = recordsToSave
                 recordsToSave = []
-                await vfsStore.db.indexedTexts.bulkPut(
+                await vfsStore.saveIndexedTexts(
+                    bookId,
                     batch.map((record) => ({
                         id: `${bookId}_${record.pageNumber}`,
                         bookId,
                         pageNumber: record.pageNumber,
                         text: record.text,
                     })),
+                    generation,
                 )
+            }
+            const extractPage = async (pageNumber: number) => {
+                for (let attempt = 0; attempt < 2; attempt += 1) {
+                    if (!isCurrent()) return null
+                    try {
+                        return await pdf.getTextContent(pageNumber, true)
+                    } catch (error) {
+                        if (attempt === 1) {
+                            console.warn(
+                                `[SearchStore] Failed to extract page ${pageNumber} after retry:`,
+                                error,
+                            )
+                            return null
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, 25))
+                    }
+                }
+                return null
             }
             const extract = async () => {
                 while (isCurrent()) {
                     const pageNumber = nextPage++
                     if (pageNumber > totalPages) return
-                    const textContent = await pdf.getTextContent(pageNumber, true)
+                    const textContent = await extractPage(pageNumber)
                     if (!isCurrent()) return
+                    if (!textContent) continue
                     const text = textContent.items.map((item: any) => item.str).join("")
                     this.pageTexts.set(pageNumber, { original: text })
                     recordsToSave.push({ pageNumber, text })
@@ -191,17 +256,24 @@ export class SearchStore {
                 }
             }
 
-            await Promise.all([extract(), extract()])
+            const extractionResults = await Promise.allSettled([extract(), extract()])
+            for (const result of extractionResults) {
+                if (result.status === "rejected" && !signal.aborted) {
+                    console.error("[SearchStore] Failed to extract PDF text:", result.reason)
+                }
+            }
             await flushRecords()
         } catch (e) {
             if (!signal.aborted) console.error("[SearchStore] Failed to index PDF:", e)
         } finally {
             if (this.indexingAbortController === controller) {
                 this.indexingAbortController = null
-            }
-            if (this.currentPdf === pdf && this.currentBookId === bookId) {
-                this.isIndexing = false
-                if (this.query.trim()) this.setQuery(this.query)
+                if (this.currentPdf === pdf && this.currentBookId === bookId) {
+                    this.isIndexing = false
+                    if (this.query.trim() && vfsStore.isCurrentContent(bookId, generation)) {
+                        this.setQuery(this.query)
+                    }
+                }
             }
         }
     }
@@ -482,6 +554,7 @@ export class SearchStore {
     }
 
     dispose() {
+        this.vfsUnsubscribe()
         this.reset()
         if (this.highlightFrameId !== null && typeof cancelAnimationFrame !== "undefined") {
             cancelAnimationFrame(this.highlightFrameId)

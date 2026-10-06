@@ -26,7 +26,7 @@ Create a `production` environment restricted to the `master` branch. Set:
 
 Point the production DNS `A`/`AAAA` record at the host before the first deployment. Configure the host Caddy reverse proxy described below before the first public verification; it terminates HTTPS and obtains and renews the certificate. The Caddy process inside the application container has `auto_https` disabled and serves only internal HTTP. `PRODUCTION_HOST` must be a DNS name; IP literals and shell metacharacters are rejected.
 
-After `Production container check` has run on the default branch, protect `master` with a ruleset that:
+After `Production container check` has run for a pull request targeting `master`, protect `master` with a ruleset that:
 
 - requires pull requests and one approval;
 - requires CODEOWNER review, dismisses stale approvals, and requires approval of the latest push;
@@ -37,11 +37,15 @@ After `Production container check` has run on the default branch, protect `maste
 Ensure the owner in `.github/CODEOWNERS` is valid, then add a second repository member or team to every entry. GitHub cannot enforce this from a committed file. Verify protection with:
 
 ```sh
-gh api repos/OWNER/REPOSITORY/branches/master/protection
+gh api repos/OWNER/REPOSITORY/rulesets
+gh api repos/OWNER/REPOSITORY/rulesets/RULESET_ID
 gh api repos/OWNER/REPOSITORY/environments/production
+# Verify the environment's deployment branch policy targets master (not all branches).
+gh api repos/OWNER/REPOSITORY/environments/production/deployment-branch-policies \
+  --jq '(.branch_policies | type == "array" and length > 0) and all(.branch_policies[]; .type == "branch" and .name == "master")'
 ```
 
-The responses must show at least one required approval, `require_code_owner_reviews: true`, both required check names, and a production deployment branch policy restricted to `master`.
+The responses must show at least one required approval, `rules[].parameters.require_code_owner_review: true`, required status-check contexts at `rules[].parameters.required_status_checks[].context` for both check names, and a production deployment branch policy whose `type` is `branch` and `name` is exactly `master`. The final command must print `true`; if it prints `false`, do not deploy until the environment policy is corrected.
 
 ## Host prerequisites
 
@@ -86,13 +90,14 @@ CI builds one image, verifies its release endpoint, generates and attests an SPD
 1. pulls that exact digest;
 2. stores immutable `docker-compose.yml` and `image-ref` files in the release directory;
 3. acquires `/opt/project-reader/deploy.lock` with `flock`;
-4. records and validates the previous image, release directory, Compose file, and image revision;
+4. records and validates the previous image, release directory, Compose file, and image revision; when no web container is running, it uses and validates the image reference and revision from the current release;
 5. starts the candidate with `docker compose up --wait`;
 6. verifies the expected revision internally and through public HTTPS;
 7. atomically updates `current` only after verification;
-8. retains the latest three successful releases and all images they reference.
+8. retains the latest three successful releases and all images they reference;
+9. warns (without failing or rolling back) if less than 1 GiB remains after retention cleanup.
 
-A failed candidate is rolled back with the previous release's Compose file. Rollback metadata is deleted only after rollback verifies successfully. If rollback fails, preserve `/opt/project-reader/.rollback-*` and inspect it before taking manual action.
+A failed candidate is rolled back with the previous release's Compose file. If no web container is running, the current release is used as the rollback target only after its metadata and image revision validate. Rollback metadata is deleted only after rollback verifies successfully. If rollback fails, preserve `/opt/project-reader/.rollback-*` and inspect it before taking manual action.
 
 Manual rollback to a retained release:
 
