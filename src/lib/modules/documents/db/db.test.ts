@@ -37,7 +37,7 @@ vi.mock("dexie", () => {
     return { Dexie: MockDexie }
 })
 
-import { Database } from "./db"
+import { Database, migrateVersion2 } from "./db"
 
 beforeEach(() => {
     vi.stubGlobal("indexedDB", {})
@@ -46,6 +46,53 @@ beforeEach(() => {
 afterEach(() => {
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+})
+
+describe("Version 2 migration", () => {
+    it("moves legacy file content before removing it from the book", async () => {
+        const book = { id: "book", file: "legacy content", handle: "legacy handle" }
+        const fileContentsPut = vi.fn(async (content: unknown) => content)
+        const booksPut = vi.fn(async (value: unknown) => value)
+        const tx = {
+            table: vi.fn((name: string) =>
+                name === "books"
+                    ? { toArray: vi.fn(async () => [book]), put: booksPut }
+                    : { put: fileContentsPut },
+            ),
+        } as unknown as Parameters<typeof migrateVersion2>[0]
+
+        await migrateVersion2(tx)
+
+        expect(fileContentsPut).toHaveBeenCalledWith({
+            id: "book",
+            file: "legacy content",
+            handle: "legacy handle",
+        })
+        expect(booksPut).toHaveBeenCalledWith({ id: "book" })
+        expect(book).toEqual({ id: "book" })
+    })
+
+    it("propagates content migration failures so the upgrade can abort", async () => {
+        const book = { id: "book", file: "legacy content", handle: "legacy handle" }
+        const migrationError = new Error("content write failed")
+        const fileContentsPut = vi.fn().mockRejectedValue(migrationError)
+        const booksPut = vi.fn(async (value: unknown) => value)
+        const tx = {
+            table: vi.fn((name: string) =>
+                name === "books"
+                    ? { toArray: vi.fn(async () => [book]), put: booksPut }
+                    : { put: fileContentsPut },
+            ),
+        } as unknown as Parameters<typeof migrateVersion2>[0]
+
+        await expect(migrateVersion2(tx)).rejects.toBe(migrationError)
+        expect(booksPut).not.toHaveBeenCalled()
+        expect(book).toEqual({
+            id: "book",
+            file: "legacy content",
+            handle: "legacy handle",
+        })
+    })
 })
 
 describe("Database ownership", () => {

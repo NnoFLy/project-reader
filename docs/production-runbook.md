@@ -56,7 +56,7 @@ The responses must show at least one required approval, `rules[].parameters.requ
 - inbound TCP 22 from the runner path and TCP 80/443 for host Caddy (allow UDP 443 if HTTP/3 is enabled)
 - outbound DNS and HTTPS access for GHCR and the host Caddy's ACME issuer
 - `/opt/project-reader` owned by the deployment user with mode `0700`
-- at least 1 GiB free after retained releases and images
+- recommended: at least 1 GiB free after retained releases and images
 
 For rootless Docker, install it for `DEPLOY_USER`, enable lingering, and select the user's rootless Docker context. The Compose service publishes only `127.0.0.1:8000`, so it does not require permission to bind public ports:
 
@@ -95,7 +95,7 @@ CI builds one image, verifies its release endpoint, generates and attests an SPD
 6. verifies the expected revision internally and through public HTTPS;
 7. atomically updates `current` only after verification;
 8. retains the latest three successful releases and all images they reference;
-9. warns (without failing or rolling back) if less than 1 GiB remains after retention cleanup.
+9. warns (without failing or rolling back) if less than the recommended 1 GiB remains after retention cleanup; this space level is not a deployment prerequisite.
 
 A failed candidate is rolled back with the previous release's Compose file. If no web container is running, the current release is used as the rollback target only after its metadata and image revision validate. Rollback metadata is deleted only after rollback verifies successfully. If rollback fails, preserve `/opt/project-reader/.rollback-*` and inspect it before taking manual action.
 

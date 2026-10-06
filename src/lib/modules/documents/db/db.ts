@@ -19,25 +19,20 @@ export type TableName =
     | "bookmarks"
 
 export async function migrateVersion2(tx: Transaction) {
-    await tx.table("books").each(async (book) => {
+    const books = await tx.table("books").toArray()
+
+    for (const book of books) {
         if (book.file || book.handle) {
-            try {
-                await tx.table("fileContents").put({
-                    id: book.id,
-                    file: book.file,
-                    handle: book.handle,
-                })
-                delete book.file
-                delete book.handle
-                await tx.table("books").put(book)
-            } catch (e) {
-                console.error(
-                    `Failed to migrate file content during database upgrade for book ${book.id}:`,
-                    e,
-                )
-            }
+            await tx.table("fileContents").put({
+                id: book.id,
+                file: book.file,
+                handle: book.handle,
+            })
+            delete book.file
+            delete book.handle
+            await tx.table("books").put(book)
         }
-    })
+    }
 }
 
 interface IDBBooks {
