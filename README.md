@@ -1,6 +1,6 @@
-# Project Reader 📚
+# VFS (Virtual File Storage) 📚
 
-An elegant, high-performance, and feature-rich offline-first web-based PDF e-reader designed for a distraction-free, premium reading experience. Powered by **Svelte 5 (Runes Mode)**, **TypeScript**, and **IndexedDB**.
+VFS is an elegant, high-performance, and feature-rich offline-first web-based PDF viewer designed for a distraction-free, premium reading experience. Powered by **Svelte 5 (Runes Mode)**, **TypeScript**, and **IndexedDB**.
 
 ---
 
@@ -150,8 +150,8 @@ The multi-stage `Dockerfile` builds the static SvelteKit application with Node.j
 For a local container check:
 
 ```sh
-docker build --build-arg RELEASE=development -t project-reader:local .
-PRODUCTION_HOST=localhost DEPLOY_IMAGE=project-reader:local docker compose up --detach --wait
+docker build --build-arg RELEASE=development -t vfs:local .
+PRODUCTION_HOST=localhost DEPLOY_IMAGE=vfs:local docker compose up --detach --wait
 curl -H 'Host: localhost' http://127.0.0.1:8000/health/version
 ```
 

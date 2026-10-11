@@ -1529,7 +1529,7 @@
         flex-direction: column;
     }
 
-    /* Active Reader Screen */
+    /* Active Document Screen */
     .viewer-layout {
         display: flex;
         flex-direction: column;

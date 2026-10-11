@@ -3,7 +3,7 @@ import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 export const LIBRARY_CARD_SIZE_LEVELS = [9, 11, 13, 15] as const
 export const DEFAULT_LIBRARY_CARD_SIZE_LEVEL = 1
-const LIBRARY_CARD_SIZE_STORAGE_KEY = "project-reader.library-card-size-level"
+const LIBRARY_CARD_SIZE_STORAGE_KEY = "vfs.library-card-size-level"
 
 export function parseLibraryCardSizeLevel(value: string | null): number {
     if (value === null || value.trim() === "") return DEFAULT_LIBRARY_CARD_SIZE_LEVEL

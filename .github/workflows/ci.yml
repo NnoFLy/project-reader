@@ -90,7 +90,7 @@ jobs:
             - name: Build and smoke-test production container
               run: |
                   set -Eeuo pipefail
-                  image_tag="project-reader-pr:$GITHUB_SHA"
+                  image_tag="vfs-pr:$GITHUB_SHA"
                   container_id=""
                   # shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap.
                   cleanup() {

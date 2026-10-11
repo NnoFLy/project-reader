@@ -3,7 +3,7 @@ import type { PromptItem, PromptRequest, PromptService, PromptSnapshot } from ".
 import * as m from "$lib/paraglide/messages"
 import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
-const QUERY_HISTORY_STORAGE_KEY = "project-reader.prompt-query-history"
+const QUERY_HISTORY_STORAGE_KEY = "vfs.prompt-query-history"
 const MAX_QUERY_HISTORY = 50
 
 const PROMPT_FUSE_OPTIONS = {

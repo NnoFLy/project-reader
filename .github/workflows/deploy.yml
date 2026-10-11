@@ -157,19 +157,19 @@ jobs:
                   # shellcheck disable=SC2029 # RELEASE is a validated commit SHA.
                   ssh production "RELEASE='$RELEASE' bash -s" <<'REMOTE'
                   set -euo pipefail
-                  base=/opt/project-reader/releases
+                  base=/opt/vfs/releases
                   incoming="$base/.incoming-$RELEASE"
                   rm -rf "$incoming"
                   install -m 700 -d "$incoming"
                   REMOTE
 
                   scp -q docker-compose.yml /tmp/image-ref \
-                    "production:/opt/project-reader/releases/.incoming-$RELEASE/"
+                    "production:/opt/vfs/releases/.incoming-$RELEASE/"
 
                   # shellcheck disable=SC2029 # RELEASE is a validated commit SHA.
                   ssh production "RELEASE='$RELEASE' bash -s" <<'REMOTE'
                   set -euo pipefail
-                  base=/opt/project-reader/releases
+                  base=/opt/vfs/releases
                   incoming="$base/.incoming-$RELEASE"
                   final="$base/$RELEASE"
                   if [[ -e "$final" ]]; then

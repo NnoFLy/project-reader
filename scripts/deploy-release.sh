@@ -6,11 +6,11 @@ set -Eeuo pipefail
 : "${PRODUCTION_HOST:?PRODUCTION_HOST is required}"
 : "${PRODUCTION_URL:?PRODUCTION_URL is required}"
 
-BASE=/opt/project-reader/releases
-CURRENT=/opt/project-reader/current
-ROLLBACK_FILE="/opt/project-reader/.rollback-$RELEASE"
-LOCK_FILE=/opt/project-reader/deploy.lock
-PROJECT=project-reader
+BASE=/opt/vfs/releases
+CURRENT=/opt/vfs/current
+ROLLBACK_FILE="/opt/vfs/.rollback-$RELEASE"
+LOCK_FILE=/opt/vfs/deploy.lock
+PROJECT=vfs
 KEEP_SUCCESSFUL_RELEASES=3
 MIN_FREE_KB=1048576
 
@@ -154,7 +154,7 @@ rollback() {
         return 1
     fi
 
-    next_link="/opt/project-reader/.rollback-current-$RELEASE"
+    next_link="/opt/vfs/.rollback-current-$RELEASE"
     rm -f "$next_link"
     ln -s "$previous_dir" "$next_link"
     mv -Tf "$next_link" "$CURRENT"
@@ -175,7 +175,7 @@ PRODUCTION_HOST="$PRODUCTION_HOST" DEPLOY_IMAGE="$IMAGE_REF" \
     "${compose[@]}" up --detach --remove-orphans --wait
 verify_release "$release_dir" "$IMAGE_REF" "$RELEASE"
 
-next_link="/opt/project-reader/.current-$RELEASE"
+next_link="/opt/vfs/.current-$RELEASE"
 rm -f "$next_link"
 ln -s "$release_dir" "$next_link"
 mv -Tf "$next_link" "$CURRENT"
@@ -187,7 +187,7 @@ rm -f "$ROLLBACK_FILE"
 trap - ERR INT TERM
 
 echo "Disk usage before retention cleanup:"
-df -h /opt/project-reader
+df -h /opt/vfs
 docker system df
 
 mapfile -t successful_dirs < <(
@@ -221,13 +221,13 @@ done < <(docker image ls --digests --format '{{.Repository}}@{{.Digest}}' \
 docker image prune --force >/dev/null
 
 find "$BASE" -mindepth 1 -maxdepth 1 -type d -name '.incoming-*' -mtime +1 -exec rm -rf -- {} +
-find /opt/project-reader -maxdepth 1 -type l \( -name '.current-*' -o -name '.rollback-current-*' \) -mtime +1 -delete
-find /opt/project-reader -maxdepth 1 -type f -name '.rollback-*' -mtime +7 -delete
+find /opt/vfs -maxdepth 1 -type l \( -name '.current-*' -o -name '.rollback-current-*' \) -mtime +1 -delete
+find /opt/vfs -maxdepth 1 -type f -name '.rollback-*' -mtime +7 -delete
 
 echo "Disk usage after retention cleanup:"
-df -h /opt/project-reader
+df -h /opt/vfs
 docker system df
-free_kb="$(df -Pk /opt/project-reader | awk 'NR == 2 {print $4}')"
+free_kb="$(df -Pk /opt/vfs | awk 'NR == 2 {print $4}')"
 if (( free_kb < MIN_FREE_KB )); then
     echo "Deployment succeeded, but less than 1 GiB remains; manual cleanup is required" >&2
 fi

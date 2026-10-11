@@ -1,7 +1,7 @@
 {
     "id": "/",
-    "name": "Project Reader",
-    "short_name": "Reader",
+    "name": "VFS (Virtual File Storage)",
+    "short_name": "VFS",
     "icons": [
         {
             "src": "/android-chrome-192x192.png",

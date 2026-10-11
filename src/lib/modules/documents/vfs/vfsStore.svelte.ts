@@ -363,7 +363,7 @@ export class VFSStore {
     }
 
     private resourceCleanupFallbackKey(id: string): string {
-        return `project-reader:resource-cleanup:${id}`
+        return `vfs:resource-cleanup:${id}`
     }
 
     private async markResourceCleanupPending(

@@ -364,7 +364,7 @@ describe("VFS initialization and import ordering", () => {
         await store.savePreview("book", "blob:preview")
         expect(persisted.cleanupPending).toBe("resource-limit")
 
-        const fallbacks = new Map([["project-reader:resource-cleanup:book", "resource-limit"]])
+        const fallbacks = new Map([["vfs:resource-cleanup:book", "resource-limit"]])
         vi.stubGlobal("localStorage", {
             getItem: (key: string) => fallbacks.get(key) ?? null,
             removeItem: (key: string) => fallbacks.delete(key),

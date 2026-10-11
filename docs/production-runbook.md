@@ -15,14 +15,14 @@ GitHub environment reviewers can be enabled later without changing the workflow.
 
 Create a `production` environment restricted to the `master` branch. Set:
 
-| Kind                 | Name                 | Value                                                           |
-| -------------------- | -------------------- | --------------------------------------------------------------- |
-| Environment variable | `PRODUCTION_HOST`    | Project-controlled DNS name, for example `reader.example.org`   |
-| Environment variable | `PRODUCTION_URL`     | Matching HTTPS origin, for example `https://reader.example.org` |
-| Environment secret   | `DEPLOY_HOST`        | SSH host name or address                                        |
-| Environment secret   | `DEPLOY_USER`        | Rootless Docker account                                         |
-| Environment secret   | `DEPLOY_SSH_KEY`     | Dedicated private deployment key                                |
-| Environment secret   | `DEPLOY_KNOWN_HOSTS` | Pinned `known_hosts` entry for `DEPLOY_HOST`                    |
+| Kind                 | Name                 | Value                                                        |
+| -------------------- | -------------------- | ------------------------------------------------------------ |
+| Environment variable | `PRODUCTION_HOST`    | Project-controlled DNS name, for example `vfs.example.org`   |
+| Environment variable | `PRODUCTION_URL`     | Matching HTTPS origin, for example `https://vfs.example.org` |
+| Environment secret   | `DEPLOY_HOST`        | SSH host name or address                                     |
+| Environment secret   | `DEPLOY_USER`        | Rootless Docker account                                      |
+| Environment secret   | `DEPLOY_SSH_KEY`     | Dedicated private deployment key                             |
+| Environment secret   | `DEPLOY_KNOWN_HOSTS` | Pinned `known_hosts` entry for `DEPLOY_HOST`                 |
 
 Point the production DNS `A`/`AAAA` record at the host before the first deployment. Configure the host Caddy reverse proxy described below before the first public verification; it terminates HTTPS and obtains and renews the certificate. The Caddy process inside the application container has `auto_https` disabled and serves only internal HTTP. `PRODUCTION_HOST` must be a DNS name; IP literals and shell metacharacters are rejected.
 
@@ -55,7 +55,7 @@ The responses must show at least one required approval, `rules[].parameters.requ
 - a host Caddy installation managed separately from the rootless Docker daemon
 - inbound TCP 22 from the runner path and TCP 80/443 for host Caddy (allow UDP 443 if HTTP/3 is enabled)
 - outbound DNS and HTTPS access for GHCR and the host Caddy's ACME issuer
-- `/opt/project-reader` owned by the deployment user with mode `0700`
+- `/opt/vfs` owned by the deployment user with mode `0700`
 - recommended: at least 1 GiB free after retained releases and images
 
 For rootless Docker, install it for `DEPLOY_USER`, enable lingering, and select the user's rootless Docker context. The Compose service publishes only `127.0.0.1:8000`, so it does not require permission to bind public ports:
@@ -69,7 +69,7 @@ Confirm with `docker info` that the daemon is rootless. The application containe
 Configure the host Caddy instance to proxy the public name to the loopback-only container port. For example, add this site to the host Caddy configuration (not to the repository `Caddyfile`):
 
 ```caddyfile
-reader.example.org {
+vfs.example.org {
     reverse_proxy 127.0.0.1:8000
 }
 ```
@@ -79,8 +79,8 @@ Replace the hostname, validate the host configuration, and reload host Caddy bef
 Bootstrap the top-level directory once as an administrator, then create releases as the deployment user:
 
 ```sh
-sudo install -d -o DEPLOY_USER -g DEPLOY_USER -m 700 /opt/project-reader
-sudo -u DEPLOY_USER install -d -m 700 /opt/project-reader/releases
+sudo install -d -o DEPLOY_USER -g DEPLOY_USER -m 700 /opt/vfs
+sudo -u DEPLOY_USER install -d -m 700 /opt/vfs/releases
 ```
 
 ## Deployment and rollback behavior
@@ -89,7 +89,7 @@ CI builds one image, verifies its release endpoint, generates and attests an SPD
 
 1. pulls that exact digest;
 2. stores immutable `docker-compose.yml` and `image-ref` files in the release directory;
-3. acquires `/opt/project-reader/deploy.lock` with `flock`;
+3. acquires `/opt/vfs/deploy.lock` with `flock`;
 4. records and validates the previous image, release directory, Compose file, and image revision; when no web container is running, it uses and validates the image reference and revision from the current release;
 5. starts the candidate with `docker compose up --wait`;
 6. verifies the expected revision internally and through public HTTPS;
@@ -97,37 +97,37 @@ CI builds one image, verifies its release endpoint, generates and attests an SPD
 8. retains the latest three successful releases and all images they reference;
 9. warns (without failing or rolling back) if less than the recommended 1 GiB remains after retention cleanup; this space level is not a deployment prerequisite.
 
-A failed candidate is rolled back with the previous release's Compose file. If no web container is running, the current release is used as the rollback target only after its metadata and image revision validate. Rollback metadata is deleted only after rollback verifies successfully. If rollback fails, preserve `/opt/project-reader/.rollback-*` and inspect it before taking manual action.
+A failed candidate is rolled back with the previous release's Compose file. If no web container is running, the current release is used as the rollback target only after its metadata and image revision validate. Rollback metadata is deleted only after rollback verifies successfully. If rollback fails, preserve `/opt/vfs/.rollback-*` and inspect it before taking manual action.
 
 Manual rollback to a retained release:
 
 ```sh
-release=/opt/project-reader/releases/COMMIT_SHA
+release=/opt/vfs/releases/COMMIT_SHA
 image=$(cat "$release/image-ref")
 revision=$(basename "$release")
-PRODUCTION_HOST=reader.example.org DEPLOY_IMAGE="$image" \
-  docker compose --project-name project-reader -f "$release/docker-compose.yml" \
+PRODUCTION_HOST=vfs.example.org DEPLOY_IMAGE="$image" \
+  docker compose --project-name vfs -f "$release/docker-compose.yml" \
   up --detach --remove-orphans --wait
-container=$(PRODUCTION_HOST=reader.example.org DEPLOY_IMAGE="$image" \
-  docker compose --project-name project-reader -f "$release/docker-compose.yml" ps -q web)
-test "$(docker exec "$container" wget -qO- --header='Host: reader.example.org' \
+container=$(PRODUCTION_HOST=vfs.example.org DEPLOY_IMAGE="$image" \
+  docker compose --project-name vfs -f "$release/docker-compose.yml" ps -q web)
+test "$(docker exec "$container" wget -qO- --header='Host: vfs.example.org' \
   http://127.0.0.1/health/version)" = "$revision"
-ln -sfn "$release" /opt/project-reader/current
+ln -sfn "$release" /opt/vfs/current
 ```
 
 Use the deployment lock for manual Compose changes:
 
 ```sh
-flock --exclusive /opt/project-reader/deploy.lock bash -c 'your maintenance command'
+flock --exclusive /opt/vfs/deploy.lock bash -c 'your maintenance command'
 ```
 
 ## Backup and disaster recovery
 
-Back up the host Caddy configuration and its persistent data directory; the data directory contains the ACME account and certificate state. For packaged systemd installations this is commonly `/var/lib/caddy/.local/share/caddy`, but verify the active service's configured data directory with `systemctl cat caddy` and `caddy environ`. Also back up `/opt/project-reader/releases`. Never copy live certificate state inconsistently: stop host Caddy or use a filesystem snapshot.
+Back up the host Caddy configuration and its persistent data directory; the data directory contains the ACME account and certificate state. For packaged systemd installations this is commonly `/var/lib/caddy/.local/share/caddy`, but verify the active service's configured data directory with `systemctl cat caddy` and `caddy environ`. Also back up `/opt/vfs/releases`. Never copy live certificate state inconsistently: stop host Caddy or use a filesystem snapshot.
 
 Recovery sequence:
 
-1. restore the host Caddy configuration/data and `/opt/project-reader/releases`;
+1. restore the host Caddy configuration/data and `/opt/vfs/releases`;
 2. restore DNS and firewall rules;
 3. choose a retained release and pull the digest in its `image-ref` if absent;
 4. run the manual rollback commands above;
@@ -137,9 +137,9 @@ Recovery sequence:
 Useful diagnostics:
 
 ```sh
-docker compose --project-name project-reader -f /opt/project-reader/current/docker-compose.yml ps
-docker logs project-reader-web-1
+docker compose --project-name vfs -f /opt/vfs/current/docker-compose.yml ps
+docker logs vfs-web-1
 docker system df
-df -h /opt/project-reader
-curl -fsS https://reader.example.org/health/version
+df -h /opt/vfs
+curl -fsS https://vfs.example.org/health/version
 ```

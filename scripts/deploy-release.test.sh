@@ -3,9 +3,9 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 release=0123456789abcdef0123456789abcdef01234567
-image="ghcr.io/example/project-reader@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+image="ghcr.io/example/vfs@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 previous_release=fedcba9876543210fedcba9876543210fedcba98
-previous_image="ghcr.io/example/project-reader@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+previous_image="ghcr.io/example/vfs@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 
 run_case() (
     set -Eeuo pipefail
@@ -17,7 +17,7 @@ run_case() (
     deployment="$root/deploy-release.sh"
     mkdir -p "$mock_bin" "$root/releases/$release"
 
-    sed "s|/opt/project-reader|$root|g" "$script_dir/deploy-release.sh" > "$deployment"
+    sed "s|/opt/vfs|$root|g" "$script_dir/deploy-release.sh" > "$deployment"
     chmod 755 "$deployment"
     printf '%s\n' 'services:' > "$root/releases/$release/docker-compose.yml"
     printf '%s\n' "$image" > "$root/releases/$release/image-ref"
@@ -95,7 +95,7 @@ EOF
     set +e
     PATH="$mock_bin:$PATH" \
         IMAGE_REF="$image" RELEASE="$release" \
-        PRODUCTION_HOST=reader.example.org PRODUCTION_URL=https://reader.example.org \
+        PRODUCTION_HOST=vfs.example.org PRODUCTION_URL=https://vfs.example.org \
         "$deployment" > "$root/stdout" 2> "$root/stderr"
     status=$?
     set -e
@@ -131,7 +131,7 @@ run_no_running_container_rollback_case() (
     deployment="$root/deploy-release.sh"
     mkdir -p "$mock_bin" "$root/releases/$release" "$root/releases/$previous_release"
 
-    sed "s|/opt/project-reader|$root|g" "$script_dir/deploy-release.sh" > "$deployment"
+    sed "s|/opt/vfs|$root|g" "$script_dir/deploy-release.sh" > "$deployment"
     chmod 755 "$deployment"
     printf '%s\n' 'services:' > "$root/releases/$release/docker-compose.yml"
     printf '%s\n' "$image" > "$root/releases/$release/image-ref"
@@ -221,7 +221,7 @@ EOF
     set +e
     PATH="$mock_bin:$PATH" \
         IMAGE_REF="$image" RELEASE="$release" \
-        PRODUCTION_HOST=reader.example.org PRODUCTION_URL=https://reader.example.org \
+        PRODUCTION_HOST=vfs.example.org PRODUCTION_URL=https://vfs.example.org \
         "$deployment" > "$root/stdout" 2> "$root/stderr"
     status=$?
     set -e
