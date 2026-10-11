@@ -49,6 +49,7 @@ function isHintMatch(adapter: DocumentAdapter, source: DocumentSource): boolean 
 
 export class DocumentService {
     private readonly opened = new Set<OpenedDocument>()
+    private readonly closing = new Map<OpenedDocument, Promise<void>>()
 
     constructor(readonly adapters: DocumentAdapterRegistry = new DocumentAdapterRegistry()) {}
 
@@ -62,12 +63,22 @@ export class DocumentService {
         const selected = candidates[0]
         if (!selected) throw new UnsupportedDocumentError(source)
         throwIfAborted(signal)
+        let document: OpenedDocument | undefined
         try {
-            const document = await selected.adapter.open(source, signal)
+            document = await selected.adapter.open(source, signal)
             throwIfAborted(signal)
             this.opened.add(document)
             return document
         } catch (error) {
+            // An adapter can finish opening just as cancellation arrives. The
+            // service owns that document now and must release it on every exit.
+            if (document) {
+                try {
+                    await document.close()
+                } catch {
+                    // Preserve the original open/cancellation error.
+                }
+            }
             if (signal?.aborted)
                 throw signal.reason ?? new DOMException("The operation was aborted", "AbortError")
             if (error instanceof DocumentOpenError) throw error
@@ -76,14 +87,24 @@ export class DocumentService {
     }
 
     async close(document: OpenedDocument): Promise<void> {
-        if (!this.opened.delete(document)) return
-        await document.close()
+        if (!this.opened.has(document)) return
+        const existing = this.closing.get(document)
+        if (existing) return existing
+        const closing = (async () => {
+            try {
+                await document.close()
+            } finally {
+                this.opened.delete(document)
+                this.closing.delete(document)
+            }
+        })()
+        this.closing.set(document, closing)
+        return closing
     }
 
     async closeAll(): Promise<void> {
         const documents = [...this.opened]
-        this.opened.clear()
-        const results = await Promise.allSettled(documents.map((document) => document.close()))
+        const results = await Promise.allSettled(documents.map((document) => this.close(document)))
         const rejected = results.find(
             (result): result is PromiseRejectedResult => result.status === "rejected",
         )

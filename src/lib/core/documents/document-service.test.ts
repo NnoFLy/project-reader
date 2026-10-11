@@ -50,6 +50,53 @@ describe("DocumentService", () => {
         expect(service.openDocumentCount).toBe(0)
     })
 
+    it("closes a document when cancellation happens after adapter open", async () => {
+        const registry = new DocumentAdapterRegistry()
+        const close = vi.fn()
+        const controller = new AbortController()
+        const adapter: DocumentAdapter = {
+            id: "test.cancelled-open",
+            extensions: ["fake"],
+            mimeTypes: [],
+            probe: vi.fn(async () => ({ supported: true })),
+            open: vi.fn(async () => {
+                controller.abort()
+                return closedDocument(close)
+            }),
+        }
+        registry.register(adapter)
+        const service = new DocumentService(registry)
+
+        await expect(service.open(source(), controller.signal)).rejects.toMatchObject({
+            name: "AbortError",
+        })
+        expect(close).toHaveBeenCalledOnce()
+        expect(service.openDocumentCount).toBe(0)
+    })
+
+    it("removes a document from tracking when close fails", async () => {
+        const registry = new DocumentAdapterRegistry()
+        const document: OpenedDocument = {
+            ...closedDocument(() => undefined),
+            async close() {
+                throw new Error("close failed")
+            },
+        }
+        const adapter: DocumentAdapter = {
+            id: "test.close-failure",
+            extensions: ["fake"],
+            mimeTypes: [],
+            probe: vi.fn(async () => ({ supported: true })),
+            open: vi.fn(async () => document),
+        }
+        registry.register(adapter)
+        const service = new DocumentService(registry)
+        await service.open(source())
+
+        await expect(service.close(document)).rejects.toThrow("close failed")
+        expect(service.openDocumentCount).toBe(0)
+    })
+
     it("uses the safe fake adapter and rejects unsupported sources", async () => {
         const service = new DocumentService()
         service.adapters.register(createFakeDocumentAdapter())

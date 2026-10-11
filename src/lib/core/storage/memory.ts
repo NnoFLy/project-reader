@@ -43,10 +43,140 @@ export class MemoryStorageBackend implements StorageBackend {
     }
 }
 
+const MIGRATION_VERSION_KEY = "__storage_meta:migration-version"
+
+/**
+ * A small IndexedDB backend for extension data. IndexedDB is kept behind the
+ * core StorageBackend interface so extensions never depend on the database
+ * implementation or receive a database handle.
+ */
+export class IndexedDBStorageBackend implements StorageBackend {
+    private readonly databaseName: string
+    private readonly indexedDB: IDBFactory
+    private databasePromise: Promise<IDBDatabase> | null = null
+
+    constructor(options: { databaseName?: string; indexedDB?: IDBFactory } = {}) {
+        this.databaseName = options.databaseName ?? "vfs-extension-storage"
+        const indexedDB = options.indexedDB ?? globalThis.indexedDB
+        if (!indexedDB) throw new Error("IndexedDB is unavailable")
+        this.indexedDB = indexedDB
+    }
+
+    async get(key: string): Promise<StoredValue | undefined> {
+        return this.transaction("readonly", (store, finish, fail) => {
+            const request = store.get(key)
+            request.onsuccess = () => finish(request.result?.value as StoredValue | undefined)
+            request.onerror = () => fail(request.error ?? new Error("Unable to read storage"))
+        })
+    }
+
+    async set(key: string, value: StoredValue): Promise<void> {
+        await this.transaction("readwrite", (store, finish, fail) => {
+            const request = store.put({ key, value })
+            request.onsuccess = () => undefined
+            request.onerror = () => fail(request.error ?? new Error("Unable to write storage"))
+            store.transaction.oncomplete = () => finish(undefined)
+        })
+    }
+
+    async delete(key: string): Promise<void> {
+        await this.transaction("readwrite", (store, finish, fail) => {
+            const request = store.delete(key)
+            request.onsuccess = () => undefined
+            request.onerror = () => fail(request.error ?? new Error("Unable to delete storage"))
+            store.transaction.oncomplete = () => finish(undefined)
+        })
+    }
+
+    async keys(prefix = ""): Promise<readonly string[]> {
+        return this.transaction("readonly", (store, finish, fail) => {
+            const keys: string[] = []
+            const request = store.openCursor()
+            request.onsuccess = () => {
+                const cursor = request.result
+                if (!cursor) {
+                    finish(keys)
+                    return
+                }
+                const key = String(cursor.key)
+                if (key.startsWith(prefix)) keys.push(key)
+                cursor.continue()
+            }
+            request.onerror = () => fail(request.error ?? new Error("Unable to list storage"))
+        })
+    }
+
+    private async transaction<T>(
+        mode: IDBTransactionMode,
+        operation: (
+            store: IDBObjectStore,
+            finish: (value: T) => void,
+            fail: (error: unknown) => void,
+        ) => void,
+    ): Promise<T> {
+        const database = await this.open()
+        return new Promise<T>((resolve, reject) => {
+            let settled = false
+            const finish = (value: T) => {
+                if (settled) return
+                settled = true
+                resolve(value)
+            }
+            const fail = (error: unknown) => {
+                if (settled) return
+                settled = true
+                reject(error)
+            }
+            let transaction: IDBTransaction
+            try {
+                transaction = database.transaction("values", mode)
+                transaction.onerror = () =>
+                    fail(transaction.error ?? new Error("Storage transaction failed"))
+                transaction.onabort = () =>
+                    fail(transaction.error ?? new Error("Storage transaction aborted"))
+                operation(transaction.objectStore("values"), finish, fail)
+                if (mode === "readwrite") {
+                    transaction.oncomplete = () => finish(undefined as T)
+                }
+            } catch (error) {
+                fail(error)
+            }
+        })
+    }
+
+    private open(): Promise<IDBDatabase> {
+        if (this.databasePromise) return this.databasePromise
+        const promise = new Promise<IDBDatabase>((resolve, reject) => {
+            let request: IDBOpenDBRequest
+            try {
+                request = this.indexedDB.open(this.databaseName, 1)
+            } catch (error) {
+                reject(error)
+                return
+            }
+            request.onupgradeneeded = () => {
+                if (!request.result.objectStoreNames.contains("values")) {
+                    request.result.createObjectStore("values", { keyPath: "key" })
+                }
+            }
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error ?? new Error("Unable to open storage"))
+            request.onblocked = () => reject(new Error("Storage database open was blocked"))
+        })
+        this.databasePromise = promise.catch((error) => {
+            this.databasePromise = null
+            throw error
+        })
+        return this.databasePromise
+    }
+}
+
 export class NamespacedStorage implements ExtensionStorage {
     private readonly listeners = new Set<(key: string) => void>()
     private readonly childNamespaces = new Map<string, NamespacedStorage>()
     private currentVersion = 0
+    private versionLoaded = false
+    private versionLoad: Promise<void> | null = null
     private migrationChain = Promise.resolve()
 
     constructor(
@@ -93,7 +223,9 @@ export class NamespacedStorage implements ExtensionStorage {
     }
 
     async clear(): Promise<void> {
-        for (const key of await this.backend.keys(`${this.prefix}:`)) await this.backend.delete(key)
+        for (const key of await this.backend.keys(`${this.prefix}:`)) {
+            if (key !== this.versionKey()) await this.backend.delete(key)
+        }
     }
 
     namespace(name: string): StorageNamespace {
@@ -114,10 +246,12 @@ export class NamespacedStorage implements ExtensionStorage {
                 new StorageError("storage.migration", `Invalid migration version: ${version}`),
             )
         }
-        this.migrationChain = this.migrationChain.then(async () => {
+        const run = this.migrationChain.then(async () => {
+            await this.loadVersion()
             if (version <= this.currentVersion) return
             try {
                 await migration(this)
+                await this.backend.set(this.versionKey(), version)
                 this.currentVersion = version
             } catch (error) {
                 throw new StorageError("storage.migration", `Migration ${version} failed`, {
@@ -125,7 +259,10 @@ export class NamespacedStorage implements ExtensionStorage {
                 })
             }
         })
-        return this.migrationChain
+        // A failed migration must not poison future retries. The failed run is
+        // still returned to its caller, while the queue continues afterwards.
+        this.migrationChain = run.catch(() => undefined)
+        return run
     }
 
     onChange(listener: (key: string) => void): Disposable {
@@ -139,6 +276,36 @@ export class NamespacedStorage implements ExtensionStorage {
 
     private key(key: string): string {
         return `${this.prefix}:${key}`
+    }
+
+    private versionKey(): string {
+        return `${this.prefix}:${MIGRATION_VERSION_KEY}`
+    }
+
+    private async loadVersion(): Promise<void> {
+        if (this.versionLoaded) return
+        if (!this.versionLoad) {
+            this.versionLoad = this.backend
+                .get(this.versionKey())
+                .then((value) => {
+                    this.currentVersion =
+                        typeof value === "number" && Number.isInteger(value) && value >= 0
+                            ? value
+                            : 0
+                    this.versionLoaded = true
+                })
+                .catch((error) => {
+                    this.versionLoad = null
+                    throw new StorageError(
+                        "storage.migration",
+                        "Unable to load migration version",
+                        {
+                            cause: error,
+                        },
+                    )
+                })
+        }
+        await this.versionLoad
     }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { createBoundedDocumentSource } from "$lib/core/files"
-import { assertPdfFileSize, PDF_RESOURCE_LIMITS } from "./pdf-document"
+import { assertPdfFileSize, PDF_RESOURCE_LIMITS, PagedPdfDocument } from "./pdf-document"
 import { PdfDocumentAdapter } from "./pdf-adapter"
 
 function source(bytes: Uint8Array, name = "sample.pdf") {
@@ -38,5 +38,49 @@ describe("built-in PDF adapter boundary", () => {
     it("enforces the PDF file boundary", () => {
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes)).not.toThrow()
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes + 1)).toThrow("byte limit")
+    })
+
+    it("closes its source once when close is called repeatedly", async () => {
+        const close = vi.fn(async () => undefined)
+        const document = new PagedPdfDocument(
+            createBoundedDocumentSource({
+                id: "pdf-close",
+                name: "sample.pdf",
+                size: 0,
+                reader: { read: async () => new ArrayBuffer(0), close },
+            }),
+        )
+
+        await Promise.all([document.close(), document.close()])
+        expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("still closes the source when PDF.js cleanup fails", async () => {
+        const close = vi.fn(async () => undefined)
+        const document = new PagedPdfDocument(
+            createBoundedDocumentSource({
+                id: "pdf-close-failure",
+                name: "sample.pdf",
+                size: 0,
+                reader: { read: async () => new ArrayBuffer(0), close },
+            }),
+        )
+        const internals = document as unknown as {
+            loadingTask: { destroy: () => Promise<void> }
+            pdfDoc: { destroy: () => Promise<void> }
+        }
+        internals.loadingTask = {
+            destroy: vi.fn(async () => {
+                throw new Error("loading task cleanup failed")
+            }),
+        }
+        internals.pdfDoc = {
+            destroy: vi.fn(async () => {
+                throw new Error("document cleanup failed")
+            }),
+        }
+
+        await expect(document.close()).rejects.toThrow("loading task cleanup failed")
+        expect(close).toHaveBeenCalledOnce()
     })
 })

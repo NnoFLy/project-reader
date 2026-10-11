@@ -14,12 +14,25 @@ describe("extension storage", () => {
         expect(await viewer.keys()).toEqual(["progress"])
     })
 
-    it("runs migrations once and serializes them", async () => {
-        const storage = createExtensionStorage(new MemoryStorageBackend(), "builtin.viewer")
-        await storage.migrate(1, async (namespace) => namespace.set("ready", true))
-        await storage.migrate(1, () => {
-            throw new Error("must not run")
+    it("persists migration versions across storage instances", async () => {
+        const backend = new MemoryStorageBackend()
+        const first = createExtensionStorage(backend, "builtin.viewer")
+        await first.migrate(1, async (namespace) => namespace.set("ready", true))
+
+        const reloaded = createExtensionStorage(backend, "builtin.viewer")
+        await reloaded.migrate(1, () => {
+            throw new Error("must not run after reload")
         })
+        expect(reloaded.version).toBe(1)
+        expect(await reloaded.get("ready")).toBe(true)
+    })
+
+    it("allows a failed migration to be retried", async () => {
+        const storage = createExtensionStorage(new MemoryStorageBackend(), "builtin.viewer")
+        await expect(
+            storage.migrate(1, () => Promise.reject(new Error("temporary failure"))),
+        ).rejects.toThrow("Migration 1 failed")
+        await storage.migrate(1, async (namespace) => namespace.set("ready", true))
         expect(storage.version).toBe(1)
         expect(await storage.get("ready")).toBe(true)
     })

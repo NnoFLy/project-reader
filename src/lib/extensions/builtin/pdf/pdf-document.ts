@@ -330,15 +330,33 @@ export class PagedPdfDocument implements PagedDocument {
         if (this.closePromise) return this.closePromise
         this.closed = true
         this.closePromise = (async () => {
-            this.clearPageCache()
-            for (const page of this.pages.values()) page.cleanup()
+            const errors: unknown[] = []
+            const attempt = async (operation: () => void | Promise<void>): Promise<void> => {
+                try {
+                    await operation()
+                } catch (error) {
+                    errors.push(error)
+                }
+            }
+
+            await attempt(() => this.clearPageCache())
+            for (const page of this.pages.values()) {
+                await attempt(() => {
+                    page.cleanup()
+                })
+            }
             this.pages.clear()
             this.pagePromises.clear()
-            await this.loadingTask?.destroy()
-            await this.pdfDoc?.destroy()
+            const loadingTask = this.loadingTask
+            const pdfDoc = this.pdfDoc
             this.loadingTask = null
             this.pdfDoc = null
-            await this.source.close?.()
+            await attempt(async () => loadingTask?.destroy())
+            await attempt(async () => pdfDoc?.destroy())
+            // Source cleanup is independent from PDF.js cleanup. In particular,
+            // a failed destroy must not leak a file handle or object URL.
+            await attempt(async () => this.source.close?.())
+            if (errors.length > 0) throw errors[0]
         })()
         return this.closePromise
     }
