@@ -16,6 +16,29 @@ export const DEFAULT_ALLOWED_DEPENDENCIES = {
     viewer: ["commands", "documents", "pdf", "prompt", "settings"],
 }
 
+const TARGET_LAYERS = new Set([
+    "core",
+    "extension-api",
+    "extension-host",
+    "document-model",
+    "plugin",
+    "adapter",
+    "shared",
+    "routes",
+])
+const CONTRIBUTION_METHODS = new Map([
+    ["commands", "command"],
+    ["command", "command"],
+    ["views", "view"],
+    ["view", "view"],
+    ["settings", "setting"],
+    ["setting", "setting"],
+    ["documents", "adapter"],
+    ["document", "adapter"],
+    ["adapters", "adapter"],
+    ["adapter", "adapter"],
+])
+
 function walk(directory) {
     if (!fs.existsSync(directory)) return []
     return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -33,16 +56,15 @@ function scriptSources(file, source) {
         .map((script) => source.slice(script.start, script.end))
 }
 
+function sourceFiles(file, source) {
+    return scriptSources(file, source).map((script) =>
+        ts.createSourceFile(file, script, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS),
+    )
+}
+
 function importSpecifiers(file, source) {
     const specifiers = []
-    for (const script of scriptSources(file, source)) {
-        const sourceFile = ts.createSourceFile(
-            file,
-            script,
-            ts.ScriptTarget.Latest,
-            false,
-            ts.ScriptKind.TS,
-        )
+    for (const sourceFile of sourceFiles(file, source)) {
         const visit = (node) => {
             if (
                 (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
@@ -65,12 +87,161 @@ function importSpecifiers(file, source) {
     return specifiers
 }
 
+function propertyName(node) {
+    if (!node.name) return null
+    if (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name)) return node.name.text
+    return null
+}
+
+function staticStringProperty(object, name) {
+    for (const property of object.properties) {
+        if (!ts.isPropertyAssignment(property) || propertyName(property) !== name) continue
+        return ts.isStringLiteralLike(property.initializer) ? property.initializer.text : null
+    }
+    return null
+}
+
+function registrationCategory(expression) {
+    if (!ts.isPropertyAccessExpression(expression)) return null
+    const method = expression.name.text.toLowerCase()
+    if (!method.startsWith("register")) return null
+    const receiver = expression.expression
+    const receiverName = ts.isPropertyAccessExpression(receiver)
+        ? receiver.name.text
+        : ts.isIdentifier(receiver)
+          ? receiver.text
+          : null
+    const receiverCategory = receiverName
+        ? CONTRIBUTION_METHODS.get(receiverName.toLowerCase())
+        : undefined
+    if (receiverCategory) return receiverCategory
+    if (method.includes("command")) return "command"
+    if (method.includes("view")) return "view"
+    if (method.includes("setting")) return "setting"
+    if (method.includes("adapter") || method.includes("document")) return "adapter"
+    return null
+}
+
+function contributionIds(file, source) {
+    const contributions = []
+    for (const sourceFile of sourceFiles(file, source)) {
+        const visit = (node) => {
+            if (ts.isCallExpression(node)) {
+                const category = registrationCategory(node.expression)
+                const argument = node.arguments[0]
+                if (category && argument && ts.isObjectLiteralExpression(argument)) {
+                    const id = staticStringProperty(argument, "id")
+                    if (id) contributions.push({ category, id })
+                }
+            }
+
+            // Also inspect the declarative manifest shape described by the extension API.
+            if (
+                ts.isPropertyAssignment(node) &&
+                propertyName(node) === "contributes" &&
+                ts.isObjectLiteralExpression(node.initializer)
+            ) {
+                for (const contributionGroup of node.initializer.properties) {
+                    if (!ts.isPropertyAssignment(contributionGroup)) continue
+                    const category = CONTRIBUTION_METHODS.get(
+                        propertyName(contributionGroup)?.toLowerCase() ?? "",
+                    )
+                    if (!category) continue
+                    const values = ts.isArrayLiteralExpression(contributionGroup.initializer)
+                        ? contributionGroup.initializer.elements
+                        : [contributionGroup.initializer]
+                    for (const value of values) {
+                        if (!ts.isObjectLiteralExpression(value)) continue
+                        const id = staticStringProperty(value, "id")
+                        if (id) contributions.push({ category, id })
+                    }
+                }
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(sourceFile)
+    }
+    return contributions
+}
+
+function targetArea(sourceRoot, file) {
+    const relative = path.relative(sourceRoot, file).replaceAll(path.sep, "/")
+    if (relative === "lib/core" || relative.startsWith("lib/core/")) return { kind: "core" }
+    if (relative === "lib/extension-api" || relative.startsWith("lib/extension-api/")) {
+        return { kind: "extension-api" }
+    }
+    if (relative === "lib/extension-host" || relative.startsWith("lib/extension-host/")) {
+        return { kind: "extension-host" }
+    }
+    if (relative === "lib/document-model" || relative.startsWith("lib/document-model/")) {
+        return { kind: "document-model" }
+    }
+    if (relative === "lib/shared" || relative.startsWith("lib/shared/")) {
+        return { kind: "shared" }
+    }
+    if (relative === "routes" || relative.startsWith("routes/")) return { kind: "routes" }
+
+    const adapterMatch = relative.match(
+        /^lib\/(?:adapters|extensions\/builtin\/([^/]+)\/adapter(?:s)?)(?:\/|$)/,
+    )
+    if (adapterMatch) {
+        const name = adapterMatch[1] ?? relative.split("/")[2]
+        return { kind: "adapter", name }
+    }
+
+    const pluginMatch = relative.match(/^lib\/extensions\/builtin\/([^/]+)(?:\/|$)/)
+    if (pluginMatch) return { kind: "plugin", name: pluginMatch[1] }
+    return null
+}
+
+function targetBoundaryViolation(from, to) {
+    if (!TARGET_LAYERS.has(from.kind) || !TARGET_LAYERS.has(to.kind)) return null
+    if (from.kind === "core" && to.kind !== "core") return "core may only import core"
+    if (from.kind === "extension-api" && !["core", "document-model"].includes(to.kind)) {
+        return "extension-api may only import core contracts"
+    }
+    if (from.kind === "extension-host" && !["core", "extension-api"].includes(to.kind)) {
+        return "extension-host may only import core and extension-api"
+    }
+    if (from.kind === "document-model" && !["core", "document-model"].includes(to.kind)) {
+        return "document-model may only import core contracts"
+    }
+    if (from.kind === "shared" && !["core", "document-model", "shared"].includes(to.kind)) {
+        return "shared code may only import core-safe code"
+    }
+    if (from.kind === "routes" && !["core", "extension-host", "routes"].includes(to.kind)) {
+        return "routes may only import host-owned code"
+    }
+    if (["plugin", "adapter"].includes(from.kind)) {
+        if (["core", "extension-api", "document-model"].includes(to.kind)) return null
+        if (
+            ["plugin", "adapter"].includes(to.kind) &&
+            from.name === to.name &&
+            (to.kind === from.kind || (from.kind === "plugin" && to.kind === "adapter"))
+        ) {
+            return null
+        }
+        if (["plugin", "adapter"].includes(to.kind) && from.name !== to.name) {
+            return `extensions may not import another extension (${to.name})`
+        }
+        return `${from.kind} may not import ${to.kind}`
+    }
+    return null
+}
+
+function contributionViolation(file, from, id, category) {
+    if (!from || !["plugin", "adapter"].includes(from.kind)) return null
+    const namespace = from.name
+    if (id.startsWith(`${namespace}.`) || id.startsWith(`builtin.${namespace}.`)) return null
+    return `${file}: ${category} contribution ID "${id}" must use the ${namespace} namespace`
+}
+
 export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWED_DEPENDENCIES) {
     const sourceRoot = path.join(projectRoot, "src")
     const libRoot = path.join(sourceRoot, "lib")
     const modulesRoot = path.join(libRoot, "modules")
     const location = (file) => path.relative(projectRoot, file).replaceAll(path.sep, "/")
-    const area = (file) => {
+    const legacyArea = (file) => {
         const relative = path.relative(sourceRoot, file).replaceAll(path.sep, "/")
         const moduleMatch = relative.match(/^lib\/modules\/([^/]+)(?:\/|$)/)
         if (moduleMatch) return { kind: "module", name: moduleMatch[1] }
@@ -80,6 +251,7 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
         if (relative.startsWith("routes/")) return { kind: "routes" }
         return { kind: "other" }
     }
+    const area = (file) => targetArea(sourceRoot, file) ?? legacyArea(file)
     const resolveImport = (importer, rawSpecifier) => {
         const specifier = rawSpecifier.split("?")[0]
         if (specifier.startsWith("$lib/")) return path.join(libRoot, specifier.slice(5))
@@ -98,6 +270,10 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
               .map((entry) => entry.name)
         : []
     const graph = new Map(moduleNames.map((name) => [name, new Set()]))
+    const extensionGraph = new Map()
+    const ensureExtensionNode = (name) => {
+        if (!extensionGraph.has(name)) extensionGraph.set(name, new Set())
+    }
 
     for (const moduleName of moduleNames) {
         if (!fs.existsSync(path.join(modulesRoot, moduleName, "index.ts"))) {
@@ -108,12 +284,19 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
     for (const file of files) {
         const source = fs.readFileSync(file, "utf8")
         const from = area(file)
+        for (const { category, id } of contributionIds(file, source)) {
+            const violation = contributionViolation(location(file), from, id, category)
+            if (violation) violations.push(violation)
+        }
         for (const specifier of importSpecifiers(file, source)) {
             const cleanSpecifier = specifier.split("?")[0]
             const targetPath = resolveImport(file, specifier)
             const to = targetPath ? area(targetPath) : { kind: "external" }
 
-            if (/^\$lib\/(?:core|features)(?:\/|$)/.test(cleanSpecifier)) {
+            if (
+                /^\$lib\/(?:core|features)(?:\/|$)/.test(cleanSpecifier) &&
+                !targetArea(sourceRoot, file)
+            ) {
                 violations.push(`${location(file)} imports removed alias ${specifier}`)
             }
 
@@ -123,6 +306,19 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
                     from.kind === "module" && from.name === moduleAlias[1]
                         ? `${location(file)} uses an alias for its own internals; use a relative import`
                         : `${location(file)} deep-imports ${specifier}; use $lib/modules/${moduleAlias[1]}`,
+                )
+            }
+
+            const pluginAlias = cleanSpecifier.match(/^\$lib\/extensions\/builtin\/([^/]+)(\/.+)$/)
+            if (pluginAlias) {
+                violations.push(
+                    `${location(file)} deep-imports ${specifier}; use $lib/extensions/builtin/${pluginAlias[1]}`,
+                )
+            }
+            const adapterAlias = cleanSpecifier.match(/^\$lib\/adapters\/([^/]+)(\/.+)$/)
+            if (adapterAlias) {
+                violations.push(
+                    `${location(file)} deep-imports ${specifier}; use $lib/adapters/${adapterAlias[1]}`,
                 )
             }
 
@@ -141,6 +337,9 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
                 )
             }
 
+            const targetViolation = targetBoundaryViolation(from, to)
+            if (targetViolation) violations.push(`${location(file)}: ${targetViolation}`)
+
             if (from.kind === "module" && to.kind === "module" && from.name !== to.name) {
                 graph.get(from.name)?.add(to.name)
                 if (!(allowedDependencies[from.name] ?? []).includes(to.name)) {
@@ -151,6 +350,16 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
                         `${location(file)}: cross-module imports must use $lib/modules/${to.name}`,
                     )
                 }
+            }
+
+            if (
+                ["plugin", "adapter"].includes(from.kind) &&
+                ["plugin", "adapter"].includes(to.kind) &&
+                from.name !== to.name
+            ) {
+                ensureExtensionNode(from.name)
+                ensureExtensionNode(to.name)
+                extensionGraph.get(from.name).add(to.name)
             }
         }
     }
@@ -173,6 +382,25 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
         visited.add(moduleName)
     }
     for (const moduleName of graph.keys()) visit(moduleName)
+
+    const extensionVisiting = new Set()
+    const extensionVisited = new Set()
+    const visitExtension = (name, trail = []) => {
+        if (extensionVisiting.has(name)) {
+            const start = trail.indexOf(name)
+            violations.push(
+                `extension dependency cycle: ${[...trail.slice(start), name].join(" -> ")}`,
+            )
+            return
+        }
+        if (extensionVisited.has(name)) return
+        extensionVisiting.add(name)
+        for (const dependency of extensionGraph.get(name) ?? [])
+            visitExtension(dependency, [...trail, name])
+        extensionVisiting.delete(name)
+        extensionVisited.add(name)
+    }
+    for (const name of extensionGraph.keys()) visitExtension(name)
 
     return {
         files: files.length,
