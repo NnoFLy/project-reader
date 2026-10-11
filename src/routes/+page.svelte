@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { LibraryPage } from "$lib/modules/library"
+    import { LibraryRoute } from "$lib/app"
     import * as m from "$lib/paraglide/messages"
 </script>
 
@@ -7,4 +7,4 @@
     <title>{m.library_page_title()}</title>
 </svelte:head>
 
-<LibraryPage />
+<LibraryRoute />
