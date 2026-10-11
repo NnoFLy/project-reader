@@ -16,14 +16,23 @@ import type {
 } from "./vfsStore.types"
 import { FolderNameError } from "./vfsStore.types"
 import { Database } from "../db/db"
-import { PDFDocument } from "$lib/modules/pdf"
+import { PDFDocument, PDFResourceLimitError, assertPdfFileSize } from "$lib/modules/pdf"
 import pLimit from "p-limit"
 
 interface ImportGenerations {
     content: number
     preview: number
     request: number
+    relinkEpoch: number
+    relinkOwner: number
+    document: PDFDocument | null
+    tempUrl: string
 }
+
+type PersistImportResult = ImportGenerations | { rejected: true } | null
+
+type ResourceRollbackOutcome = "rolled-back" | "superseded" | "pending"
+type ResourceCleanupMarkerResult = "marked" | "superseded" | "failed"
 
 type FileUrlOwner = "viewer" | "temporary"
 
@@ -125,6 +134,7 @@ export class VFSStore {
     private restoredRelinks = new Set<string>()
     private persistenceQueue = pLimit(1)
     private activeSourceTasks = new Set<Promise<unknown>>()
+    private activeRelinkTasks = new Set<Promise<unknown>>()
     private activeNodeMutations = new Set<Promise<unknown>>()
     private nodeMutationTail: Promise<void> | undefined
     private readonly nodeDeletionStartingListeners = new Set<(ids: string[]) => void>()
@@ -145,6 +155,17 @@ export class VFSStore {
     private metadataEnrichmentTask: Promise<void> | null = null
     private metadataEnrichmentIdleId: number | null = null
     private activeMetadataDocument: PDFDocument | null = null
+    private readonly pendingResourceRollbacks = new Map<
+        string,
+        { generations: ImportGenerations; parentId: string | null }
+    >()
+    private readonly resourceRollbackRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    private readonly resourceRollbackRetryTasks = new Set<Promise<unknown>>()
+    private readonly resourceRollbackTasks = new Set<Promise<unknown>>()
+    private readonly resourceOperationTasks = new Set<Promise<unknown>>()
+    private readonly resourceRollbackRetryAttempts = new Map<string, number>()
+    private readonly resourceCleanupMarkers = new Set<string>()
+    private readonly resourceCleanupFailures = new Map<string, unknown>()
     private readonly handleMetadataVisibilityChange = () => {
         if (document.visibilityState === "hidden") this.pauseMetadataEnrichment()
         else if (this.metadataEnrichmentOwners > 0) this.scheduleMetadataEnrichment()
@@ -210,6 +231,20 @@ export class VFSStore {
                 throw new VFSDisposedError()
             }),
         ])
+    }
+
+    private async awaitResourceOperation<T>(
+        promise: Promise<T>,
+        onResourceLimit?: () => void,
+    ): Promise<T> {
+        const observed = promise.catch((error: unknown) => {
+            if (error instanceof PDFResourceLimitError) onResourceLimit?.()
+            throw error
+        })
+        let task: Promise<T>
+        task = observed.finally(() => this.resourceOperationTasks.delete(task))
+        this.resourceOperationTasks.add(task)
+        return this.awaitUnlessDisposed(task)
     }
 
     private serializeNodeMutation<T>(mutation: () => Promise<T>): Promise<T> {
@@ -327,6 +362,154 @@ export class VFSStore {
         }
     }
 
+    private resourceCleanupFallbackKey(id: string): string {
+        return `project-reader:resource-cleanup:${id}`
+    }
+
+    private async markResourceCleanupPending(
+        id: string,
+        generations: ImportGenerations,
+    ): Promise<ResourceCleanupMarkerResult> {
+        const writeMarker = async (): Promise<ResourceCleanupMarkerResult> =>
+            this.db.transaction("rw", ["books"], async () => {
+                const persisted = await this.db.files.get(id)
+                if (
+                    !persisted ||
+                    this.contentGeneration(id) !== generations.content ||
+                    (this.relinkStateOwners.get(id) ?? 0) !== generations.relinkOwner
+                ) {
+                    return "superseded"
+                }
+                await this.db.files.put({ ...persisted, cleanupPending: "resource-limit" })
+                const current = this.nodes[id]
+                if (
+                    current?.type === "file" &&
+                    this.contentGeneration(id) === generations.content &&
+                    (this.relinkStateOwners.get(id) ?? 0) === generations.relinkOwner
+                ) {
+                    this.nodes[id] = {
+                        ...$state.snapshot(current),
+                        cleanupPending: "resource-limit",
+                    }
+                }
+                return "marked"
+            })
+
+        // Relinks use the node mutation queue too. Serializing live marker writes prevents an
+        // older cleanup transaction from overwriting a newer relink after its ownership check.
+        return this.disposed ? writeMarker() : this.serializeNodeMutation(writeMarker)
+    }
+
+    private async persistResourceCleanupMarker(
+        id: string,
+        generations: ImportGenerations,
+    ): Promise<ResourceCleanupMarkerResult> {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            try {
+                const result = await this.markResourceCleanupPending(id, generations)
+                if (result === "superseded") return result
+                // Keep compatibility with injected/test marker implementations that return
+                // void after a successful write.
+                this.resourceCleanupMarkers.add(id)
+                this.resourceCleanupFailures.delete(id)
+                return "marked"
+            } catch (error) {
+                if (attempt === 4) {
+                    this.resourceCleanupFailures.set(id, error)
+                    console.error(
+                        `[VFSStore] Failed to persist pending cleanup marker for ${id}:`,
+                        error,
+                    )
+                } else {
+                    await new Promise<void>((resolve) =>
+                        setTimeout(resolve, Math.min(100 * 2 ** attempt, 1600)),
+                    )
+                }
+            }
+        }
+
+        try {
+            const writeFallback = async (): Promise<ResourceCleanupMarkerResult> => {
+                if (
+                    this.contentGeneration(id) !== generations.content ||
+                    (this.relinkStateOwners.get(id) ?? 0) !== generations.relinkOwner
+                ) {
+                    return "superseded"
+                }
+                if (browser && typeof localStorage !== "undefined") {
+                    localStorage.setItem(this.resourceCleanupFallbackKey(id), "resource-limit")
+                } else {
+                    throw new Error("No durable cleanup marker storage available")
+                }
+                this.resourceCleanupMarkers.add(id)
+                this.resourceCleanupFailures.delete(id)
+                const current = this.nodes[id]
+                if (current?.type === "file") {
+                    this.nodes[id] = {
+                        ...$state.snapshot(current),
+                        cleanupPending: "resource-limit",
+                    }
+                }
+                return "marked"
+            }
+            const result = this.disposed
+                ? await writeFallback()
+                : await this.serializeNodeMutation(writeFallback)
+            return result
+        } catch (error) {
+            this.resourceCleanupFailures.set(id, error)
+            console.error(`[VFSStore] Cleanup marker fallback failed for ${id}:`, error)
+            return "failed"
+        }
+    }
+
+    private async cleanupPersistedResourceLimitedFile(id: string): Promise<boolean> {
+        try {
+            await this.db.transaction(
+                "rw",
+                [
+                    "books",
+                    "folders",
+                    "previews",
+                    "fileContents",
+                    "indexedTexts",
+                    "userNotes",
+                    "bookmarks",
+                ],
+                async () => {
+                    const persisted = await this.db.files.get(id)
+                    if (!persisted) return
+                    await this.db.files.delete(id)
+                    await this.db.previews.delete(id)
+                    await this.db.fileContents.delete(id)
+                    await this.db.indexedTexts.deleteByBookId(id)
+                    await this.db.userNotes.deleteByBookId(id)
+                    await this.db.bookmarks.deleteByBookId(id)
+                    if (persisted.parentId !== null) {
+                        const parent = await this.db.folders.get(persisted.parentId)
+                        if (parent) {
+                            await this.db.folders.put({
+                                ...parent,
+                                childrenIds: parent.childrenIds.filter((childId) => childId !== id),
+                            })
+                        }
+                    }
+                },
+            )
+            if (browser && typeof localStorage !== "undefined") {
+                try {
+                    localStorage.removeItem(this.resourceCleanupFallbackKey(id))
+                } catch (error) {
+                    console.warn(`[VFSStore] Failed to clear cleanup fallback for ${id}:`, error)
+                }
+            }
+            return true
+        } catch (error) {
+            console.error(`[VFSStore] Failed to clean up resource-limited file ${id}:`, error)
+            return false
+        }
+    }
+
     init(): Promise<void> {
         if (!browser || this.initialized) return Promise.resolve()
         if (this.initializationPromise) return this.initializationPromise
@@ -343,11 +526,41 @@ export class VFSStore {
 
                 const newNodes: VFSNodes = {}
                 const lockedMap: Record<string, boolean> = {}
+                const cleanedResourceIds = new Set<string>()
                 for (const folder of allFolders) newNodes[folder.id] = folder
                 for (const fileNode of allFiles) {
+                    const fallbackCleanup =
+                        browser && typeof localStorage !== "undefined"
+                            ? localStorage.getItem(this.resourceCleanupFallbackKey(fileNode.id)) ===
+                              "resource-limit"
+                            : false
+                    if (fileNode.cleanupPending === "resource-limit" || fallbackCleanup) {
+                        const cleaned = await this.cleanupPersistedResourceLimitedFile(fileNode.id)
+                        if (!cleaned) {
+                            throw new Error(
+                                `Failed to clean up resource-limited file ${fileNode.id}`,
+                            )
+                        }
+                        if (fallbackCleanup && browser && typeof localStorage !== "undefined") {
+                            localStorage.removeItem(this.resourceCleanupFallbackKey(fileNode.id))
+                        }
+                        cleanedResourceIds.add(fileNode.id)
+                        continue
+                    }
                     const normalizedFile = { ...fileNode, isLocked: fileNode.isLocked ?? true }
                     newNodes[fileNode.id] = normalizedFile
                     lockedMap[fileNode.id] = normalizedFile.isLocked
+                }
+
+                for (const folder of allFolders) {
+                    if (cleanedResourceIds.size > 0) {
+                        newNodes[folder.id] = {
+                            ...folder,
+                            childrenIds: folder.childrenIds.filter(
+                                (childId) => !cleanedResourceIds.has(childId),
+                            ),
+                        }
+                    }
                 }
 
                 this.throwIfDisposed()
@@ -359,9 +572,9 @@ export class VFSStore {
                 this.initialized = true
             } catch (error) {
                 this.initialized = false
-                if (!(error instanceof VFSDisposedError)) {
-                    console.error("VFS initialization failed:", error)
-                }
+                if (error instanceof VFSDisposedError) return
+                console.error("VFS initialization failed:", error)
+                throw error
             }
         }).catch((error: unknown) => {
             if (error instanceof VFSDisposedError) return
@@ -519,6 +732,7 @@ export class VFSStore {
         this.pauseMetadataEnrichment()
         await this.metadataEnrichmentTask?.catch(() => undefined)
         this.metadataEnrichmentTask = null
+        await Promise.allSettled(this.activeRelinkTasks)
         for (const waiters of this.relinkWaiters.values()) {
             for (const resolve of waiters) resolve()
         }
@@ -537,6 +751,15 @@ export class VFSStore {
         for (const id of Object.keys(this.previewUrlRefs)) delete this.previewUrlRefs[id]
         this.nativeFiles.clear()
         this.nativeHandles.clear()
+        for (const timer of this.resourceRollbackRetryTimers.values()) clearTimeout(timer)
+        this.resourceRollbackRetryTimers.clear()
+        await Promise.allSettled(this.resourceRollbackRetryTasks)
+        await Promise.allSettled(this.resourceRollbackTasks)
+        await Promise.race([
+            Promise.allSettled(this.resourceOperationTasks),
+            new Promise<void>((resolve) => setTimeout(resolve, 250)),
+        ])
+        await this.rollbackPendingResourceImports()
         this.importSources.clear()
         this.activeSourceTasks.clear()
         this.activeNodeMutations.clear()
@@ -796,6 +1019,174 @@ export class VFSStore {
         })
     }
 
+    private async rollbackResourceLimitedImport(
+        id: string,
+        generations: ImportGenerations,
+    ): Promise<ResourceRollbackOutcome> {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (this.disposed) return "pending"
+            // A relink may never settle (for example, a host file handle can hang). Wait only
+            // briefly so callers can observe the waiter while the bounded retry policy remains
+            // effective.
+            if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+                let relinkSettled = false
+                const timeout = new Promise<void>((resolve) => setTimeout(resolve, 100))
+                await Promise.race([
+                    this.waitForRelink(id).then(() => {
+                        relinkSettled = true
+                    }),
+                    timeout,
+                ])
+                if (!relinkSettled) return "pending"
+                continue
+            }
+
+            let retryAfterRelink = false
+            let outcome: ResourceRollbackOutcome = "rolled-back"
+            try {
+                await this.serializeNodeMutation(async () => {
+                    if ((this.relinkingCounts.get(id) ?? 0) > 0) {
+                        retryAfterRelink = true
+                        return
+                    }
+                    if (
+                        !this.isCurrentContent(id, generations.content) ||
+                        (this.relinkStateOwners.get(id) ?? 0) !== generations.relinkOwner ||
+                        this.nodes[id]?.type !== "file"
+                    ) {
+                        outcome = "superseded"
+                        return
+                    }
+
+                    const currentRelinkEpoch = this.relinkEpochs.get(id) ?? 0
+                    try {
+                        await this.deleteNodeUnlocked(id, currentRelinkEpoch)
+                    } catch (error) {
+                        if (error instanceof ContentSupersededError) {
+                            retryAfterRelink = true
+                            return
+                        }
+                        throw error
+                    }
+                })
+            } catch (error) {
+                console.error(
+                    `[VFSStore] Resource-limited import rollback attempt failed for ${id}:`,
+                    error,
+                )
+                await new Promise<void>((resolve) => setTimeout(resolve, 0))
+                continue
+            }
+            if (retryAfterRelink) continue
+            return outcome
+        }
+        return "pending"
+    }
+
+    private trackResourceRollback(
+        id: string,
+        generations: ImportGenerations,
+    ): Promise<ResourceRollbackOutcome> {
+        let task: Promise<ResourceRollbackOutcome>
+        task = this.rollbackResourceLimitedImport(id, generations).finally(() =>
+            this.resourceRollbackTasks.delete(task),
+        )
+        this.resourceRollbackTasks.add(task)
+        return task
+    }
+
+    private schedulePendingResourceRollback(id: string): void {
+        if (
+            this.disposed ||
+            this.resourceRollbackRetryTimers.has(id) ||
+            this.resourceCleanupFailures.has(id)
+        )
+            return
+        const attempt = (this.resourceRollbackRetryAttempts.get(id) ?? 0) + 1
+        if (attempt > 5) {
+            const pending = this.pendingResourceRollbacks.get(id)
+            if (!pending) return
+            const markerTask = this.persistResourceCleanupMarker(id, pending.generations).then(
+                (result) => {
+                    if (result === "marked" || result === "superseded") {
+                        this.pendingResourceRollbacks.delete(id)
+                    } else {
+                        // Both durable marker stores failed. Keep the pending record and its
+                        // explicit failure state, but do not recursively retry forever or claim
+                        // that a cleanup marker was written.
+                        console.error(
+                            `[VFSStore] Resource-limited cleanup remains pending for ${id}; ` +
+                                "durable marker persistence failed",
+                        )
+                    }
+                    console.error(
+                        `[VFSStore] Resource-limited import rollback exhausted retries for ${id}; ` +
+                            "leaving the pending cleanup for the next initialization",
+                    )
+                },
+            )
+            this.resourceRollbackRetryTasks.add(markerTask)
+            void markerTask.finally(() => this.resourceRollbackRetryTasks.delete(markerTask))
+            return
+        }
+        this.resourceRollbackRetryAttempts.set(id, attempt)
+        const delay = Math.min(100 * 2 ** (attempt - 1), 1600)
+        const timer = setTimeout(() => {
+            this.resourceRollbackRetryTimers.delete(id)
+            const pending = this.pendingResourceRollbacks.get(id)
+            if (!pending || this.disposed) return
+            let task: Promise<void>
+            task = this.trackResourceRollback(id, pending.generations)
+                .then((outcome) => {
+                    if (outcome === "rolled-back" || outcome === "superseded") {
+                        this.resourceCleanupMarkers.add(id)
+                        this.pendingResourceRollbacks.delete(id)
+                        this.resourceRollbackRetryAttempts.delete(id)
+                    } else {
+                        this.schedulePendingResourceRollback(id)
+                    }
+                })
+                .finally(() => this.resourceRollbackRetryTasks.delete(task))
+            this.resourceRollbackRetryTasks.add(task)
+        }, delay)
+        this.resourceRollbackRetryTimers.set(id, timer)
+    }
+
+    private async rollbackPendingResourceImports(): Promise<void> {
+        for (const [id, { generations }] of this.pendingResourceRollbacks) {
+            let completed = false
+            for (let attempt = 0; attempt < 5 && !completed; attempt += 1) {
+                if (
+                    this.contentGeneration(id) !== generations.content ||
+                    (this.relinkStateOwners.get(id) ?? 0) !== generations.relinkOwner
+                ) {
+                    completed = true
+                    break
+                }
+                completed = await this.cleanupPersistedResourceLimitedFile(id)
+                if (!completed && attempt < 4) {
+                    await new Promise<void>((resolve) =>
+                        setTimeout(resolve, Math.min(100 * 2 ** attempt, 1600)),
+                    )
+                }
+            }
+            if (!completed) {
+                const markerResult = await this.persistResourceCleanupMarker(id, generations)
+                completed = markerResult === "marked" || markerResult === "superseded"
+                if (!completed) {
+                    console.error(
+                        `[VFSStore] Resource-limited cleanup remains pending for ${id}; ` +
+                            "the durable marker will be retried on next initialization",
+                    )
+                }
+            }
+            if (completed) {
+                this.resourceCleanupMarkers.add(id)
+                this.pendingResourceRollbacks.delete(id)
+            }
+        }
+    }
+
     private markSupersededFileRead(id: string, relinkEpoch: number) {
         if ((this.relinkEpochs.get(id) ?? 0) !== relinkEpoch) {
             this.contentRetryVersions.set(id, this.contentRetryVersion(id) + 1)
@@ -1014,6 +1405,13 @@ export class VFSStore {
         )
     }
 
+    private isCurrentRelinkEpoch(id: string, relinkEpoch: number): boolean {
+        return (
+            (this.relinkEpochs.get(id) ?? 0) === relinkEpoch &&
+            (this.relinkingCounts.get(id) ?? 0) === 0
+        )
+    }
+
     private async loadFileUrl(
         id: string,
         requestPermission: boolean,
@@ -1084,6 +1482,7 @@ export class VFSStore {
                 }
                 if (status === "granted") {
                     const fileObj = await nativeHandle.getFile()
+                    assertPdfFileSize(fileObj.size)
                     if (!this.isCurrentFileRead(id, generation, relinkEpoch)) {
                         // A validation-only relink can fail before invalidating content. Record
                         // this superseded read explicitly so its caller retries the old handle.
@@ -1284,6 +1683,20 @@ export class VFSStore {
                 if (!this.disposed) callbacks.onFailure?.(result, "validation")
                 return []
             }
+            if (this.isFileSource(input.source)) {
+                try {
+                    assertPdfFileSize(input.source.size)
+                } catch {
+                    const result: ImportResult = {
+                        id: crypto.randomUUID(),
+                        name: input.name,
+                        status: "rejected",
+                    }
+                    rejected.set(inputIndex, result)
+                    if (!this.disposed) callbacks.onFailure?.(result, "validation")
+                    return []
+                }
+            }
             const job: ImportJob = {
                 id: crypto.randomUUID(),
                 name: input.name,
@@ -1315,6 +1728,9 @@ export class VFSStore {
                     const generations = await this.awaitUnlessDisposed(saveTasks[index])
                     if (!generations) {
                         return { id: job.id, name: job.name, status: "failed" } as ImportResult
+                    }
+                    if ("rejected" in generations) {
+                        return { id: job.id, name: job.name, status: "rejected" } as ImportResult
                     }
                     return await this.awaitUnlessDisposed(
                         this.enrichImport(job, callbacks, generations),
@@ -1360,6 +1776,68 @@ export class VFSStore {
         this.importJobs = this.importJobs.filter((job) => job.id !== id)
     }
 
+    private async updatePersistedFolderChildren(
+        parentId: string,
+        childId: string,
+        action: "add" | "remove",
+        updatedAt: number,
+    ): Promise<FolderNode | null> {
+        const persistedParent =
+            typeof this.db.folders.get === "function"
+                ? await this.db.folders.get(parentId)
+                : (this.nodes[parentId] as FolderNode | undefined)
+        if (!persistedParent || persistedParent.type !== "folder") return null
+
+        const childrenIds =
+            action === "add"
+                ? Array.from(new Set([...persistedParent.childrenIds, childId]))
+                : persistedParent.childrenIds.filter((id) => id !== childId)
+        const updatedParent: FolderNode = {
+            ...persistedParent,
+            childrenIds,
+            updatedAt,
+        }
+        await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
+        this.throwIfDisposed()
+        return updatedParent
+    }
+
+    private async publishNodeParentState(
+        updatedNode: VFSNode,
+        originalParentId: string | null,
+    ): Promise<void> {
+        this.nodes[updatedNode.id] = updatedNode
+        if (originalParentId !== updatedNode.parentId) {
+            if (originalParentId === null) {
+                this.rootIds = this.rootIds.filter((id) => id !== updatedNode.id)
+            } else {
+                const originalParent = this.nodes[originalParentId]
+                if (originalParent?.type === "folder") {
+                    originalParent.childrenIds = originalParent.childrenIds.filter(
+                        (id) => id !== updatedNode.id,
+                    )
+                }
+            }
+        }
+
+        if (updatedNode.parentId === null) {
+            if (!this.rootIds.includes(updatedNode.id)) this.rootIds.push(updatedNode.id)
+            return
+        }
+
+        this.rootIds = this.rootIds.filter((id) => id !== updatedNode.id)
+        const localParent = this.nodes[updatedNode.parentId]
+        const persistedParent =
+            typeof this.db.folders.get === "function"
+                ? await this.db.folders.get(updatedNode.parentId)
+                : localParent
+        if (!persistedParent || persistedParent.type !== "folder") return
+        this.nodes[updatedNode.parentId] = {
+            ...persistedParent,
+            childrenIds: Array.from(new Set([...persistedParent.childrenIds, updatedNode.id])),
+        }
+    }
+
     clearFailedImports() {
         if (this.disposed) return
         const failedIds = new Set(
@@ -1372,7 +1850,7 @@ export class VFSStore {
     private async persistImport(
         job: ImportJob,
         callbacks: ImportCallbacks,
-    ): Promise<ImportGenerations | null> {
+    ): Promise<PersistImportResult> {
         if (this.disposed) return null
         this.updateImportJob(job.id, { stage: "saving" })
         if (job.parentId !== null) {
@@ -1392,10 +1870,40 @@ export class VFSStore {
         const source = this.importSources.get(job.id)
         if (!source) return null
 
+        let document: PDFDocument | null = null
+        let tempUrl = ""
+        let committed = false
         try {
             const isFile = this.isFileSource(source)
             const file = isFile ? source : await this.awaitUnlessDisposed(source.getFile())
             this.throwIfDisposed()
+            assertPdfFileSize(file.size)
+
+            // Parse and inspect every page before writing any persistent state. The loaded
+            // document is transferred to enrichment so valid imports are not parsed twice.
+            tempUrl = URL.createObjectURL(file)
+            document = new PDFDocument(tempUrl)
+            try {
+                await this.awaitUnlessDisposed(document.load())
+                await this.awaitUnlessDisposed(document.validateRenderBounds())
+                this.throwIfDisposed()
+            } catch (error) {
+                if (error instanceof PDFResourceLimitError) throw error
+                // Keep the existing behavior for malformed PDFs: persist the source and report
+                // metadata failure from the enrichment phase instead of dropping the import.
+                await document.close().catch(() => undefined)
+                document = null
+                URL.revokeObjectURL(tempUrl)
+                tempUrl = ""
+            }
+
+            // Validation happens before persistence, but the loaded document must not remain
+            // live while the independent metadata queue catches up with a batch.
+            await document?.close().catch(() => undefined)
+            document = null
+            if (tempUrl) URL.revokeObjectURL(tempUrl)
+            tempUrl = ""
+
             const now = Date.now()
             const siblingTimestamps = Object.values(this.nodes)
                 .filter((node) => node.parentId === job.parentId && node.type === "file")
@@ -1416,6 +1924,16 @@ export class VFSStore {
             const content: FileContent = isFile
                 ? { id: job.id, file: new Blob([file], { type: file.type }) }
                 : { id: job.id, handle: source }
+            const generations: ImportGenerations = {
+                content: this.contentGeneration(job.id),
+                preview: this.previewGeneration(job.id),
+                request: this.previewRequestVersion(job.id),
+                relinkEpoch: this.relinkEpochs.get(job.id) ?? 0,
+                relinkOwner: this.relinkStateOwners.get(job.id) ?? 0,
+                document: null,
+                tempUrl: "",
+            }
+            let updatedParent: FolderNode | null = null
 
             this.throwIfDisposed()
             await this.db.transaction("rw", ["books", "folders", "fileContents"], async () => {
@@ -1425,18 +1943,21 @@ export class VFSStore {
                 await this.db.fileContents.put(content)
                 this.throwIfDisposed()
                 if (job.parentId !== null) {
-                    const parent = this.nodes[job.parentId]
-                    if (parent?.type === "folder") {
-                        await this.db.folders.put(
-                            $state.snapshot({
-                                ...parent,
-                                childrenIds: [...parent.childrenIds, job.id],
-                                updatedAt: now,
-                            }) as FolderNode,
-                        )
-                        this.throwIfDisposed()
-                    }
+                    updatedParent = await this.updatePersistedFolderChildren(
+                        job.parentId,
+                        job.id,
+                        "add",
+                        now,
+                    )
+                    if (!updatedParent) throw new Error("Import parent no longer exists")
                 }
+                // Register immediately after all records are written. This closes the window
+                // where disposal can observe a committed import before enrichment starts.
+                this.pendingResourceRollbacks.set(job.id, {
+                    generations,
+                    parentId: job.parentId,
+                })
+                committed = true
             })
             this.throwIfDisposed()
 
@@ -1447,24 +1968,27 @@ export class VFSStore {
             this.isLockedMap[job.id] = !isFile
             if (job.parentId === null) {
                 this.rootIds.push(job.id)
-            } else {
-                const parent = this.nodes[job.parentId]
-                if (parent?.type === "folder") {
-                    parent.childrenIds.push(job.id)
-                    parent.updatedAt = now
-                }
+            } else if (updatedParent) {
+                this.nodes[job.parentId] = updatedParent
             }
             this.updateImportJob(job.id, { stage: "metadata" })
             return {
-                content: this.contentGeneration(job.id),
-                preview: this.previewGeneration(job.id),
-                request: this.previewRequestVersion(job.id),
+                ...generations,
             }
         } catch (error) {
+            if (!committed) this.pendingResourceRollbacks.delete(job.id)
             if (error instanceof VFSDisposedError || this.disposed) return null
+            this.importSources.delete(job.id)
+            if (error instanceof PDFResourceLimitError) {
+                this.updateImportJob(job.id, { stage: "failed", failure: "invalid-file" })
+                callbacks.onFailure?.(
+                    { id: job.id, name: job.name, status: "rejected" },
+                    "validation",
+                )
+                return { rejected: true }
+            }
             console.error(`[VFSStore] Failed to persist import ${job.name}:`, error)
             this.updateImportJob(job.id, { stage: "failed", failure: "persistence" })
-            this.importSources.delete(job.id)
             if (!this.disposed) {
                 callbacks.onFailure?.(
                     { id: job.id, name: job.name, status: "failed" },
@@ -1472,6 +1996,9 @@ export class VFSStore {
                 )
             }
             return null
+        } finally {
+            await document?.close().catch(() => undefined)
+            if (tempUrl) URL.revokeObjectURL(tempUrl)
         }
     }
 
@@ -1480,28 +2007,78 @@ export class VFSStore {
         callbacks: ImportCallbacks,
         generations: ImportGenerations,
     ): Promise<ImportResult> {
-        const source = this.importSources.get(job.id)
-        let tempUrl = ""
-        let doc: PDFDocument | null = null
+        let tempUrl = generations.tempUrl
+        let doc = generations.document
         let previewUrl = ""
         let failed = false
+        let resourceLimitFailure = false
+        let resourceLimitRegistered = false
+        let resourceRollbackTask: Promise<ResourceRollbackOutcome> | null = null
+        if (!this.resourceCleanupMarkers.has(job.id)) {
+            this.pendingResourceRollbacks.set(job.id, {
+                generations,
+                parentId: job.parentId,
+            })
+        }
+        const registerResourceLimit = () => {
+            if (resourceLimitRegistered || this.resourceCleanupMarkers.has(job.id)) return
+            resourceLimitRegistered = true
+            const pending = this.pendingResourceRollbacks.get(job.id) ?? {
+                generations,
+                parentId: job.parentId,
+            }
+            this.pendingResourceRollbacks.set(job.id, pending)
+            this.resourceRollbackRetryAttempts.delete(job.id)
+            const handleRollbackOutcome = (outcome: ResourceRollbackOutcome) => {
+                if (outcome === "rolled-back" || outcome === "superseded") {
+                    this.resourceCleanupMarkers.add(job.id)
+                    this.pendingResourceRollbacks.delete(job.id)
+                } else {
+                    this.schedulePendingResourceRollback(job.id)
+                }
+            }
+            if (!this.disposed) {
+                resourceRollbackTask = this.trackResourceRollback(job.id, generations)
+                void resourceRollbackTask.then(handleRollbackOutcome)
+            } else {
+                // The operation can reject after disposal has closed the database. Persist the
+                // fallback marker independently so startup can remove the committed import.
+                const markerTask = this.persistResourceCleanupMarker(job.id, generations).then(
+                    (result) =>
+                        handleRollbackOutcome(
+                            result === "marked" || result === "superseded"
+                                ? "rolled-back"
+                                : "pending",
+                        ),
+                )
+                this.resourceRollbackRetryTasks.add(markerTask)
+                void markerTask.finally(() => this.resourceRollbackRetryTasks.delete(markerTask))
+            }
+        }
+        const awaitPdfOperation = <T>(promise: Promise<T>) =>
+            this.awaitResourceOperation(promise, registerResourceLimit)
         try {
             this.throwIfDisposed()
-            if (!source) throw new Error("Import source is unavailable")
-            const file = this.isFileSource(source)
-                ? source
-                : await this.awaitUnlessDisposed(source.getFile())
-            this.throwIfDisposed()
-            tempUrl = URL.createObjectURL(file)
-            doc = new PDFDocument(tempUrl)
-            await this.awaitUnlessDisposed(doc.load())
-            this.throwIfDisposed()
+            if (!doc) {
+                const source = this.importSources.get(job.id)
+                if (!source) throw new Error("Import source is unavailable")
+                const file = this.isFileSource(source)
+                    ? source
+                    : await this.awaitUnlessDisposed(source.getFile())
+                this.throwIfDisposed()
+                assertPdfFileSize(file.size)
+                tempUrl = URL.createObjectURL(file)
+                doc = new PDFDocument(tempUrl)
+                await awaitPdfOperation(doc.load())
+                await awaitPdfOperation(doc.validateRenderBounds())
+                this.throwIfDisposed()
+            }
 
-            const [totalPages, author, pdfTitle] = await this.awaitUnlessDisposed(
+            const [totalPages, author, pdfTitle] = await awaitPdfOperation(
                 Promise.all([doc.getPageNumber(), doc.getAuthor(), doc.getTitle()]),
             )
             this.throwIfDisposed()
-            await this.awaitUnlessDisposed(
+            await awaitPdfOperation(
                 this.updateFile(
                     job.id,
                     {
@@ -1518,12 +2095,12 @@ export class VFSStore {
             )
             this.throwIfDisposed()
 
-            const page = await this.awaitUnlessDisposed(doc.getPage(1))
+            const page = await awaitPdfOperation(doc.getPage(1))
             this.throwIfDisposed()
-            previewUrl = await this.awaitUnlessDisposed(doc.getCanvasPage(page))
+            previewUrl = await awaitPdfOperation(doc.getCanvasPage(page))
             this.throwIfDisposed()
             if (previewUrl) {
-                await this.awaitUnlessDisposed(
+                await awaitPdfOperation(
                     this.savePreview(
                         job.id,
                         previewUrl,
@@ -1537,9 +2114,17 @@ export class VFSStore {
             }
         } catch (error) {
             failed = true
+            resourceLimitFailure = error instanceof PDFResourceLimitError
+            if (resourceLimitFailure) {
+                registerResourceLimit()
+            }
+            const rollbackTask = resourceRollbackTask as Promise<ResourceRollbackOutcome> | null
+            if (resourceLimitFailure && rollbackTask) {
+                await rollbackTask.catch(() => "pending" as ResourceRollbackOutcome)
+            }
             if (!(error instanceof VFSDisposedError) && !this.disposed) {
                 console.error(`[VFSStore] Failed to enrich import ${job.name}:`, error)
-                if (!this.disposed) {
+                if (!resourceLimitFailure) {
                     callbacks.onFailure?.(
                         { id: job.id, name: job.name, status: "imported" },
                         "metadata",
@@ -1548,18 +2133,19 @@ export class VFSStore {
             }
         } finally {
             if (previewUrl) URL.revokeObjectURL(previewUrl)
-            try {
-                await this.awaitUnlessDisposed(doc?.close() ?? Promise.resolve()).catch(
-                    () => undefined,
-                )
-            } catch (error) {
-                if (!(error instanceof VFSDisposedError) && !this.disposed) throw error
-            }
+            await doc?.close().catch(() => undefined)
             if (tempUrl) URL.revokeObjectURL(tempUrl)
             this.removeImportJob(job.id)
         }
 
+        if (!resourceLimitFailure && !this.disposed) {
+            this.pendingResourceRollbacks.delete(job.id)
+        }
         if (this.disposed) return { id: job.id, name: job.name, status: "failed" }
+        if (resourceLimitFailure) {
+            callbacks.onFailure?.({ id: job.id, name: job.name, status: "failed" }, "persistence")
+            return { id: job.id, name: job.name, status: "failed" }
+        }
         const result: ImportResult = { id: job.id, name: job.name, status: "imported" }
         if (!this.disposed) {
             await this.awaitUnlessDisposed(Promise.resolve(callbacks.onImported?.(result)))
@@ -1581,14 +2167,19 @@ export class VFSStore {
         return result.id
     }
 
+    private normalizeFolderNameText(requestedName: string): string {
+        const name = requestedName.trim()
+        if (!name) throw new FolderNameError("empty")
+        if (name.includes("/")) throw new FolderNameError("slash")
+        return name
+    }
+
     normalizeFolderName(
         requestedName: string,
         parentId: string | null,
         excludeFolderId?: string,
     ): string {
-        const name = requestedName.trim()
-        if (!name) throw new FolderNameError("empty")
-        if (name.includes("/")) throw new FolderNameError("slash")
+        const name = this.normalizeFolderNameText(requestedName)
         const duplicate = Object.values(this.nodes).some(
             (node) =>
                 node.type === "folder" &&
@@ -1607,13 +2198,46 @@ export class VFSStore {
     private async renameFolderUnlocked(id: string, requestedName: string): Promise<void> {
         const node = this.nodes[id]
         if (!node || node.type !== "folder") return
-        const name = this.normalizeFolderName(requestedName, node.parentId, id)
-        if (name === node.name) return
 
-        const updated: FolderNode = { ...$state.snapshot(node), name, updatedAt: Date.now() }
-        await this.awaitUnlessDisposed(this.db.folders.put(updated))
+        let updated: FolderNode | null = null
+        const persist = async () => {
+            const foldersTable = this.db.folders as typeof this.db.folders & {
+                get?: (folderId: string) => Promise<FolderNode | undefined>
+                getAll?: () => Promise<FolderNode[]>
+            }
+            let base = node
+            if (typeof foldersTable.get === "function") {
+                const persisted = await this.awaitUnlessDisposed(foldersTable.get(id))
+                if (!persisted || persisted.type !== "folder") return
+                base = persisted
+            }
+            const name = this.normalizeFolderNameText(requestedName)
+            if (typeof foldersTable.getAll === "function") {
+                const folders = await this.awaitUnlessDisposed(foldersTable.getAll())
+                const duplicate = folders.some(
+                    (folder) =>
+                        folder.parentId === base.parentId &&
+                        folder.id !== id &&
+                        folder.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase(),
+                )
+                if (duplicate) throw new FolderNameError("duplicate")
+            } else {
+                this.normalizeFolderName(requestedName, base.parentId, id)
+            }
+            if (name === base.name) {
+                updated = base
+                return
+            }
+            updated = { ...$state.snapshot(base), name, updatedAt: Date.now() }
+            await this.awaitUnlessDisposed(this.db.folders.put(updated))
+        }
+        if (typeof this.db.transaction === "function") {
+            await this.db.transaction("rw", ["folders"], persist)
+        } else {
+            await persist()
+        }
         this.throwIfDisposed()
-        this.nodes[id] = updated
+        if (updated) await this.publishNodeParentState(updated, node.parentId)
     }
 
     async setNodePinned(id: string, isPinned: boolean): Promise<void> {
@@ -1658,21 +2282,14 @@ export class VFSStore {
             isPinned: false,
         }
 
+        let updatedParent: FolderNode | null = null
         await this.db.transaction("rw", ["folders"], async () => {
             this.throwIfDisposed()
             await this.db.folders.put(newFolder)
             this.throwIfDisposed()
             if (parentId !== null) {
-                const parent = this.nodes[parentId]
-                if (parent && parent.type === "folder") {
-                    const updatedParent = {
-                        ...parent,
-                        childrenIds: [...parent.childrenIds, id],
-                        updatedAt: now,
-                    }
-                    await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
-                    this.throwIfDisposed()
-                }
+                updatedParent = await this.updatePersistedFolderChildren(parentId, id, "add", now)
+                if (!updatedParent) throw new Error("Folder parent no longer exists")
             }
         })
         this.throwIfDisposed()
@@ -1680,12 +2297,8 @@ export class VFSStore {
         this.nodes[id] = newFolder
         if (parentId === null) {
             this.rootIds.push(id)
-        } else {
-            const parent = this.nodes[parentId]
-            if (parent && parent.type === "folder") {
-                parent.childrenIds.push(id)
-                parent.updatedAt = now
-            }
+        } else if (updatedParent) {
+            this.nodes[parentId] = updatedParent
         }
 
         return id
@@ -1695,26 +2308,41 @@ export class VFSStore {
         return this.serializeNodeMutation(() => this.deleteNodeUnlocked(id))
     }
 
-    private async deleteNodeUnlocked(id: string) {
+    private async deleteNodeUnlocked(id: string, expectedRelinkEpoch?: number) {
         const rootNode = this.nodes[id]
         if (!rootNode) return
+        if (
+            expectedRelinkEpoch !== undefined &&
+            !this.isCurrentRelinkEpoch(id, expectedRelinkEpoch)
+        ) {
+            return
+        }
 
-        const nodesToDelete: VFSNode[] = []
+        const assertRelinkEpoch = () => {
+            if (
+                expectedRelinkEpoch !== undefined &&
+                !this.isCurrentRelinkEpoch(id, expectedRelinkEpoch)
+            ) {
+                throw new ContentSupersededError("Deletion superseded by a newer relink")
+            }
+        }
+
+        const nodesById = new Map<string, VFSNode>()
         const collect = (nodeId: string) => {
             const node = this.nodes[nodeId]
-            if (!node) return
-            nodesToDelete.push(node)
+            if (!node || nodesById.has(nodeId)) return
+            nodesById.set(nodeId, node)
             if (node.type === "folder") {
-                for (const cid of node.childrenIds) {
-                    collect(cid)
-                }
+                for (const cid of node.childrenIds) collect(cid)
             }
         }
         collect(id)
+        const originalSubtreeNodes = new Map(nodesById)
 
-        const fileIds = nodesToDelete.filter((n) => n.type === "file").map((n) => n.id)
-        const folderIds = nodesToDelete.filter((n) => n.type === "folder").map((n) => n.id)
-        const previousGenerations = new Map(
+        let nodesToDelete = [...nodesById.values()]
+        let fileIds = nodesToDelete.filter((n) => n.type === "file").map((n) => n.id)
+        let folderIds = nodesToDelete.filter((n) => n.type === "folder").map((n) => n.id)
+        const previousGenerations = new Map<string, { content: number; preview: number }>(
             fileIds.map((fileId) => [
                 fileId,
                 {
@@ -1723,12 +2351,17 @@ export class VFSStore {
                 },
             ]),
         )
-        for (const fileId of fileIds) {
-            this.deletingFileIds.add(fileId)
-            this.invalidateContent(fileId)
+        if (rootNode.type === "file") {
+            for (const fileId of fileIds) {
+                this.deletingFileIds.add(fileId)
+                this.invalidateContent(fileId)
+            }
         }
         const now = Date.now()
         let deletionCommitted = false
+        let updatedParent: FolderNode | null = null
+        let deletionParentId = rootNode.parentId
+        let persistedRootFound = true
 
         try {
             // PHASE 4 OPTIMIZATION: Use bulkDelete for efficient batch removal
@@ -1745,7 +2378,92 @@ export class VFSStore {
                 ],
                 async () => {
                     this.throwIfDisposed()
+                    assertRelinkEpoch()
+                    const foldersTable = this.db.folders as typeof this.db.folders & {
+                        get?: (folderId: string) => Promise<FolderNode | undefined>
+                    }
+                    const filesTable = this.db.files as typeof this.db.files & {
+                        get?: (fileId: string) => Promise<FileNode | undefined>
+                    }
+                    if (rootNode.type === "file" && typeof filesTable.get === "function") {
+                        const persistedRoot = await this.awaitUnlessDisposed(filesTable.get(id))
+                        if (persistedRoot) deletionParentId = persistedRoot.parentId
+                        else deletionParentId = null
+                    }
+                    if (rootNode.type === "folder" && typeof foldersTable.get === "function") {
+                        // Rebuild the deletion set exclusively from the current persisted tree.
+                        // The in-memory snapshot may still contain children moved elsewhere.
+                        nodesById.clear()
+                        const persistedRoot = await this.awaitUnlessDisposed(foldersTable.get(id))
+                        if (!persistedRoot || persistedRoot.type !== "folder") {
+                            persistedRootFound = false
+                            deletionParentId = rootNode.parentId
+                            nodesToDelete = [rootNode]
+                            fileIds = []
+                            folderIds = []
+                            if (deletionParentId !== null) {
+                                updatedParent = await this.updatePersistedFolderChildren(
+                                    deletionParentId,
+                                    id,
+                                    "remove",
+                                    now,
+                                )
+                            }
+                        } else {
+                            deletionParentId = persistedRoot.parentId
+                            const pendingFolders = [id]
+                            const visitedFolders = new Set<string>()
+                            while (pendingFolders.length > 0) {
+                                const folderId = pendingFolders.pop()!
+                                if (visitedFolders.has(folderId)) continue
+                                visitedFolders.add(folderId)
+                                const persistedFolder = await this.awaitUnlessDisposed(
+                                    foldersTable.get(folderId),
+                                )
+                                if (!persistedFolder || persistedFolder.type !== "folder") continue
+                                nodesById.set(folderId, persistedFolder)
+                                for (const childId of persistedFolder.childrenIds) {
+                                    const childFolder = await this.awaitUnlessDisposed(
+                                        foldersTable.get(childId),
+                                    )
+                                    if (
+                                        childFolder?.type === "folder" &&
+                                        childFolder.parentId === folderId
+                                    ) {
+                                        nodesById.set(childId, childFolder)
+                                        pendingFolders.push(childId)
+                                    } else if (typeof filesTable.get === "function") {
+                                        const childFile = await this.awaitUnlessDisposed(
+                                            filesTable.get(childId),
+                                        )
+                                        if (childFile && childFile.parentId === folderId) {
+                                            nodesById.set(childId, childFile)
+                                        }
+                                    }
+                                }
+                            }
+                            nodesToDelete = [...nodesById.values()]
+                            fileIds = nodesToDelete
+                                .filter((node) => node.type === "file")
+                                .map((node) => node.id)
+                            folderIds = nodesToDelete
+                                .filter((node) => node.type === "folder")
+                                .map((node) => node.id)
+                        }
+                    }
+                    assertRelinkEpoch()
+                    for (const fileId of fileIds) {
+                        if (!this.deletingFileIds.has(fileId)) {
+                            previousGenerations.set(fileId, {
+                                content: this.contentGeneration(fileId),
+                                preview: this.previewGeneration(fileId),
+                            })
+                            this.deletingFileIds.add(fileId)
+                            this.invalidateContent(fileId)
+                        }
+                    }
                     if (fileIds.length > 0) {
+                        assertRelinkEpoch()
                         await this.db.files.bulkDelete(fileIds)
                         this.throwIfDisposed()
                         await this.db.previews.bulkDelete(fileIds)
@@ -1762,21 +2480,19 @@ export class VFSStore {
                         }
                     }
                     if (folderIds.length > 0) {
+                        assertRelinkEpoch()
                         await this.db.folders.bulkDelete(folderIds)
                         this.throwIfDisposed()
                     }
 
-                    if (rootNode.parentId !== null) {
-                        const parent = this.nodes[rootNode.parentId]
-                        if (parent && parent.type === "folder") {
-                            const updatedParent = {
-                                ...parent,
-                                childrenIds: parent.childrenIds.filter((cid) => cid !== id),
-                                updatedAt: now,
-                            }
-                            await this.db.folders.put($state.snapshot(updatedParent) as FolderNode)
-                            this.throwIfDisposed()
-                        }
+                    assertRelinkEpoch()
+                    if (persistedRootFound && deletionParentId !== null) {
+                        updatedParent = await this.updatePersistedFolderChildren(
+                            deletionParentId,
+                            id,
+                            "remove",
+                            now,
+                        )
                     }
                 },
             )
@@ -1840,13 +2556,43 @@ export class VFSStore {
             delete this.nodes[node.id]
         }
 
-        if (rootNode.parentId === null) {
+        if (deletionParentId === null) {
             this.rootIds = this.rootIds.filter((rid) => rid !== id)
-        } else {
-            const parent = this.nodes[rootNode.parentId]
-            if (parent && parent.type === "folder") {
-                parent.childrenIds = parent.childrenIds.filter((cid) => cid !== id)
-                parent.updatedAt = now
+        } else if (updatedParent) {
+            this.nodes[deletionParentId] = updatedParent
+        }
+        const originalParentId = rootNode.parentId
+        if (originalParentId === null && deletionParentId !== null) {
+            this.rootIds = this.rootIds.filter((rid) => rid !== id)
+        } else if (originalParentId !== null && originalParentId !== deletionParentId) {
+            const staleParent = this.nodes[originalParentId]
+            if (staleParent?.type === "folder") {
+                staleParent.childrenIds = staleParent.childrenIds.filter(
+                    (childId) => childId !== id,
+                )
+            }
+        }
+
+        if (
+            rootNode.type === "folder" &&
+            !this.disposed &&
+            typeof this.db.folders.get === "function"
+        ) {
+            const deletedIdSet = new Set(nodesToDelete.map((node) => node.id))
+            const filesTable = this.db.files as typeof this.db.files & {
+                get?: (fileId: string) => Promise<FileNode | undefined>
+            }
+            for (const [candidateId, candidate] of originalSubtreeNodes) {
+                if (deletedIdSet.has(candidateId)) continue
+                const persisted =
+                    candidate.type === "folder"
+                        ? await this.db.folders.get(candidateId)
+                        : typeof filesTable.get === "function"
+                          ? await filesTable.get(candidateId)
+                          : undefined
+                if (persisted) {
+                    await this.publishNodeParentState(persisted, candidate.parentId)
+                }
             }
         }
         for (const fileId of fileIds) this.settleDeletion(fileId)
@@ -1917,17 +2663,34 @@ export class VFSStore {
             if (!current || current.type !== "folder") return
 
             const folderUpdates = updates as Partial<FolderNode>
-            const updated: FolderNode = {
-                ...$state.snapshot(current),
-                ...(folderUpdates.name !== undefined ? { name: folderUpdates.name } : {}),
-                ...(folderUpdates.childrenIds !== undefined
-                    ? { childrenIds: [...folderUpdates.childrenIds] }
-                    : {}),
-                updatedAt: Date.now(),
+            let updated!: FolderNode
+            const persist = async () => {
+                const foldersTable = this.db.folders as typeof this.db.folders & {
+                    get?: (folderId: string) => Promise<FolderNode | undefined>
+                }
+                const persisted = foldersTable.get
+                    ? await this.awaitUnlessDisposed(foldersTable.get(id))
+                    : undefined
+                if (typeof foldersTable.get === "function" && !persisted) return
+                const base = persisted ?? current
+                const requestedChildren = folderUpdates.childrenIds
+                updated = {
+                    ...$state.snapshot(base),
+                    ...(folderUpdates.name !== undefined ? { name: folderUpdates.name } : {}),
+                    ...(requestedChildren !== undefined
+                        ? { childrenIds: Array.from(new Set(requestedChildren)) }
+                        : {}),
+                    updatedAt: Date.now(),
+                }
+                await this.awaitUnlessDisposed(this.db.folders.put(updated))
             }
-            await this.awaitUnlessDisposed(this.db.folders.put(updated))
+            if (typeof this.db.transaction === "function") {
+                await this.db.transaction("rw", ["folders"], persist)
+            } else {
+                await persist()
+            }
             this.throwIfDisposed()
-            this.nodes[id] = updated
+            if (updated) await this.publishNodeParentState(updated, current.parentId)
         })
     }
 
@@ -2073,7 +2836,13 @@ export class VFSStore {
     }
 
     async relinkFile(id: string, fileSource: File | FileSystemFileHandle): Promise<void> {
-        return this.trackSourceTask(this.relinkFileUnlocked(id, fileSource))
+        const task = this.relinkFileUnlocked(id, fileSource)
+        this.activeRelinkTasks.add(task)
+        void task.then(
+            () => this.activeRelinkTasks.delete(task),
+            () => this.activeRelinkTasks.delete(task),
+        )
+        return this.trackSourceTask(task)
     }
 
     private async relinkFileUnlocked(
@@ -2092,7 +2861,6 @@ export class VFSStore {
         let failed = false
         let failure: unknown
         let superseded = false
-        let restored = false
         try {
             const isFile = this.isFileSource(fileSource)
             let fileObj: File | null = null
@@ -2106,13 +2874,15 @@ export class VFSStore {
             }
 
             if (!fileObj) throw new Error("Failed to retrieve file object during VFS relinking")
+            assertPdfFileSize(fileObj.size)
             const candidateUrl = URL.createObjectURL(fileObj)
             const candidateDocument = new PDFDocument(candidateUrl)
             try {
                 await this.awaitUnlessDisposed(candidateDocument.load())
+                await this.awaitUnlessDisposed(candidateDocument.validateRenderBounds())
             } finally {
                 try {
-                    await this.awaitUnlessDisposed(candidateDocument.close()).catch(() => undefined)
+                    await candidateDocument.close().catch(() => undefined)
                 } finally {
                     URL.revokeObjectURL(candidateUrl)
                 }
@@ -2139,8 +2909,10 @@ export class VFSStore {
                 generation = this.invalidateContent(id)
                 this.relinkStateOwners.set(id, relinkEpoch)
                 invalidated = true
+                const { cleanupPending: _cleanupPending, ...nodeWithoutCleanupMarker } =
+                    $state.snapshot(node)
                 const updated: FileNode = {
-                    ...$state.snapshot(node),
+                    ...nodeWithoutCleanupMarker,
                     size: fileObj?.size ?? node.size,
                     metadata: { pageNumber: 1 },
                     isLocked: !isFile,
@@ -2186,6 +2958,16 @@ export class VFSStore {
                         this.throwIfDisposed()
                         await this.saveFileToDb(updated)
                         this.throwIfDisposed()
+                        // A fallback must not survive a committed replacement. If removal
+                        // fails, abort instead of publishing content that startup would delete.
+                        if (
+                            browser &&
+                            typeof localStorage !== "undefined" &&
+                            localStorage.getItem(this.resourceCleanupFallbackKey(id)) ===
+                                "resource-limit"
+                        ) {
+                            localStorage.removeItem(this.resourceCleanupFallbackKey(id))
+                        }
                     },
                 )
                 this.throwIfDisposed()
@@ -2197,8 +2979,14 @@ export class VFSStore {
                         ["books", "fileContents", "previews", "indexedTexts"],
                         async () => {
                             this.throwIfDisposed()
-                            if (previousFile) await filesTable.put(previousFile)
-                            else if (filesTable.delete) await filesTable.delete(id)
+                            if (previousFile) {
+                                await filesTable.put({
+                                    ...previousFile,
+                                    ...(node.cleanupPending
+                                        ? { cleanupPending: node.cleanupPending }
+                                        : {}),
+                                })
+                            } else if (filesTable.delete) await filesTable.delete(id)
                             this.throwIfDisposed()
                             if (previousContent) await fileContentsTable.put(previousContent)
                             else if (fileContentsTable.delete) await fileContentsTable.delete(id)
@@ -2237,6 +3025,15 @@ export class VFSStore {
                 this.isLockedMap[id] = updated.isLocked ?? false
                 this.nodes[id] = updated
                 this.relinkStateOwners.set(id, relinkEpoch)
+                this.pendingResourceRollbacks.delete(id)
+                this.resourceCleanupMarkers.delete(id)
+                this.resourceCleanupFailures.delete(id)
+                this.resourceRollbackRetryAttempts.delete(id)
+                const retryTimer = this.resourceRollbackRetryTimers.get(id)
+                if (retryTimer !== undefined) {
+                    clearTimeout(retryTimer)
+                    this.resourceRollbackRetryTimers.delete(id)
+                }
                 committed = true
             })
         } catch (error) {
@@ -2271,7 +3068,6 @@ export class VFSStore {
                 this.previewUrlRequests.delete(id)
                 this.notifyNodeInvalidated(id)
                 this.restoredRelinks.add(id)
-                restored = true
             }
         }
 
@@ -2282,6 +3078,9 @@ export class VFSStore {
             const waiters = this.relinkWaiters.get(id)
             this.relinkWaiters.delete(id)
             for (const resolve of waiters ?? []) resolve()
+            if (!this.disposed && this.pendingResourceRollbacks.has(id)) {
+                this.schedulePendingResourceRollback(id)
+            }
         }
         // A rollback restores the previous content; it is not a committed relink. Only a
         // successfully persisted replacement may notify viewers to acquire a new URL.
@@ -2342,47 +3141,102 @@ export class VFSStore {
             }
         }
 
-        const oldParentId = node.parentId
-        if (oldParentId === newParentId) return
-
+        const originalParentId = node.parentId
+        let oldParentId = originalParentId
         const now = Date.now()
-        const updatedNode = { ...$state.snapshot(node), parentId: newParentId, updatedAt: now }
-        const oldParent = oldParentId ? this.nodes[oldParentId] : null
-        const newParent = newParentId ? this.nodes[newParentId] : null
-        const updatedOldParent =
-            oldParent?.type === "folder"
-                ? {
-                      ...$state.snapshot(oldParent),
-                      childrenIds: oldParent.childrenIds.filter((cid) => cid !== id),
-                      updatedAt: now,
-                  }
-                : null
-        const updatedNewParent =
-            newParent?.type === "folder"
-                ? {
-                      ...$state.snapshot(newParent),
-                      childrenIds: [...newParent.childrenIds, id],
-                      updatedAt: now,
-                  }
-                : null
+        let updatedNode: VFSNode = {
+            ...$state.snapshot(node),
+            parentId: newParentId,
+            updatedAt: now,
+        }
+        let updatedOldParent: FolderNode | null = null
+        let updatedNewParent: FolderNode | null = null
+        let moveSkipped = false
 
         await this.db.transaction("rw", ["books", "folders"], async () => {
             this.throwIfDisposed()
+            const table =
+                node.type === "file"
+                    ? (this.db.files as typeof this.db.files & {
+                          get?: (fileId: string) => Promise<FileNode | undefined>
+                      })
+                    : (this.db.folders as typeof this.db.folders & {
+                          get?: (folderId: string) => Promise<FolderNode | undefined>
+                      })
+            const persisted = table.get
+                ? await this.awaitUnlessDisposed(
+                      (table.get as (nodeId: string) => Promise<VFSNode | undefined>)(id),
+                  )
+                : undefined
+            if (typeof table.get === "function" && !persisted) {
+                moveSkipped = true
+                return
+            }
+            const currentNode = persisted ?? node
+            oldParentId = currentNode.parentId
+            if (oldParentId === newParentId) {
+                updatedNode = currentNode
+                if (newParentId !== null) {
+                    updatedNewParent = await this.updatePersistedFolderChildren(
+                        newParentId,
+                        id,
+                        "add",
+                        now,
+                    )
+                    if (!updatedNewParent) throw new Error("Move target no longer exists")
+                }
+                return
+            }
+            updatedNode = {
+                ...$state.snapshot(currentNode),
+                parentId: newParentId,
+                updatedAt: now,
+            }
             if (updatedNode.type === "file") await this.saveFileToDb(updatedNode as FileNode)
             else await this.db.folders.put(updatedNode as FolderNode)
             this.throwIfDisposed()
-            if (updatedOldParent) await this.db.folders.put(updatedOldParent as FolderNode)
-            this.throwIfDisposed()
-            if (updatedNewParent) await this.db.folders.put(updatedNewParent as FolderNode)
-            this.throwIfDisposed()
+            if (oldParentId !== null) {
+                updatedOldParent = await this.updatePersistedFolderChildren(
+                    oldParentId,
+                    id,
+                    "remove",
+                    now,
+                )
+            }
+            if (newParentId !== null) {
+                updatedNewParent = await this.updatePersistedFolderChildren(
+                    newParentId,
+                    id,
+                    "add",
+                    now,
+                )
+                if (!updatedNewParent) throw new Error("Move target no longer exists")
+            }
         })
         this.throwIfDisposed()
+        if (moveSkipped) return
 
         this.nodes[id] = updatedNode
-        if (oldParentId === null) this.rootIds = this.rootIds.filter((rid) => rid !== id)
-        if (newParentId === null) this.rootIds.push(id)
+        if (originalParentId !== null && originalParentId !== newParentId) {
+            const originalParent = this.nodes[originalParentId]
+            if (originalParent?.type === "folder") {
+                originalParent.childrenIds = originalParent.childrenIds.filter((cid) => cid !== id)
+            }
+        }
+        if (newParentId !== null && (originalParentId === null || oldParentId === null)) {
+            this.rootIds = this.rootIds.filter((rid) => rid !== id)
+        }
+        if (newParentId === null && (originalParentId !== null || oldParentId !== null)) {
+            if (!this.rootIds.includes(id)) this.rootIds.push(id)
+        }
         if (updatedOldParent) this.nodes[oldParentId!] = updatedOldParent
         if (updatedNewParent) this.nodes[newParentId!] = updatedNewParent
+        const currentNewParent = newParentId === null ? null : this.nodes[newParentId]
+        if (currentNewParent?.type === "folder") {
+            currentNewParent.childrenIds = currentNewParent.childrenIds.filter(
+                (childId, index, children) => childId !== id || children.indexOf(childId) === index,
+            )
+        }
     }
 
     selectNode(id: string | null) {

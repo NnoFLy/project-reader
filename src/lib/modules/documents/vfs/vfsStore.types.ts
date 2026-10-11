@@ -64,6 +64,8 @@ export interface ImportCallbacks {
 export interface FileNode extends BaseNode {
     type: "file"
     isLocked?: boolean
+    /** Set only when a resource-limited import needs durable cleanup on next initialization. */
+    cleanupPending?: "resource-limit"
     size: number
     metadata: BookMetadata
 }

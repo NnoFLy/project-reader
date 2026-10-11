@@ -25,6 +25,56 @@ export interface FlatHeading {
     pageNumber?: number
 }
 
+// These bounds protect browser memory and CPU when opening untrusted local PDFs.
+export const PDF_RESOURCE_LIMITS = {
+    maxFileBytes: 100 * 1024 * 1024,
+    maxPages: 2000,
+    maxPageDimension: 10_000,
+    maxCanvasPixels: 40_000_000,
+} as const
+
+export class PDFResourceLimitError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = "PDFResourceLimitError"
+    }
+}
+
+export function assertPdfFileSize(bytes: number): void {
+    if (bytes > PDF_RESOURCE_LIMITS.maxFileBytes) {
+        throw new PDFResourceLimitError(
+            `PDF file exceeds the ${PDF_RESOURCE_LIMITS.maxFileBytes} byte limit`,
+        )
+    }
+}
+
+function assertPageCount(pageCount: number): void {
+    if (pageCount > PDF_RESOURCE_LIMITS.maxPages) {
+        throw new PDFResourceLimitError(
+            `PDF exceeds the ${PDF_RESOURCE_LIMITS.maxPages} page limit`,
+        )
+    }
+}
+
+function assertPageDimensions(width: number, height: number): void {
+    if (
+        width > PDF_RESOURCE_LIMITS.maxPageDimension ||
+        height > PDF_RESOURCE_LIMITS.maxPageDimension
+    ) {
+        throw new PDFResourceLimitError(
+            `PDF page exceeds the ${PDF_RESOURCE_LIMITS.maxPageDimension}px dimension limit`,
+        )
+    }
+}
+
+function assertCanvasPixels(width: number, height: number): void {
+    if (width * height > PDF_RESOURCE_LIMITS.maxCanvasPixels) {
+        throw new PDFResourceLimitError(
+            `PDF page exceeds the ${PDF_RESOURCE_LIMITS.maxCanvasPixels} pixel canvas limit`,
+        )
+    }
+}
+
 interface DocumentInterface {
     load(): Promise<DocumentInterface>
     getAuthor(): Promise<string | null>
@@ -37,6 +87,7 @@ interface DocumentInterface {
     ): Promise<{ width: number; height: number }>
     getCanvasPage(page: Page, scale?: number, signal?: AbortSignal): Promise<string>
     getAllPageDimensions(signal?: AbortSignal): Promise<{ width: number; height: number }[]>
+    validateRenderBounds(quality?: number): Promise<void>
     getTextContent(pageNumber: number, bypassCache?: boolean): Promise<TextContent>
     getViewport(pageNumber: number, scale: number): Promise<pdfjs.PageViewport>
     getTextAndViewport(
@@ -102,19 +153,25 @@ export default class PDFDocument implements DocumentInterface {
             this.pdfDoc = await this.loadingTask.promise
             this.loadingTask = null
             this.pageCount = this.pdfDoc.numPages
+            assertPageCount(this.pageCount)
 
             if (this.pageCount > 0) {
                 try {
                     const firstPage = await this.pdfDoc.getPage(1)
-                    const viewport = firstPage.getViewport({ scale: 1 })
-                    this.defaultWidth = viewport.width
-                    this.defaultHeight = viewport.height
-                    this.pageDimensionsCache.set(1, {
-                        width: viewport.width,
-                        height: viewport.height,
-                    })
-                    firstPage.cleanup()
+                    try {
+                        const viewport = firstPage.getViewport({ scale: 1 })
+                        assertPageDimensions(viewport.width, viewport.height)
+                        this.defaultWidth = viewport.width
+                        this.defaultHeight = viewport.height
+                        this.pageDimensionsCache.set(1, {
+                            width: viewport.width,
+                            height: viewport.height,
+                        })
+                    } finally {
+                        firstPage.cleanup()
+                    }
                 } catch (pageErr) {
+                    if (pageErr instanceof PDFResourceLimitError) throw pageErr
                     console.warn(
                         "[PDFDocument] Failed to retrieve default page dimensions:",
                         pageErr,
@@ -132,6 +189,7 @@ export default class PDFDocument implements DocumentInterface {
 
             return this
         } catch (err: any) {
+            if (err instanceof PDFResourceLimitError) throw err
             console.error("[PDFDocument] Failed to load PDF:", err)
             throw new Error(`Failed to parse PDF document: ${err.message || err}`)
         }
@@ -165,6 +223,7 @@ export default class PDFDocument implements DocumentInterface {
             const page = await pdfDoc.getPage(pageNumber)
             try {
                 const viewport = page.getViewport({ scale: 1 })
+                assertPageDimensions(viewport.width, viewport.height)
                 const dims = { width: viewport.width, height: viewport.height }
                 this.pageDimensionsCache.set(pageNumber, dims)
                 return dims
@@ -174,6 +233,7 @@ export default class PDFDocument implements DocumentInterface {
         }
         const page = await this.getPageProxy(pageNumber)
         const viewport = page.getViewport({ scale: 1 })
+        assertPageDimensions(viewport.width, viewport.height)
         const dims = { width: viewport.width, height: viewport.height }
         this.pageDimensionsCache.set(pageNumber, dims)
         return dims
@@ -182,6 +242,7 @@ export default class PDFDocument implements DocumentInterface {
     async getAllPageDimensions(signal?: AbortSignal): Promise<{ width: number; height: number }[]> {
         const dimensions: { width: number; height: number }[] = []
         const totalPages = this.pageCount
+        assertPageCount(totalPages)
         const chunkSize = 4
 
         for (let i = 1; i <= totalPages; i += chunkSize) {
@@ -200,6 +261,13 @@ export default class PDFDocument implements DocumentInterface {
         }
 
         return dimensions
+    }
+
+    async validateRenderBounds(quality = settingsStore.quality): Promise<void> {
+        const dimensions = await this.getAllPageDimensions()
+        for (const { width, height } of dimensions) {
+            assertCanvasPixels(width * quality, height * quality)
+        }
     }
 
     private parseOutline(items: PDFJsOutlineItem[], depth: number = 0): FlatHeading[] {
@@ -334,6 +402,8 @@ export default class PDFDocument implements DocumentInterface {
 
             const dpr = window.devicePixelRatio || 1
             const viewport = pdfPage.getViewport({ scale: quality })
+            assertPageDimensions(viewport.width / quality, viewport.height / quality)
+            assertCanvasPixels(viewport.width, viewport.height)
 
             canvas.width = viewport.width
             canvas.height = viewport.height
@@ -419,6 +489,7 @@ export default class PDFDocument implements DocumentInterface {
         } catch (err: any) {
             if (pdfPage) pdfPage.cleanup()
             if (
+                err instanceof PDFResourceLimitError ||
                 err.name === "RenderingCancelledException" ||
                 err.name === "AbortError" ||
                 err.message === "Rendering cancelled" ||
@@ -494,9 +565,15 @@ export default class PDFDocument implements DocumentInterface {
         return await page.getTextContent()
     }
 
+    private getValidatedViewport(page: pdfjs.PDFPageProxy, scale: number): pdfjs.PageViewport {
+        const baseViewport = page.getViewport({ scale: 1 })
+        assertPageDimensions(baseViewport.width, baseViewport.height)
+        return page.getViewport({ scale })
+    }
+
     async getViewport(pageNumber: number, scale: number): Promise<pdfjs.PageViewport> {
         const page = await this.getPageProxy(pageNumber)
-        return page.getViewport({ scale })
+        return this.getValidatedViewport(page, scale)
     }
 
     async getTextAndViewport(
@@ -505,7 +582,7 @@ export default class PDFDocument implements DocumentInterface {
     ): Promise<{ textContent: TextContent; viewport: pdfjs.PageViewport }> {
         const page = await this.getPageProxy(pageNumber)
         const textContent = await page.getTextContent()
-        const viewport = page.getViewport({ scale })
+        const viewport = this.getValidatedViewport(page, scale)
         return { textContent, viewport }
     }
 
@@ -523,7 +600,7 @@ export default class PDFDocument implements DocumentInterface {
             pageProxy.getTextContent(),
             pageProxy.getAnnotations(),
         ])
-        const viewport = pageProxy.getViewport({ scale })
+        const viewport = this.getValidatedViewport(pageProxy, scale)
         return { pageProxy, textContent, annotations, viewport }
     }
 

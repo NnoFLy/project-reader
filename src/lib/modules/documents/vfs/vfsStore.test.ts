@@ -1,18 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { pdfConstructed, pdfLoad, pdfPageCount, pdfAuthor, pdfTitle, pdfPage, pdfCanvas } =
-    vi.hoisted(() => ({
-        pdfConstructed: vi.fn(),
-        pdfLoad: vi.fn(),
-        pdfPageCount: vi.fn(),
-        pdfAuthor: vi.fn(),
-        pdfTitle: vi.fn(),
-        pdfPage: vi.fn(),
-        pdfCanvas: vi.fn(),
-    }))
+const {
+    pdfConstructed,
+    pdfLoad,
+    pdfPageCount,
+    pdfAuthor,
+    pdfTitle,
+    pdfPage,
+    pdfCanvas,
+    pdfDimensions,
+    pdfRenderBounds,
+    pdfClose,
+    pdfFileSize,
+} = vi.hoisted(() => ({
+    pdfConstructed: vi.fn(),
+    pdfLoad: vi.fn(),
+    pdfPageCount: vi.fn(),
+    pdfAuthor: vi.fn(),
+    pdfTitle: vi.fn(),
+    pdfPage: vi.fn(),
+    pdfCanvas: vi.fn(),
+    pdfDimensions: vi.fn(),
+    pdfRenderBounds: vi.fn(),
+    pdfClose: vi.fn(),
+    pdfFileSize: vi.fn(),
+}))
 
 vi.mock("$app/environment", () => ({ browser: true }))
 vi.mock("$lib/modules/pdf", () => ({
+    PDFResourceLimitError: class PDFResourceLimitError extends Error {},
+    assertPdfFileSize: pdfFileSize,
     PDFDocument: class {
         constructor() {
             pdfConstructed()
@@ -35,7 +52,15 @@ vi.mock("$lib/modules/pdf", () => ({
         getCanvasPage(page: unknown) {
             return pdfCanvas(page)
         }
-        async close() {}
+        getAllPageDimensions() {
+            return pdfDimensions()
+        }
+        validateRenderBounds() {
+            return pdfRenderBounds()
+        }
+        async close() {
+            return pdfClose()
+        }
     },
 }))
 
@@ -58,6 +83,10 @@ beforeEach(() => {
     pdfTitle.mockReset().mockResolvedValue(null)
     pdfPage.mockReset().mockResolvedValue({})
     pdfCanvas.mockReset().mockResolvedValue("")
+    pdfDimensions.mockReset().mockResolvedValue([{ width: 600, height: 800 }])
+    pdfRenderBounds.mockReset().mockResolvedValue(undefined)
+    pdfClose.mockReset().mockResolvedValue(undefined)
+    pdfFileSize.mockReset().mockImplementation(() => undefined)
 })
 
 afterEach(() => {
@@ -91,6 +120,113 @@ describe("VFS initialization", () => {
 
         expect(store.nodes.legacy).toBeDefined()
         expect(pdfConstructed).not.toHaveBeenCalled()
+    })
+
+    it("cleans a durable resource-limit marker before publishing startup nodes", async () => {
+        const pendingFile = {
+            id: "pending",
+            name: "pending.pdf",
+            type: "file" as const,
+            parentId: null,
+            size: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+            metadata: { pageNumber: 1 },
+            cleanupPending: "resource-limit" as const,
+        }
+        const deleted = vi.fn(async () => undefined)
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        const store = new VFSStore()
+        store.db = {
+            folders: { getAll: vi.fn(async () => []), get: vi.fn(), put: vi.fn() },
+            files: {
+                getAll: vi.fn(async () => [pendingFile]),
+                get: vi.fn(async () => pendingFile),
+                delete: deleted,
+            },
+            previews: { delete: vi.fn() },
+            fileContents: { delete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn() },
+            userNotes: { deleteByBookId: vi.fn() },
+            bookmarks: { deleteByBookId: vi.fn() },
+            transaction,
+        } as never
+
+        await store.init()
+
+        expect(deleted).toHaveBeenCalledWith("pending")
+        expect(store.nodes.pending).toBeUndefined()
+        expect(transaction).toHaveBeenCalledOnce()
+    })
+
+    it("keeps failed marker cleanup retryable and removes cleaned parent membership", async () => {
+        const pendingFile = {
+            id: "pending",
+            name: "pending.pdf",
+            type: "file" as const,
+            parentId: "parent",
+            size: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+            metadata: { pageNumber: 1 },
+            cleanupPending: "resource-limit" as const,
+        }
+        const parent = {
+            id: "parent",
+            name: "Parent",
+            type: "folder" as const,
+            parentId: null,
+            childrenIds: ["pending"],
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+        }
+        let deleted = false
+        let transactionCalls = 0
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => {
+                transactionCalls += 1
+                if (transactionCalls === 1) throw new Error("temporary failure")
+                return callback()
+            },
+        )
+        const store = new VFSStore()
+        store.db = {
+            folders: {
+                getAll: vi.fn(async () => [parent]),
+                get: vi.fn(async () => parent),
+                put: vi.fn(async () => undefined),
+            },
+            files: {
+                getAll: vi.fn(async () => (deleted ? [] : [pendingFile])),
+                get: vi.fn(async () => pendingFile),
+                delete: vi.fn(async () => {
+                    deleted = true
+                }),
+            },
+            previews: { delete: vi.fn() },
+            fileContents: { delete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn() },
+            userNotes: { deleteByBookId: vi.fn() },
+            bookmarks: { deleteByBookId: vi.fn() },
+            transaction,
+        } as never
+
+        await expect(store.init()).rejects.toThrow(
+            "Failed to clean up resource-limited file pending",
+        )
+        expect(store.initialized).toBe(false)
+        expect(store.nodes.pending).toBeUndefined()
+
+        await store.init()
+
+        expect(store.nodes.pending).toBeUndefined()
+        expect(store.nodes.parent).toMatchObject({ childrenIds: [] })
+        expect(transaction).toHaveBeenCalledTimes(2)
     })
 })
 
@@ -162,6 +298,266 @@ describe("VFS initialization and import ordering", () => {
 
         expect(results[0]).toMatchObject({ status: "imported" })
         expect(store.nodes[results[0].id]).toMatchObject({ name: "overlap.pdf" })
+    })
+
+    it("preserves cleanup markers through later writes and clears them on relink", async () => {
+        let persisted: any = {
+            id: "book",
+            name: "book.pdf",
+            type: "file",
+            parentId: null,
+            size: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+            metadata: { pageNumber: 1 },
+        }
+        const filesPut = vi.fn(async (value: any) => {
+            persisted = structuredClone(value)
+            return value.id
+        })
+        const store = new VFSStore({ book: persisted })
+        store.db = {
+            files: {
+                get: vi.fn(async () => persisted),
+                put: filesPut,
+            },
+            fileContents: {
+                get: vi.fn(async () => undefined),
+                put: vi.fn(async (value: any) => value.id),
+            },
+            previews: {
+                get: vi.fn(async () => undefined),
+                put: vi.fn(async (value: any) => value.id),
+                delete: vi.fn(async () => undefined),
+            },
+            indexedTexts: { getByBookId: vi.fn(async () => []), deleteByBookId: vi.fn() },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        } as never
+
+        const generations = {
+            content: 0,
+            preview: 0,
+            request: 0,
+            relinkEpoch: 0,
+            relinkOwner: 0,
+            document: null,
+            tempUrl: "",
+        }
+        await expect(
+            (store as any).persistResourceCleanupMarker("book", generations),
+        ).resolves.toBe("marked")
+        expect(store.nodes.book).toMatchObject({ cleanupPending: "resource-limit" })
+
+        await store.updateFile("book", { metadata: { totalPages: 2 } })
+        expect(persisted).toMatchObject({
+            cleanupPending: "resource-limit",
+            metadata: { totalPages: 2 },
+        })
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ blob: async () => new Blob(["preview"]) })),
+        )
+        await store.savePreview("book", "blob:preview")
+        expect(persisted.cleanupPending).toBe("resource-limit")
+
+        const fallbacks = new Map([["project-reader:resource-cleanup:book", "resource-limit"]])
+        vi.stubGlobal("localStorage", {
+            getItem: (key: string) => fallbacks.get(key) ?? null,
+            removeItem: (key: string) => fallbacks.delete(key),
+        })
+        await store.relinkFile("book", handle("replacement.pdf"))
+        expect(
+            (store.nodes.book as Extract<VFSNodes[string], { type: "file" }>).cleanupPending,
+        ).toBeUndefined()
+        expect(persisted.cleanupPending).toBeUndefined()
+        expect(fallbacks.size).toBe(0)
+        expect((store as any).resourceCleanupMarkers.has("book")).toBe(false)
+    })
+
+    it("does not roll back a newer relink when stale import enrichment hits a resource limit", async () => {
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        let rejectCanvas!: (error: unknown) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise<string>((_, reject) => {
+                    rejectCanvas = reject
+                }),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = { files: { put } } as never
+        const deleteNode = vi.spyOn(store, "deleteNode")
+        const enriching = (store as any).enrichImport(
+            { id: "book", name: "book.pdf", parentId: null },
+            {},
+            {
+                content: 0,
+                preview: 0,
+                request: 0,
+                relinkEpoch: 0,
+                relinkOwner: 0,
+                document: {
+                    getPageNumber: vi.fn(async () => 2),
+                    getAuthor: vi.fn(async () => null),
+                    getTitle: vi.fn(async () => null),
+                    getPage: vi.fn(async () => ({})),
+                    getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                    close: vi.fn(async () => undefined),
+                },
+                tempUrl: "blob:import",
+            },
+        )
+
+        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        ;(store as any).invalidateContent("book")
+        ;(store.nodes as any).book = {
+            ...store.nodes.book,
+            type: "file",
+            metadata: { pageNumber: 1, totalPages: 9 },
+        }
+        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+
+        await expect(enriching).resolves.toMatchObject({ id: "book", status: "failed" })
+        expect(deleteNode).not.toHaveBeenCalled()
+        expect(store.nodes.book).toMatchObject({ metadata: { totalPages: 9 } })
+    })
+
+    it("does not roll back after a superseding relink succeeds", async () => {
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        let rejectCanvas!: (error: unknown) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise<string>((_, reject) => {
+                    rejectCanvas = reject
+                }),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        const generations = {
+            content: 0,
+            preview: 0,
+            request: 0,
+            relinkEpoch: 0,
+            relinkOwner: 0,
+            document: {
+                getPageNumber: vi.fn(async () => 2),
+                getAuthor: vi.fn(async () => null),
+                getTitle: vi.fn(async () => null),
+                getPage: vi.fn(async () => ({})),
+                getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                close: vi.fn(async () => undefined),
+            },
+            tempUrl: "blob:import",
+        }
+        const deleteNodeUnlocked = vi
+            .spyOn(store as any, "deleteNodeUnlocked")
+            .mockResolvedValue(undefined)
+        ;(store as any).relinkingCounts.set("book", 1)
+        const enriching = (store as any).enrichImport(
+            { id: "book", name: "book.pdf", parentId: null },
+            {},
+            generations,
+        )
+
+        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+        await vi.waitFor(() => expect((store as any).relinkWaiters.has("book")).toBe(true))
+
+        ;(store as any).invalidateContent("book")
+        ;(store as any).relinkEpochs.set("book", 1)
+        ;(store as any).relinkStateOwners.set("book", 1)
+        ;(store as any).relinkingCounts.delete("book")
+        for (const resolve of (store as any).relinkWaiters.get("book") ?? []) resolve()
+
+        await expect(enriching).resolves.toMatchObject({ id: "book", status: "failed" })
+        expect(deleteNodeUnlocked).not.toHaveBeenCalled()
+    })
+
+    it("rolls back after a superseding relink fails", async () => {
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        let rejectCanvas!: (error: unknown) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise<string>((_, reject) => {
+                    rejectCanvas = reject
+                }),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { files: { put: vi.fn(async () => undefined) } } as never
+        const deleteNodeUnlocked = vi
+            .spyOn(store as any, "deleteNodeUnlocked")
+            .mockResolvedValue(undefined)
+        ;(store as any).relinkingCounts.set("book", 1)
+        const enriching = (store as any).enrichImport(
+            { id: "book", name: "book.pdf", parentId: null },
+            {},
+            {
+                content: 0,
+                preview: 0,
+                request: 0,
+                relinkEpoch: 0,
+                relinkOwner: 0,
+                document: {
+                    getPageNumber: vi.fn(async () => 2),
+                    getAuthor: vi.fn(async () => null),
+                    getTitle: vi.fn(async () => null),
+                    getPage: vi.fn(async () => ({})),
+                    getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                    close: vi.fn(async () => undefined),
+                },
+                tempUrl: "blob:import",
+            },
+        )
+
+        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+        await vi.waitFor(() => expect((store as any).relinkWaiters.has("book")).toBe(true))
+
+        ;(store as any).relinkingCounts.delete("book")
+        for (const resolve of (store as any).relinkWaiters.get("book") ?? []) resolve()
+
+        await expect(enriching).resolves.toMatchObject({ id: "book", status: "failed" })
+        expect(deleteNodeUnlocked).toHaveBeenCalledWith("book", 0)
     })
 
     it("does not let enrichment metadata commit after a relink supersedes the import", async () => {
@@ -513,6 +909,43 @@ describe("VFS file access persistence", () => {
         expect(revokeObjectURL).toHaveBeenCalledWith("blob:old")
     })
 
+    it("rejects a handle that changes to an oversized file on restored access", async () => {
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const getFile = vi.fn(async () => new Blob(["oversized-pdf"], { type: "application/pdf" }))
+        const changingHandle = Object.assign(handle("book.pdf"), {
+            queryPermission: vi.fn(async () => "granted"),
+            getFile,
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = {
+            files: { put },
+            fileContents: { get: vi.fn(async () => ({ handle: changingHandle })) },
+        } as never
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        pdfFileSize.mockImplementationOnce(() => {
+            throw new PDFResourceLimitError("PDF file exceeds byte limit")
+        })
+        const createObjectURL = vi.spyOn(URL, "createObjectURL")
+
+        await expect(store.getFileUrl("book")).resolves.toBe("")
+        expect(getFile).toHaveBeenCalledOnce()
+        expect(createObjectURL).not.toHaveBeenCalled()
+        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: true }))
+    })
+
     it("rolls back the content generation when relinking cannot read the replacement", async () => {
         const store = new VFSStore({
             book: {
@@ -602,6 +1035,90 @@ describe("VFS file access persistence", () => {
         expect(relinked).not.toHaveBeenCalled()
         expect(getFileUrl).not.toHaveBeenCalled()
         expect(restored).toHaveBeenCalledWith("book")
+    })
+
+    it("closes a relink candidate directly when disposal interrupts validation", async () => {
+        let resolveLoad!: () => void
+        pdfLoad.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolveLoad = resolve
+                }),
+        )
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        store.db = { close: vi.fn() } as never
+
+        const relinking = store.relinkFile("book", handle("replacement.pdf"))
+        await vi.waitFor(() => expect(pdfLoad).toHaveBeenCalledOnce())
+        await store.dispose()
+        resolveLoad()
+
+        await expect(relinking).rejects.toMatchObject({ name: "VFSDisposedError" })
+        expect(pdfClose).toHaveBeenCalledOnce()
+    })
+
+    it("rejects oversized relink candidates before creating a PDF document", async () => {
+        const assertSize = vi.mocked((await import("$lib/modules/pdf")).assertPdfFileSize)
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        assertSize.mockImplementationOnce(() => {
+            throw new PDFResourceLimitError("PDF file exceeds byte limit")
+        })
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const createObjectURL = vi.spyOn(URL, "createObjectURL")
+
+        await expect(store.relinkFile("book", handle("large.pdf"))).rejects.toThrow("byte limit")
+        expect(createObjectURL).not.toHaveBeenCalled()
+    })
+
+    it("rejects relink candidates that exceed render pixel limits before persistence", async () => {
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        pdfRenderBounds.mockRejectedValueOnce(new PDFResourceLimitError("pixel canvas limit"))
+        const store = new VFSStore({
+            book: {
+                id: "book",
+                name: "book.pdf",
+                type: "file",
+                parentId: null,
+                size: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                isLocked: true,
+                metadata: { pageNumber: 1 },
+            },
+        })
+        const put = vi.fn(async () => undefined)
+        store.db = { files: { put } } as never
+
+        await expect(store.relinkFile("book", handle("large-page.pdf"))).rejects.toThrow(
+            "pixel canvas limit",
+        )
+        expect(put).not.toHaveBeenCalled()
     })
 
     it("does not replace persisted content when a relink candidate is not a readable PDF", async () => {
@@ -1274,20 +1791,34 @@ describe("VFS file access persistence", () => {
                 metadata: { pageNumber: 1 },
             },
         })
-        const transaction = vi.fn(async () => {
-            throw new Error("transaction failed")
-        })
-        store.db = { transaction } as never
+        const transaction = vi.fn(
+            async (_mode: unknown, _tables: unknown, callback: () => unknown) => callback(),
+        )
+        const deletionFailure = new Error("bulk delete failed")
+        const settled = vi.fn()
+        store.db = {
+            transaction,
+            files: { bulkDelete: vi.fn().mockRejectedValue(deletionFailure) },
+            previews: { bulkDelete: vi.fn(async () => undefined) },
+            fileContents: { bulkDelete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            userNotes: { deleteByBookId: vi.fn(async () => undefined) },
+            bookmarks: { deleteByBookId: vi.fn(async () => undefined) },
+            folders: { bulkDelete: vi.fn(async () => undefined) },
+        } as never
         const invalidations: string[] = []
         const deletionStarts: string[][] = []
         store.onNodeInvalidated((id) => invalidations.push(id))
         store.onNodesDeleting((ids) => deletionStarts.push(ids))
+        ;(store as any).deletionWaiters.set("book", new Set([settled]))
         const generation = store.getContentGeneration("book")
 
-        await expect(store.deleteNode("book")).rejects.toThrow("transaction failed")
+        await expect(store.deleteNode("book")).rejects.toThrow("bulk delete failed")
 
         expect(store.nodes.book).toBeDefined()
         expect(store.getContentGeneration("book")).toBe(generation)
+        expect((store as any).deletingFileIds.has("book")).toBe(false)
+        expect(settled).toHaveBeenCalledOnce()
         expect(invalidations).toEqual(["book", "book"])
         expect(deletionStarts).toEqual([])
     })
@@ -2645,6 +3176,832 @@ describe("folder names", () => {
         expect(store.nodes[id].isPinned).toBe(false)
     })
 
+    it("merges child additions from stale store snapshots", async () => {
+        const records = new Map<string, any>([
+            [
+                "parent",
+                {
+                    id: "parent",
+                    name: "Parent",
+                    type: "folder",
+                    parentId: null,
+                    childrenIds: [],
+                    createdAt: 1,
+                    updatedAt: 1,
+                    isPinned: false,
+                },
+            ],
+        ])
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => {
+                    records.set(folder.id, structuredClone(folder))
+                    return folder.id
+                }),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const initial = structuredClone(records.get("parent"))
+        const first = new VFSStore({ parent: initial })
+        const second = new VFSStore({ parent: structuredClone(initial) })
+        first.db = db as never
+        second.db = db as never
+
+        const firstId = await first.createFolder("First", "parent")
+        const secondId = await second.createFolder("Second", "parent")
+
+        expect(records.get("parent").childrenIds).toEqual([firstId, secondId])
+    })
+
+    it("merges stale-parent move and delete operations", async () => {
+        const initial = {
+            parent: {
+                id: "parent",
+                name: "Parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["moved"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            moved: {
+                id: "moved",
+                name: "Moved",
+                type: "folder" as const,
+                parentId: "parent",
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => {
+                    records.set(folder.id, structuredClone(folder))
+                    return folder.id
+                }),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        const siblingId = await second.createFolder("Sibling", "parent")
+        await first.moveNode("moved", "target")
+        expect(records.get("parent")?.childrenIds).toEqual([siblingId])
+        expect(records.get("target")?.childrenIds).toEqual(["moved"])
+
+        await first.deleteNode("moved")
+        expect(records.get("target")?.childrenIds).toEqual([])
+    })
+
+    it("removes a directly deleted file from its current persisted parent", async () => {
+        const initial = {
+            file: {
+                id: "file",
+                name: "File.pdf",
+                type: "file" as const,
+                parentId: "old-parent",
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+                isLocked: false,
+            },
+            "old-parent": {
+                id: "old-parent",
+                name: "Old parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["file"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "new-parent": {
+                id: "new-parent",
+                name: "New parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map<string, any>(Object.entries(structuredClone(initial)))
+        const db = {
+            files: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (file: any) => records.set(file.id, structuredClone(file))),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+            },
+            previews: { bulkDelete: vi.fn(async () => undefined) },
+            fileContents: { bulkDelete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            userNotes: { deleteByBookId: vi.fn(async () => undefined) },
+            bookmarks: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("file", "new-parent")
+        await first.deleteNode("file")
+
+        expect(records.has("file")).toBe(false)
+        expect(records.get("old-parent")?.childrenIds).toEqual([])
+        expect(records.get("new-parent")?.childrenIds).toEqual([])
+        expect(first.nodes["old-parent"]).toMatchObject({ childrenIds: [] })
+        expect(first.nodes["new-parent"]).toMatchObject({ childrenIds: [] })
+    })
+
+    it("preserves concurrent child additions while renaming a folder", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Old name",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => {
+                    records.set(folder.id, structuredClone(folder))
+                    return folder.id
+                }),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        const childId = await second.createFolder("Child", "folder")
+        await first.renameFolder("folder", "Renamed")
+
+        expect(records.get("folder")).toMatchObject({ name: "Renamed", childrenIds: [childId] })
+    })
+
+    it("preserves persisted children when updateNode omits childrenIds", async () => {
+        const folder = {
+            id: "folder",
+            name: "Old name",
+            type: "folder" as const,
+            parentId: null,
+            childrenIds: ["new-child"],
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+        }
+        const records = new Map([["folder", structuredClone(folder)]])
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (value: any) => {
+                    records.set(value.id, structuredClone(value))
+                }),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const store = new VFSStore({
+            folder: { ...folder, childrenIds: [] },
+        })
+        store.db = db as never
+
+        await store.updateNode("folder", { name: "Renamed" })
+
+        expect(records.get("folder")).toMatchObject({
+            name: "Renamed",
+            childrenIds: ["new-child"],
+        })
+    })
+
+    it("replaces persisted children when updateNode explicitly supplies childrenIds", async () => {
+        const folder = {
+            id: "folder",
+            name: "Folder",
+            type: "folder" as const,
+            parentId: null,
+            childrenIds: ["first", "second"],
+            createdAt: 1,
+            updatedAt: 1,
+            isPinned: false,
+        }
+        const records = new Map([["folder", structuredClone(folder)]])
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (value: any) => {
+                    records.set(value.id, structuredClone(value))
+                }),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const store = new VFSStore(structuredClone({ folder }))
+        store.db = db as never
+
+        await store.updateNode("folder", { childrenIds: ["replacement", "replacement"] })
+        expect(records.get("folder")?.childrenIds).toEqual(["replacement"])
+
+        await store.updateNode("folder", { childrenIds: [] })
+        expect(records.get("folder")?.childrenIds).toEqual([])
+    })
+
+    it("deletes persisted descendants added after a stale folder snapshot", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => {
+                    records.set(folder.id, structuredClone(folder))
+                    return folder.id
+                }),
+                bulkDelete: vi.fn(async (ids: string[]) =>
+                    ids.forEach((childId) => records.delete(childId)),
+                ),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        const childId = await second.createFolder("Child", "folder")
+        await first.deleteNode("folder")
+
+        expect(records.has("folder")).toBe(false)
+        expect(records.has(childId)).toBe(false)
+    })
+
+    it("does not leave a moved-away file marked as deleting", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["file"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            file: {
+                id: "file",
+                name: "File.pdf",
+                type: "file" as const,
+                parentId: "folder",
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+                isLocked: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            files: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (file: any) => records.set(file.id, structuredClone(file))),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            previews: { bulkDelete: vi.fn(async () => undefined) },
+            fileContents: { bulkDelete: vi.fn(async () => undefined) },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            userNotes: { deleteByBookId: vi.fn(async () => undefined) },
+            bookmarks: { deleteByBookId: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("file", "target")
+        await first.deleteNode("folder")
+
+        expect(records.has("file")).toBe(true)
+        expect((first as any).deletingFileIds.has("file")).toBe(false)
+    })
+
+    it("moves a stale file from its current persisted parent", async () => {
+        const initial = {
+            file: {
+                id: "file",
+                name: "File.pdf",
+                type: "file" as const,
+                parentId: "first-parent",
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+                isLocked: false,
+            },
+            "first-parent": {
+                id: "first-parent",
+                name: "First",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["file"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "second-parent": {
+                id: "second-parent",
+                name: "Second",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map<string, any>(Object.entries(structuredClone(initial)))
+        const db = {
+            files: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (file: any) => records.set(file.id, structuredClone(file))),
+            },
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("file", "second-parent")
+        await first.moveNode("file", "target")
+
+        expect(records.get("file")?.parentId).toBe("target")
+        expect(records.get("first-parent")?.childrenIds).toEqual([])
+        expect(records.get("second-parent")?.childrenIds).toEqual([])
+        expect(records.get("target")?.childrenIds).toEqual(["file"])
+        expect((first as any).nodes["first-parent"].childrenIds).toEqual([])
+        expect((first as any).nodes["target"].childrenIds).toEqual(["file"])
+    })
+
+    it("refreshes local membership when a persisted move is already at its destination", async () => {
+        const initial = {
+            file: {
+                id: "file",
+                name: "File.pdf",
+                type: "file" as const,
+                parentId: "first-parent",
+                size: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { pageNumber: 1 },
+                isLocked: false,
+            },
+            "first-parent": {
+                id: "first-parent",
+                name: "First",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["file"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map<string, any>(Object.entries(structuredClone(initial)))
+        const db = {
+            files: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (file: any) => records.set(file.id, structuredClone(file))),
+            },
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("file", "target")
+        await first.moveNode("file", "target")
+
+        expect(records.get("target")?.childrenIds).toEqual(["file"])
+        expect(records.get("first-parent")?.childrenIds).toEqual([])
+        expect(first.nodes["first-parent"]).toMatchObject({ childrenIds: [] })
+        expect(first.nodes.target).toMatchObject({ childrenIds: ["file"] })
+        expect(first.currentFolderId).toBeNull()
+    })
+
+    it("reconciles local parent membership when rename and update publish remote moves", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map<string, any>(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("folder", "target")
+        await first.renameFolder("folder", "Renamed")
+        expect(first.rootIds).toEqual(["target"])
+        expect(first.nodes.target).toMatchObject({ childrenIds: ["folder"] })
+
+        await second.moveNode("folder", null)
+        await first.updateNode("folder", { name: "Updated" })
+        expect(first.nodes.folder).toMatchObject({ name: "Updated", parentId: null })
+        expect(first.rootIds).toContain("folder")
+        expect(first.nodes.target).toMatchObject({ childrenIds: [] })
+    })
+
+    it("does not resurrect a remotely deleted folder during move or update", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const put = vi.fn()
+        const store = new VFSStore(structuredClone(initial))
+        store.db = {
+            folders: {
+                get: vi.fn(async (id: string) => (id === "target" ? initial.target : undefined)),
+                put,
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        } as never
+
+        await store.moveNode("folder", "target")
+        await store.updateNode("folder", { name: "Updated" })
+
+        expect(put).not.toHaveBeenCalled()
+        expect(store.nodes.folder).toMatchObject({ name: "Folder", parentId: null })
+    })
+
+    it("does not delete a child moved away from a stale folder snapshot", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: "old-parent",
+                childrenIds: ["child"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "old-parent": {
+                id: "old-parent",
+                name: "Old parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["folder"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            child: {
+                id: "child",
+                name: "Child",
+                type: "folder" as const,
+                parentId: "folder",
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("child", "target")
+        await first.deleteNode("folder")
+
+        expect(records.has("folder")).toBe(false)
+        expect(records.has("child")).toBe(true)
+        expect(records.get("target")?.childrenIds).toEqual(["child"])
+        expect(first.nodes.child).toMatchObject({ parentId: "target" })
+        expect(first.nodes.target).toMatchObject({ childrenIds: ["child"] })
+        first.currentFolderId = "target"
+        expect(first.currentNodes.map((node) => node.id)).toEqual(["child"])
+    })
+
+    it("removes a deleted folder from its current persisted parent", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: "old-parent",
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "old-parent": {
+                id: "old-parent",
+                name: "Old parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["folder"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "new-parent": {
+                id: "new-parent",
+                name: "New parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("folder", "new-parent")
+        await first.deleteNode("folder")
+
+        expect(records.get("old-parent")?.childrenIds).toEqual([])
+        expect(records.get("new-parent")?.childrenIds).toEqual([])
+    })
+
+    it("rejects a rename duplicate in the folder's current persisted parent", async () => {
+        const initial = {
+            folder: {
+                id: "folder",
+                name: "Folder",
+                type: "folder" as const,
+                parentId: "old-parent",
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            "old-parent": {
+                id: "old-parent",
+                name: "Old parent",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["folder"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            target: {
+                id: "target",
+                name: "Target",
+                type: "folder" as const,
+                parentId: null,
+                childrenIds: ["sibling"],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+            sibling: {
+                id: "sibling",
+                name: "Taken",
+                type: "folder" as const,
+                parentId: "target",
+                childrenIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+            },
+        }
+        const records = new Map(Object.entries(structuredClone(initial)))
+        const db = {
+            folders: {
+                get: vi.fn(async (id: string) => structuredClone(records.get(id))),
+                getAll: vi.fn(async () => structuredClone([...records.values()])),
+                put: vi.fn(async (folder: any) => records.set(folder.id, structuredClone(folder))),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        }
+        const first = new VFSStore(structuredClone(initial))
+        const second = new VFSStore(structuredClone(initial))
+        first.db = db as never
+        second.db = db as never
+
+        await second.moveNode("folder", "target")
+        await expect(first.renameFolder("folder", "Taken")).rejects.toThrow()
+        expect(records.get("folder")?.name).toBe("Folder")
+    })
+
+    it("does not resurrect a folder deleted by another store", async () => {
+        const store = new VFSStore(structuredClone(folders))
+        const get = vi.fn(async () => undefined)
+        const put = vi.fn()
+        store.db = {
+            folders: { get, put },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+        } as never
+
+        await store.renameFolder("folder", "New name")
+
+        expect(get).toHaveBeenCalledWith("folder")
+        expect(put).not.toHaveBeenCalled()
+        expect(store.nodes.folder.name).toBe("Old name")
+    })
+
     it("persists before atomically publishing a normalized rename", async () => {
         const store = new VFSStore(structuredClone(folders))
         const put = vi.fn(async () => "folder")
@@ -2759,6 +4116,35 @@ describe("VFS import registration", () => {
         await blocker
     })
 
+    it("does not deadlock when onImported awaits disposal", async () => {
+        const close = vi.fn()
+        const store = new VFSStore()
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+            close,
+        } as never
+        let callbackStarted = false
+
+        const completion = store.importFiles(
+            [{ name: "callback.pdf", source: handle("callback.pdf") }],
+            null,
+            {
+                onImported: async () => {
+                    callbackStarted = true
+                    await store.dispose()
+                },
+            },
+        )
+
+        await vi.waitFor(() => expect(callbackStarted).toBe(true))
+        await expect(completion).resolves.toMatchObject([{ status: "failed" }])
+        expect(close).toHaveBeenCalledOnce()
+    })
+
     it("short-circuits a queued import after disposal", async () => {
         let sourceStarted!: () => void
         let resolveFile!: (file: File) => void
@@ -2821,6 +4207,317 @@ describe("VFS import registration", () => {
         expect(fileContentsPut).not.toHaveBeenCalled()
         expect(store.nodes).toEqual({})
         expect(close).toHaveBeenCalledOnce()
+    })
+
+    it("cleans a committed import on disposal and retains completed imports on reopen", async () => {
+        const records = new Map<string, any>()
+        const contents = new Map<string, any>()
+        const store = new VFSStore()
+        const job = {
+            id: "committed",
+            name: "committed.pdf",
+            parentId: null,
+            stage: "queued" as const,
+        }
+        ;(store as any).importSources.set(job.id, handle(job.name))
+        store.importJobs = [job]
+        store.db = {
+            files: {
+                put: vi.fn(async (value: any) => {
+                    records.set(value.id, structuredClone(value))
+                    return value.id
+                }),
+                get: vi.fn(async (id: string) => records.get(id)),
+                getAll: vi.fn(async () => [...records.values()]),
+                delete: vi.fn(async (id: string) => records.delete(id)),
+            },
+            fileContents: {
+                put: vi.fn(async (value: any) => {
+                    contents.set(value.id, value)
+                    return value.id
+                }),
+                delete: vi.fn(async (id: string) => contents.delete(id)),
+            },
+            folders: { getAll: vi.fn(async () => []), get: vi.fn(), put: vi.fn() },
+            previews: { delete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn() },
+            userNotes: { deleteByBookId: vi.fn() },
+            bookmarks: { deleteByBookId: vi.fn() },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+            close: vi.fn(),
+        } as never
+
+        const [completed] = await store.importFiles(
+            [{ name: "completed.pdf", source: handle("completed.pdf") }],
+            null,
+        )
+        expect(completed.status).toBe("imported")
+        const persisted = await (store as any).persistImport(job, {})
+        expect(persisted).toEqual(expect.objectContaining({ content: 0 }))
+        expect(records.has(job.id)).toBe(true)
+        await store.dispose()
+        expect(records.has(job.id)).toBe(false)
+        expect(records.has(completed.id)).toBe(true)
+
+        const reopened = new VFSStore()
+        reopened.db = {
+            folders: { getAll: vi.fn(async () => []) },
+            files: { getAll: vi.fn(async () => [...records.values()]) },
+        } as never
+        await reopened.init()
+        expect(reopened.nodes[job.id]).toBeUndefined()
+        expect(reopened.nodes[completed.id]).toMatchObject({ metadata: { totalPages: 2 } })
+    })
+
+    it("stops after bounded marker failure without claiming durable cleanup", async () => {
+        vi.useFakeTimers()
+        const markerFailure = new Error("IndexedDB unavailable")
+        const store = new VFSStore()
+        const mark = vi
+            .spyOn(store as any, "markResourceCleanupPending")
+            .mockRejectedValue(markerFailure)
+        vi.stubGlobal("localStorage", {
+            setItem: vi.fn(() => {
+                throw new Error("localStorage unavailable")
+            }),
+        })
+        try {
+            ;(store as any).pendingResourceRollbacks.set("book", {
+                generations: {
+                    content: 0,
+                    preview: 0,
+                    request: 0,
+                    relinkEpoch: 0,
+                    relinkOwner: 0,
+                    document: null,
+                    tempUrl: "",
+                },
+                parentId: null,
+            })
+            ;(store as any).resourceRollbackRetryAttempts.set("book", 5)
+            ;(store as any).schedulePendingResourceRollback("book")
+            await vi.runAllTimersAsync()
+            expect(mark).toHaveBeenCalledTimes(5)
+            expect((store as any).pendingResourceRollbacks.has("book")).toBe(true)
+            expect((store as any).resourceCleanupMarkers.has("book")).toBe(false)
+            expect((store as any).resourceCleanupFailures.has("book")).toBe(true)
+            expect((store as any).resourceRollbackRetryTasks.size).toBe(0)
+            ;(store as any).schedulePendingResourceRollback("book")
+            await vi.runAllTimersAsync()
+            expect(mark).toHaveBeenCalledTimes(5)
+            expect(vi.getTimerCount()).toBe(0)
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("cleans up a late resource error after disposal and reopening", async () => {
+        const records = new Map<string, any>()
+        const contents = new Map<string, any>()
+        let rejectCanvas!: (error: unknown) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectCanvas = reject
+                }),
+        )
+        const store = new VFSStore()
+        store.db = {
+            files: {
+                put: vi.fn(async (value: any) => {
+                    records.set(value.id, structuredClone(value))
+                    return value.id
+                }),
+                get: vi.fn(async (id: string) => records.get(id)),
+                getAll: vi.fn(async () => [...records.values()]),
+                delete: vi.fn(async (id: string) => records.delete(id)),
+            },
+            fileContents: {
+                put: vi.fn(async (value: any) => {
+                    contents.set(value.id, value)
+                    return value.id
+                }),
+                delete: vi.fn(async (id: string) => contents.delete(id)),
+            },
+            folders: { getAll: vi.fn(async () => []), get: vi.fn(), put: vi.fn() },
+            previews: { delete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn() },
+            userNotes: { deleteByBookId: vi.fn() },
+            bookmarks: { deleteByBookId: vi.fn() },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+            close: vi.fn(),
+        } as never
+
+        const importing = store.importFiles(
+            [{ name: "late.pdf", source: handle("late.pdf") }],
+            null,
+        )
+        await vi.waitFor(() => expect(rejectCanvas).toEqual(expect.any(Function)))
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        vi.spyOn(store as any, "cleanupPersistedResourceLimitedFile").mockResolvedValue(false)
+        vi.useFakeTimers()
+        try {
+            const disposing = store.dispose()
+            await vi.runAllTimersAsync()
+            await disposing
+            expect([...records.values()]).toEqual([
+                expect.objectContaining({ cleanupPending: "resource-limit" }),
+            ])
+            rejectCanvas(new PDFResourceLimitError("late pixel limit"))
+            await expect(importing).resolves.toMatchObject([{ status: "failed" }])
+            await Promise.resolve()
+            expect((store as any).pendingResourceRollbacks.size).toBe(0)
+        } finally {
+            vi.useRealTimers()
+        }
+
+        const reopened = new VFSStore()
+        reopened.db = store.db
+        await reopened.init()
+        expect(reopened.nodes).toEqual({})
+        expect(records.size).toBe(0)
+        expect(contents.size).toBe(0)
+    })
+
+    it("rolls back a resource-limited import that fails during disposal", async () => {
+        const records = new Map<string, any>()
+        const filesPut = vi.fn(async (file: any) => {
+            records.set(file.id, structuredClone(file))
+            return file.id
+        })
+        const filesDelete = vi.fn(async (id: string) => records.delete(id))
+        const fileContents = new Map<string, any>()
+        let rejectCanvas!: (error: unknown) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectCanvas = reject
+                }),
+        )
+        const store = new VFSStore()
+        store.db = {
+            files: {
+                put: filesPut,
+                get: vi.fn(async (id: string) => records.get(id)),
+                getAll: vi.fn(async () => [...records.values()]),
+                delete: filesDelete,
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            fileContents: {
+                put: vi.fn(async (content: any) => {
+                    fileContents.set(content.id, content)
+                    return content.id
+                }),
+                delete: vi.fn(async (id: string) => fileContents.delete(id)),
+                bulkDelete: vi.fn(async (ids: string[]) =>
+                    ids.forEach((id) => fileContents.delete(id)),
+                ),
+            },
+            previews: { delete: vi.fn(async () => undefined), bulkDelete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
+            userNotes: { deleteByBookId: vi.fn(async () => undefined) },
+            bookmarks: { deleteByBookId: vi.fn(async () => undefined) },
+            folders: {
+                get: vi.fn(async () => undefined),
+                getAll: vi.fn(async () => []),
+                put: vi.fn(async () => undefined),
+                bulkDelete: vi.fn(),
+            },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+            close: vi.fn(),
+        } as never
+
+        const completion = store.importFiles(
+            [{ name: "limited.pdf", source: handle("limited.pdf") }],
+            null,
+        )
+        await vi.waitFor(() => expect(rejectCanvas).toEqual(expect.any(Function)))
+        const disposing = store.dispose()
+        await Promise.resolve()
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        rejectCanvas(new PDFResourceLimitError("pixel limit"))
+        const [results] = await Promise.all([completion, disposing])
+
+        expect(results).toMatchObject([{ status: "failed" }])
+        const reopened = new VFSStore()
+        reopened.db = store.db
+        await reopened.init()
+        expect(reopened.nodes).toEqual({})
+        expect(filesDelete).toHaveBeenCalled()
+    })
+
+    it("revalidates a handle after persistence when its second read changes", async () => {
+        const source = handle("changing.pdf")
+        const first = new Blob(["pdf"], { type: "application/pdf" })
+        const second = { size: 200 * 1024 * 1024, type: "application/pdf" }
+        source.getFile = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        pdfFileSize.mockImplementation((size: number) => {
+            if (size > 100 * 1024 * 1024) throw new PDFResourceLimitError("byte limit")
+        })
+        const store = new VFSStore()
+        const records = new Map<string, any>()
+        store.db = {
+            files: {
+                put: vi.fn(async (file: any) => {
+                    records.set(file.id, file)
+                    return file.id
+                }),
+                get: vi.fn(async (id: string) => records.get(id)),
+                delete: vi.fn(async (id: string) => records.delete(id)),
+                bulkDelete: vi.fn(async (ids: string[]) => ids.forEach((id) => records.delete(id))),
+            },
+            fileContents: {
+                put: vi.fn(async (content: any) => content.id),
+                delete: vi.fn(),
+                bulkDelete: vi.fn(),
+            },
+            previews: { delete: vi.fn(), bulkDelete: vi.fn() },
+            indexedTexts: { deleteByBookId: vi.fn() },
+            userNotes: { deleteByBookId: vi.fn() },
+            bookmarks: { deleteByBookId: vi.fn() },
+            folders: { get: vi.fn(), put: vi.fn() },
+            transaction: vi.fn(async (_mode: unknown, _tables: unknown, callback: () => unknown) =>
+                callback(),
+            ),
+            close: vi.fn(),
+        } as never
+
+        const [result] = await store.importFiles([{ name: "changing.pdf", source }], null)
+
+        expect(result.status).toBe("failed")
+        expect(source.getFile).toHaveBeenCalledTimes(2)
+        expect(records).toEqual(new Map())
+    })
+
+    it("persists a cleanup marker after live rollback retries are exhausted", async () => {
+        const store = new VFSStore()
+        const markCleanup = vi.fn(async () => undefined)
+        ;(store as any).markResourceCleanupPending = markCleanup
+        ;(store as any).pendingResourceRollbacks.set("pending", {
+            generations: {
+                content: 0,
+                preview: 0,
+                request: 0,
+                relinkEpoch: 0,
+                relinkOwner: 0,
+                document: null,
+                tempUrl: "",
+            },
+            parentId: null,
+        })
+        ;(store as any).resourceRollbackRetryAttempts.set("pending", 5)
+
+        ;(store as any).schedulePendingResourceRollback("pending")
+        await vi.waitFor(() =>
+            expect(markCleanup).toHaveBeenCalledWith("pending", expect.any(Object)),
+        )
     })
 
     it("cleans the source after a terminal persistence failure", async () => {
@@ -2912,6 +4609,74 @@ describe("VFS import registration", () => {
                 expect.objectContaining({ name: "book.pdf", status: "failed" }),
             ]),
         )
+    })
+
+    it("rejects oversized handle imports before persistence", async () => {
+        const assertSize = vi.mocked((await import("$lib/modules/pdf")).assertPdfFileSize)
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        assertSize.mockImplementationOnce(() => {
+            throw new PDFResourceLimitError("PDF file exceeds byte limit")
+        })
+        const transaction = vi.fn(async () => undefined)
+        const store = new VFSStore()
+        store.db = { transaction } as never
+        const source = {
+            kind: "file",
+            name: "large.pdf",
+            getFile: vi.fn(async () => ({ size: 101 * 1024 * 1024, type: "application/pdf" })),
+        } as unknown as FileSystemFileHandle
+
+        const [result] = await store.importFiles([{ name: "large.pdf", source }], null)
+
+        expect(result.status).toBe("rejected")
+        expect(transaction).not.toHaveBeenCalled()
+    })
+
+    it("rejects imports before persistence when render bounds fail", async () => {
+        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
+        pdfRenderBounds.mockRejectedValueOnce(new PDFResourceLimitError("pixel canvas limit"))
+        const transaction = vi.fn(async () => undefined)
+        const store = new VFSStore()
+        store.db = { transaction } as never
+
+        const [result] = await store.importFiles(
+            [{ name: "large-page.pdf", source: handle("large-page.pdf") }],
+            null,
+        )
+
+        expect(result.status).toBe("rejected")
+        expect(transaction).not.toHaveBeenCalled()
+        expect(store.nodes[result.id]).toBeUndefined()
+    })
+
+    it("closes preflight documents while enrichment is blocked", async () => {
+        let releaseCanvas!: (value: string) => void
+        pdfCanvas.mockImplementationOnce(
+            () =>
+                new Promise<string>((resolve) => {
+                    releaseCanvas = resolve
+                }),
+        )
+        const store = new VFSStore()
+        store.db = {
+            files: { put: vi.fn(async () => undefined) },
+            fileContents: { put: vi.fn(async () => undefined) },
+            transaction: vi.fn(async (_mode, _tables, callback) => callback()),
+        } as never
+
+        const first = store.importFiles([{ name: "first.pdf", source: handle("first.pdf") }], null)
+        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        const second = store.importFiles(
+            [{ name: "second.pdf", source: handle("second.pdf") }],
+            null,
+        )
+
+        await vi.waitFor(() => expect(pdfClose).toHaveBeenCalledTimes(2))
+        expect(pdfConstructed).toHaveBeenCalledTimes(3)
+
+        releaseCanvas("")
+        await expect(first).resolves.toMatchObject([{ status: "imported" }])
+        await expect(second).resolves.toMatchObject([{ status: "imported" }])
     })
 
     it("retains a persisted node when metadata enrichment fails", async () => {

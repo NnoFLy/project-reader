@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import PDFDocument, { Page } from "./pdf"
+import PDFDocument, {
+    Page,
+    PDF_RESOURCE_LIMITS,
+    PDFResourceLimitError,
+    assertPdfFileSize,
+} from "./pdf"
 
 type DeferredRender = {
     promise: Promise<void>
@@ -71,6 +76,84 @@ function createRenderHarness(renderForQuality?: (quality: number) => DeferredRen
 afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+})
+
+describe("PDF resource limits", () => {
+    it("rejects files above the byte limit", () => {
+        expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes + 1)).toThrow("byte limit")
+        expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes)).not.toThrow()
+    })
+
+    it("rejects dimension scans for documents above the page limit", async () => {
+        const pdf = Object.create(PDFDocument.prototype) as PDFDocument
+        Object.defineProperty(pdf, "pageCount", {
+            value: PDF_RESOURCE_LIMITS.maxPages + 1,
+            writable: true,
+        })
+
+        await expect(pdf.getAllPageDimensions()).rejects.toThrow("page limit")
+    })
+
+    it("rejects pages above the dimension limit", async () => {
+        const pdf = Object.create(PDFDocument.prototype) as PDFDocument
+        Object.assign(pdf as object, {
+            pageDimensionsCache: new Map(),
+            pdfDoc: {
+                getPage: vi.fn().mockResolvedValue({
+                    getViewport: () => ({
+                        width: PDF_RESOURCE_LIMITS.maxPageDimension + 1,
+                        height: 1,
+                    }),
+                    cleanup: vi.fn(),
+                }),
+            },
+        })
+
+        await expect(pdf.getPageDimension(1, true)).rejects.toThrow("dimension limit")
+    })
+
+    it("rejects canvases above the pixel limit", async () => {
+        const { pdf } = createRenderHarness()
+        Object.assign(pdf as object, {
+            pdfDoc: {
+                getPage: vi.fn().mockResolvedValue({
+                    getViewport: () => ({
+                        width: PDF_RESOURCE_LIMITS.maxPageDimension,
+                        height:
+                            Math.ceil(
+                                PDF_RESOURCE_LIMITS.maxCanvasPixels /
+                                    PDF_RESOURCE_LIMITS.maxPageDimension,
+                            ) + 1,
+                    }),
+                    cleanup: vi.fn(),
+                }),
+            },
+        })
+
+        await expect(pdf.getCanvasPage(new Page(1), 1)).rejects.toBeInstanceOf(
+            PDFResourceLimitError,
+        )
+    })
+
+    it("rejects oversized page dimensions from viewer layer rendering", async () => {
+        const pdf = Object.create(PDFDocument.prototype) as PDFDocument
+        const pageProxy = {
+            getTextContent: vi.fn().mockResolvedValue({ items: [] }),
+            getAnnotations: vi.fn().mockResolvedValue([]),
+            getViewport: vi.fn(() => ({
+                width: PDF_RESOURCE_LIMITS.maxPageDimension + 1,
+                height: 100,
+            })),
+            cleanup: vi.fn(),
+        }
+        Object.assign(pdf as object, {
+            pageProxyCache: new Map(),
+            pageProxyPromises: new Map(),
+            pdfDoc: { getPage: vi.fn().mockResolvedValue(pageProxy) },
+        })
+
+        await expect(pdf.getPageDataForRendering(2, 1)).rejects.toThrow("dimension limit")
+    })
 })
 
 describe("PDFDocument dimension scanning", () => {
