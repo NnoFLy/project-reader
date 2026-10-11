@@ -1,21 +1,12 @@
-import type { Disposable, DocumentAdapterContribution } from "./contracts"
+import type { Disposable } from "./contracts"
 
-export interface DocumentSource {
-    readonly id: string
-    readonly name?: string
-    readonly extension?: string
-    readonly size?: number
-    read(offset?: number, length?: number): Promise<Uint8Array>
-}
-
-export interface OpenedDocument {
-    readonly id: string
-    readonly kind: "paged" | "reflowable"
-    readonly title?: string
-    close?(): void | Promise<void>
-}
-
-export interface DocumentAdapter extends DocumentAdapterContribution {}
+export type {
+    DocumentAdapter,
+    DocumentSource,
+    OpenedDocument,
+    ProbeResult,
+} from "$lib/document-model"
+import type { DocumentAdapter } from "$lib/document-model"
 
 export interface RegisteredDocumentAdapter extends DocumentAdapter {
     readonly extensionId: string

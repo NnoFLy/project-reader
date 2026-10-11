@@ -1,4 +1,2 @@
-export * from "./contribution-registry"
-export * from "./dependency-resolution"
-export * from "./host"
-export * from "./lifecycle"
+export { ExtensionHost } from "./host"
+export type { ExtensionHostOptions } from "./host"

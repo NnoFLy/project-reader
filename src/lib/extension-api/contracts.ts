@@ -39,7 +39,7 @@ export type ExtensionPermission =
     | "commands"
     | "views"
     | "documents"
-    | (string & {})
+    | "settings"
 
 export interface ExtensionContributions {
     readonly commands?: readonly CommandContribution[]
@@ -123,13 +123,7 @@ export interface ViewContribution {
     readonly title?: string | (() => string)
 }
 
-export interface DocumentAdapterContribution {
-    readonly id: string
-    readonly extensions: readonly string[]
-    readonly open: (
-        source: import("./documents").DocumentSource,
-    ) => import("./documents").OpenedDocument | Promise<import("./documents").OpenedDocument>
-}
+export type DocumentAdapterContribution = import("$lib/document-model").DocumentAdapter
 
 export interface SettingContribution<T = unknown> {
     readonly id: string

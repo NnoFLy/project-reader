@@ -21,9 +21,11 @@ function source(bytes: Uint8Array, name = "sample.pdf") {
 }
 
 describe("built-in PDF adapter boundary", () => {
-    it("probes the PDF signature using a bounded read", async () => {
+    it("uses a namespaced ID and probes the PDF signature using a bounded read", async () => {
+        const adapter = new PdfDocumentAdapter()
+        expect(adapter.id).toBe("builtin.pdf.adapter")
         const { source: documentSource, read } = source(new TextEncoder().encode("%PDF-1.7"))
-        const result = await new PdfDocumentAdapter().probe(documentSource)
+        const result = await adapter.probe(documentSource)
         expect(result).toMatchObject({ supported: true, format: "pdf" })
         expect(read).toHaveBeenCalledWith(0, 5, undefined)
     })

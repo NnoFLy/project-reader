@@ -6,8 +6,10 @@ import {
     type AppExtension,
     type ExtensionContext,
     type ExtensionManifest,
+    type ExtensionPermission,
     type ExtensionStorage,
 } from "../extension-api"
+import { DocumentService } from "../core/documents"
 import { NotificationServiceImpl } from "../core/notifications"
 import { createExtensionStorage, MemoryStorageBackend, type StorageBackend } from "../core/storage"
 import { ContributionRegistry } from "./contribution-registry"
@@ -18,6 +20,7 @@ export interface ExtensionHostOptions {
     readonly extensions: readonly AppExtension[]
     readonly storage?: StorageBackend
     readonly notifications?: NotificationServiceImpl
+    readonly documentService?: DocumentService
 }
 
 interface ExtensionRuntime {
@@ -27,16 +30,22 @@ interface ExtensionRuntime {
     state: LifecycleRecord["state"]
     error?: ExtensionActivationError
     activation?: Promise<void>
+    transition: Promise<void>
 }
 
 export class ExtensionHost {
-    readonly contributions = new ContributionRegistry()
+    readonly contributions: ContributionRegistry
     readonly notifications: NotificationServiceImpl
+    readonly documentService: DocumentService
     private readonly runtimes = new Map<string, ExtensionRuntime>()
     private readonly storage: StorageBackend
+    private disposing = false
+    private disposal?: Promise<void>
     constructor(options: ExtensionHostOptions) {
         this.storage = options.storage ?? new MemoryStorageBackend()
         this.notifications = options.notifications ?? new NotificationServiceImpl()
+        this.documentService = options.documentService ?? new DocumentService()
+        this.contributions = new ContributionRegistry(this.documentService.adapters)
         const manifests = options.extensions.map((extension) => {
             validateManifest(extension.manifest)
             return extension.manifest
@@ -53,6 +62,7 @@ export class ExtensionHost {
                 lifecycle: new ExtensionLifecycle("enabled"),
                 storage: createExtensionStorage(this.storage, manifest.id),
                 state: "enabled",
+                transition: Promise.resolve(),
             })
         }
     }
@@ -94,6 +104,7 @@ export class ExtensionHost {
     }
 
     async activate(extensionId: string): Promise<void> {
+        if (this.disposing) throw new Error("Extension host is disposing")
         const runtime = this.runtimes.get(extensionId)
         if (!runtime) throw new Error(`Unknown extension: ${extensionId}`)
         if (runtime.state === "active") return
@@ -106,11 +117,22 @@ export class ExtensionHost {
             throw new Error(`Extension is not enabled: ${extensionId}`)
         }
 
-        runtime.activation = this.performActivation(runtime)
+        const activation = this.enqueue(runtime, async () => {
+            if (runtime.state === "active") return
+            if (
+                runtime.state === "failed" ||
+                runtime.state === "disposed" ||
+                runtime.state === "disabled"
+            ) {
+                throw new Error(`Extension is not enabled: ${extensionId}`)
+            }
+            await this.performActivation(runtime)
+        })
+        runtime.activation = activation
         try {
-            await runtime.activation
+            await activation
         } finally {
-            runtime.activation = undefined
+            if (runtime.activation === activation) runtime.activation = undefined
         }
     }
 
@@ -130,31 +152,45 @@ export class ExtensionHost {
         )
     }
 
-    async disable(extensionId: string): Promise<void> {
+    disable(extensionId: string): Promise<void> {
         const runtime = this.requireRuntime(extensionId)
-        runtime.state = "disabled"
-        await runtime.lifecycle.dispose()
-        this.contributions.disposeExtension(extensionId)
+        return this.enqueue(runtime, async () => {
+            if (runtime.state === "disposed" || runtime.state === "disabled") return
+            runtime.state = "disabled"
+            await runtime.lifecycle.dispose()
+            this.contributions.disposeExtension(extensionId)
+        })
     }
 
-    async enable(extensionId: string): Promise<void> {
+    enable(extensionId: string): Promise<void> {
         const runtime = this.requireRuntime(extensionId)
-        if (runtime.state !== "disabled" && runtime.state !== "failed") return
-        runtime.lifecycle = new ExtensionLifecycle("enabled")
-        runtime.state = "enabled"
-        runtime.error = undefined
+        return this.enqueue(runtime, async () => {
+            if (this.disposing || runtime.state === "disposed") {
+                throw new Error(`Extension host is disposing: ${extensionId}`)
+            }
+            if (runtime.state !== "disabled" && runtime.state !== "failed") return
+            runtime.lifecycle = new ExtensionLifecycle("enabled")
+            runtime.state = "enabled"
+            runtime.error = undefined
+        })
     }
 
-    async dispose(): Promise<void> {
+    dispose(): Promise<void> {
+        if (this.disposal) return this.disposal
+        this.disposing = true
         const runtimes = [...this.runtimes.values()]
-        await Promise.all(
-            runtimes.map(async (runtime) => {
-                runtime.state = "disposed"
-                await runtime.lifecycle.dispose()
-                this.contributions.disposeExtension(runtime.extension.manifest.id)
-            }),
-        )
-        this.contributions.dispose()
+        this.disposal = Promise.all(
+            runtimes.map((runtime) =>
+                this.enqueue(runtime, async () => {
+                    runtime.state = "disposed"
+                    await runtime.lifecycle.dispose()
+                    this.contributions.disposeExtension(runtime.extension.manifest.id)
+                }),
+            ),
+        ).then(() => {
+            this.contributions.dispose()
+        })
+        return this.disposal
     }
 
     private async activateForEvent(
@@ -195,6 +231,12 @@ export class ExtensionHost {
         }
     }
 
+    private enqueue(runtime: ExtensionRuntime, operation: () => Promise<void>): Promise<void> {
+        const transition = runtime.transition.then(operation, operation)
+        runtime.transition = transition.catch(() => undefined)
+        return transition
+    }
+
     private requireRuntime(extensionId: string): ExtensionRuntime {
         const runtime = this.runtimes.get(extensionId)
         if (!runtime) throw new Error(`Unknown extension: ${extensionId}`)
@@ -208,26 +250,21 @@ function validateManifest(manifest: ExtensionManifest): void {
         if (!manifest[field].trim())
             throw new Error(`Extension ${manifest.id} has an empty ${field}`)
     }
+    for (const permission of manifest.permissions) validatePermission(permission, manifest.id)
     for (const dependency of Object.keys(manifest.dependencies ?? {})) {
         assertNamespacedId(dependency, "dependency")
     }
     for (const event of manifest.activationEvents) {
         if (event.type === "onCommand" || event.type === "onView") {
-            assertNamespacedId(
-                event.type === "onCommand" ? event.commandId : event.viewId,
-                event.type,
-            )
-            if (
-                !belongsToExtension(
-                    event.type === "onCommand" ? event.commandId : event.viewId,
-                    manifest.id,
-                )
-            ) {
+            const id = event.type === "onCommand" ? event.commandId : event.viewId
+            assertNamespacedId(id, event.type)
+            if (!belongsToExtension(id, manifest.id)) {
                 throw new Error(`Activation event is outside extension namespace ${manifest.id}`)
             }
         }
     }
     const contributions = manifest.contributes
+    const ids = new Set<string>()
     for (const contribution of [
         ...(contributions?.commands ?? []),
         ...(contributions?.settings ?? []),
@@ -240,5 +277,47 @@ function validateManifest(manifest: ExtensionManifest): void {
                 `Contribution ${contribution.id} is outside extension namespace ${manifest.id}`,
             )
         }
+        if (ids.has(contribution.id)) {
+            throw new Error(`Contribution is already declared: ${contribution.id}`)
+        }
+        ids.add(contribution.id)
     }
+    const bindings = new Set<string>()
+    for (const binding of contributions?.keybindings ?? []) {
+        assertNamespacedId(binding.commandId, "command")
+        if (!belongsToExtension(binding.commandId, manifest.id)) {
+            throw new Error(
+                `Keybinding command ${binding.commandId} is outside extension namespace ${manifest.id}`,
+            )
+        }
+        assertValidKeybinding(binding.keybinding, binding.commandId)
+        const key = keybindingKey(binding.keybinding)
+        if (bindings.has(key)) throw new Error(`Keybinding is already declared: ${key}`)
+        bindings.add(key)
+    }
+}
+
+const SUPPORTED_PERMISSIONS: ReadonlySet<ExtensionPermission> = new Set([
+    "storage",
+    "notifications",
+    "commands",
+    "views",
+    "documents",
+    "settings",
+])
+
+function validatePermission(permission: ExtensionPermission, extensionId: string): void {
+    if (!SUPPORTED_PERMISSIONS.has(permission)) {
+        throw new Error(`Unsupported permission for ${extensionId}: ${permission}`)
+    }
+}
+
+function assertValidKeybinding(keybinding: readonly string[], commandId: string): void {
+    if (!keybinding.length || keybinding.some((part) => !part.trim())) {
+        throw new Error(`Command ${commandId} must declare a non-empty keybinding`)
+    }
+}
+
+function keybindingKey(keybinding: readonly string[]): string {
+    return keybinding.map((part) => part.trim().toLowerCase()).join("+")
 }

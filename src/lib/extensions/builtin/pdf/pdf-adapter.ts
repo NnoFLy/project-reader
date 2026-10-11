@@ -6,7 +6,7 @@ import type {
 } from "$lib/document-model"
 import { PagedPdfDocument } from "./pdf-document"
 
-export const PDF_ADAPTER_ID = "builtin.pdf"
+export const PDF_ADAPTER_ID = "builtin.pdf.adapter"
 
 export class PdfDocumentAdapter implements DocumentAdapter {
     readonly id = PDF_ADAPTER_ID

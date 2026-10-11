@@ -12,8 +12,10 @@ import {
     type ViewRegistry,
     type ViewSlot,
 } from "../extension-api"
+import { DocumentAdapterRegistry as CoreDocumentAdapterRegistry } from "../core/documents"
 import { CommandRegistryImpl } from "../core/commands"
 import { SettingsRegistryImpl } from "../core/settings"
+import type { DocumentAdapter as CoreDocumentAdapter } from "../document-model"
 
 class ViewRegistryImpl implements ViewRegistry {
     private readonly views = new Map<string, RegisteredView>()
@@ -67,7 +69,10 @@ class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
     private readonly adapters = new Map<string, RegisteredDocumentAdapter>()
     private disposed = false
 
-    constructor(private readonly extensionId: string) {}
+    constructor(
+        private readonly extensionId: string,
+        private readonly coreRegistry: CoreDocumentAdapterRegistry,
+    ) {}
 
     register(adapter: DocumentAdapter): Disposable {
         if (this.disposed) throw new Error(`Document registry for ${this.extensionId} is disposed`)
@@ -86,13 +91,15 @@ class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
         if (this.adapters.has(adapter.id))
             throw new Error(`Adapter is already registered: ${adapter.id}`)
         const registered = { ...adapter, extensionId: this.extensionId }
+        const coreDisposable = this.coreRegistry.register(registered as CoreDocumentAdapter)
         this.adapters.set(adapter.id, registered)
         let active = true
         return {
             dispose: () => {
                 if (!active) return
                 active = false
-                this.adapters.delete(adapter.id)
+                coreDisposable.dispose()
+                if (this.adapters.get(adapter.id) === registered) this.adapters.delete(adapter.id)
             },
         }
     }
@@ -115,7 +122,9 @@ class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
     }
 
     dispose(): void {
+        if (this.disposed) return
         this.disposed = true
+        for (const adapter of this.adapters.values()) this.coreRegistry.unregister(adapter.id)
         this.adapters.clear()
     }
 }
@@ -131,13 +140,17 @@ export interface ExtensionRegistries {
 export class ContributionRegistry {
     private readonly registries = new Map<string, ExtensionRegistries>()
 
+    constructor(
+        private readonly coreDocumentAdapters: CoreDocumentAdapterRegistry = new CoreDocumentAdapterRegistry(),
+    ) {}
+
     forExtension(extensionId: string): ExtensionRegistries {
         const existing = this.registries.get(extensionId)
         if (existing) return existing
         const commands = new CommandRegistryImpl(extensionId)
         const views = new ViewRegistryImpl(extensionId)
         const settings = new SettingsRegistryImpl(extensionId)
-        const documents = new DocumentAdapterRegistryImpl(extensionId)
+        const documents = new DocumentAdapterRegistryImpl(extensionId, this.coreDocumentAdapters)
         const registries: ExtensionRegistries = {
             commands,
             views,

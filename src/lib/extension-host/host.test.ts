@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { AppExtension } from "../extension-api"
+import type { AppExtension, DocumentAdapter } from "../extension-api"
+import { DocumentService } from "../core/documents"
 import { ExtensionHost } from "./host"
 
 const extension = (id: string, activate: AppExtension["activate"]): AppExtension => ({
@@ -15,7 +16,40 @@ const extension = (id: string, activate: AppExtension["activate"]): AppExtension
     activate,
 })
 
+const adapter: DocumentAdapter = {
+    id: "viewer.test-adapter",
+    extensions: ["test"],
+    mimeTypes: ["application/test"],
+    probe: async () => ({ supported: true }),
+    open: async () => ({
+        kind: "reflowable",
+        metadata: { title: null, author: null },
+        capabilities: new Set(),
+        close: async () => undefined,
+        getSections: async () => [],
+    }),
+}
+
 describe("extension host lifecycle", () => {
+    it("registers document contributions in the core document service", async () => {
+        const documentService = new DocumentService()
+        const registeringExtension = {
+            ...extension("builtin.viewer", ({ documents }) => {
+                documents.register(adapter)
+            }),
+            manifest: {
+                ...extension("builtin.viewer", () => undefined).manifest,
+                contributes: { adapters: [adapter] },
+            },
+        } satisfies AppExtension
+        const host = new ExtensionHost({ extensions: [registeringExtension], documentService })
+        await host.activate("builtin.viewer")
+        expect(documentService.adapters.get(adapter.id)).toMatchObject({ id: adapter.id })
+        expect(host.contributions.listAdapters()).toHaveLength(1)
+        await host.disable("builtin.viewer")
+        expect(documentService.adapters.get(adapter.id)).toBeUndefined()
+    })
+
     it("shares concurrent activation and isolates failures", async () => {
         let activations = 0
         const good = extension("builtin.good", async ({ commands }) => {
@@ -37,5 +71,71 @@ describe("extension host lifecycle", () => {
         ])
         await host.dispose()
         expect(host.record("builtin.good")?.state).toBe("disposed")
+    })
+
+    it("does not resurrect an extension when disable races activation", async () => {
+        let release: (() => void) | undefined
+        const started = new Promise<void>((resolve) => (release = resolve))
+        const racingExtension = extension("builtin.viewer", async ({ commands }) => {
+            await started
+            commands.register({ id: "viewer.race", label: "Race", execute: () => undefined })
+        })
+        const host = new ExtensionHost({ extensions: [racingExtension] })
+        const activation = host.activate("builtin.viewer")
+        const disabling = host.disable("builtin.viewer")
+        release?.()
+        await expect(activation).resolves.toBeUndefined()
+        await disabling
+        expect(host.record("builtin.viewer")?.state).toBe("disabled")
+        expect(host.contributions.listCommands()).toHaveLength(0)
+    })
+
+    it("shares concurrent disposal and rejects registration from disposed contexts", async () => {
+        let register: (() => void) | undefined
+        const disposableExtension = extension("builtin.viewer", ({ commands }) => {
+            register = () => {
+                commands.register({
+                    id: "viewer.after-dispose",
+                    label: "Disposed",
+                    execute: () => undefined,
+                })
+            }
+        })
+        const host = new ExtensionHost({ extensions: [disposableExtension] })
+        await host.activate("builtin.viewer")
+        const first = host.dispose()
+        expect(host.dispose()).toBe(first)
+        await first
+        expect(() => register?.()).toThrow("disposed")
+    })
+
+    it("rejects duplicate manifest keybindings and unknown permissions", () => {
+        const manifest = {
+            ...extension("builtin.viewer", () => undefined).manifest,
+            permissions: ["future"] as never,
+            contributes: {
+                keybindings: [
+                    { commandId: "viewer.open", keybinding: ["Ctrl+O"] },
+                    { commandId: "viewer.close", keybinding: ["ctrl+o"] },
+                ],
+            },
+        }
+        expect(
+            () => new ExtensionHost({ extensions: [{ manifest, activate: () => undefined }] }),
+        ).toThrow("Unsupported permission")
+        expect(
+            () =>
+                new ExtensionHost({
+                    extensions: [
+                        {
+                            manifest: {
+                                ...manifest,
+                                permissions: [],
+                            },
+                            activate: () => undefined,
+                        },
+                    ],
+                }),
+        ).toThrow("Keybinding is already declared")
     })
 })

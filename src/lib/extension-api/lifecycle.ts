@@ -3,6 +3,7 @@ import type { Disposable, Lifecycle, LifecycleState } from "./contracts"
 export class ExtensionLifecycle implements Lifecycle {
     private currentState: LifecycleState
     private disposed = false
+    private disposal?: Promise<void>
     private readonly listeners = new Set<() => void | Promise<void>>()
 
     constructor(initialState: LifecycleState = "enabled") {
@@ -40,12 +41,15 @@ export class ExtensionLifecycle implements Lifecycle {
         return this.disposed
     }
 
-    async dispose(): Promise<void> {
-        if (this.disposed) return
+    dispose(): Promise<void> {
+        if (this.disposal) return this.disposal
         this.disposed = true
         this.currentState = "disposed"
         const listeners = [...this.listeners]
         this.listeners.clear()
-        await Promise.allSettled(listeners.map((listener) => listener()))
+        this.disposal = Promise.allSettled(
+            listeners.map((listener) => Promise.resolve().then(listener)),
+        ).then(() => undefined)
+        return this.disposal
     }
 }
