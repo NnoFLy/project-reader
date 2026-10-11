@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { DocumentService } from "$lib/core/documents"
 import { createBoundedDocumentSource } from "$lib/core/files"
 import { pdfDocumentAdapter } from "$lib/extensions/builtin/pdf"
@@ -28,6 +28,7 @@ function minimalPdf(): Uint8Array {
 describe("PDF adapter integration", () => {
     it("opens a PDF through the generic DocumentService contract", async () => {
         const bytes = minimalPdf()
+        const sourceClose = vi.fn(async () => undefined)
         const source = createBoundedDocumentSource({
             id: "integration-pdf",
             name: "sample.pdf",
@@ -35,6 +36,7 @@ describe("PDF adapter integration", () => {
             mimeType: "application/pdf",
             reader: {
                 read: async (offset, length) => bytes.slice(offset, offset + length).buffer,
+                close: sourceClose,
             },
         })
         const service = new DocumentService()
@@ -45,6 +47,11 @@ describe("PDF adapter integration", () => {
         expect(document.kind).toBe("paged")
         if (document.kind !== "paged") throw new Error("Expected a paged document")
         expect(document.pageCount).toBe(1)
+        expect(document.metadata).toMatchObject({
+            title: null,
+            author: null,
+            pageCount: 1,
+        })
         expect(document.capabilities).toEqual(
             new Set([
                 "text",
@@ -64,5 +71,6 @@ describe("PDF adapter integration", () => {
 
         await service.close(document)
         expect(service.openDocumentCount).toBe(0)
+        expect(sourceClose).toHaveBeenCalledOnce()
     })
 })

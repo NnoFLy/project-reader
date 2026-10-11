@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AppExtension, ExtensionStorage } from "$lib/extension-api"
+import type { AppExtension, DocumentAdapter, ExtensionStorage } from "$lib/extension-api"
 import { ExtensionHost } from "$lib/extension-host"
 import { BUILTIN_MANIFESTS, createBuiltinHost } from "$lib/extensions/builtin"
 import { MemoryStorageBackend } from "$lib/core/storage"
@@ -16,6 +16,42 @@ const integrationExtension = (id: string, activate: AppExtension["activate"]): A
     },
     activate,
 })
+
+const integrationDocumentAdapter = {
+    id: "first.fake",
+    extensions: ["fake"],
+    mimeTypes: ["application/x-fake-document"],
+    probe: async (_source, signal) => {
+        signal?.throwIfAborted()
+        return { supported: true, confidence: 1, format: "fake" }
+    },
+    open: async (source, signal) => {
+        signal?.throwIfAborted()
+        return {
+            kind: "paged" as const,
+            metadata: { title: source.name, author: null, pageCount: 1 },
+            capabilities: new Set(),
+            pageCount: 1,
+            getPage: async (pageNumber: number) => ({
+                pageNumber,
+                width: 600,
+                height: 800,
+            }),
+            renderPage: async (pageNumber: number, options = {}) => {
+                options.signal?.throwIfAborted()
+                const scale = options.scale ?? 1
+                return {
+                    pageNumber,
+                    url: `fake://${encodeURIComponent(source.id)}/${pageNumber}`,
+                    width: 600 * scale,
+                    height: 800 * scale,
+                    mimeType: "image/fake",
+                }
+            },
+            close: async () => source.close?.(),
+        }
+    },
+} satisfies DocumentAdapter
 
 describe("built-in extension host integration", () => {
     it("activates built-in startup extensions and lazy document extensions", async () => {
@@ -53,11 +89,7 @@ describe("built-in extension host integration", () => {
             })
             context.views.register({ id: "first.panel", slot: "workbench.panel" })
             context.settings.register({ id: "first.enabled", label: "Enabled", defaultValue: true })
-            context.documents.register({
-                id: "first.fake",
-                extensions: ["fake"],
-                open: async () => ({ id: "first-document", kind: "paged" }),
-            })
+            context.documents.register(integrationDocumentAdapter)
             await context.storage.namespace("state").set("value", "first")
             context.lifecycle.onDispose(() => {
                 disposed = true
