@@ -1,0 +1,124 @@
+import type {
+    DocumentAdapter,
+    DocumentSource,
+    OpenedDocument,
+    ProbeResult,
+} from "$lib/document-model"
+import { getDocumentExtension, normalizeMimeType } from "$lib/document-model"
+import { DocumentAdapterRegistry } from "./document-adapter-registry"
+
+export class UnsupportedDocumentError extends Error {
+    constructor(source: DocumentSource) {
+        super(`No document adapter supports ${source.name}`)
+        this.name = "UnsupportedDocumentError"
+    }
+}
+
+export class DocumentOpenError extends Error {
+    constructor(adapterId: string, cause: unknown) {
+        super(`Document adapter ${adapterId} failed to open the source`, { cause })
+        this.name = "DocumentOpenError"
+    }
+}
+
+interface Candidate {
+    adapter: DocumentAdapter
+    result: ProbeResult
+    hint: number
+    order: number
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (!signal?.aborted) return
+    throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("The operation was aborted", "AbortError")
+}
+
+function isHintMatch(adapter: DocumentAdapter, source: DocumentSource): boolean {
+    const extension = getDocumentExtension(source.name)
+    const mimeType = normalizeMimeType(source.mimeType)
+    return Boolean(
+        (extension &&
+            adapter.extensions.some(
+                (value) => value.toLowerCase().replace(/^\./, "") === extension,
+            )) ||
+        (mimeType && adapter.mimeTypes.some((value) => normalizeMimeType(value) === mimeType)),
+    )
+}
+
+export class DocumentService {
+    private readonly opened = new Set<OpenedDocument>()
+
+    constructor(readonly adapters: DocumentAdapterRegistry = new DocumentAdapterRegistry()) {}
+
+    async probe(source: DocumentSource, signal?: AbortSignal): Promise<readonly DocumentAdapter[]> {
+        const candidates = await this.probeCandidates(source, signal)
+        return candidates.map(({ adapter }) => adapter)
+    }
+
+    async open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument> {
+        const candidates = await this.probeCandidates(source, signal)
+        const selected = candidates[0]
+        if (!selected) throw new UnsupportedDocumentError(source)
+        throwIfAborted(signal)
+        try {
+            const document = await selected.adapter.open(source, signal)
+            throwIfAborted(signal)
+            this.opened.add(document)
+            return document
+        } catch (error) {
+            if (signal?.aborted)
+                throw signal.reason ?? new DOMException("The operation was aborted", "AbortError")
+            if (error instanceof DocumentOpenError) throw error
+            throw new DocumentOpenError(selected.adapter.id, error)
+        }
+    }
+
+    async close(document: OpenedDocument): Promise<void> {
+        if (!this.opened.delete(document)) return
+        await document.close()
+    }
+
+    async closeAll(): Promise<void> {
+        const documents = [...this.opened]
+        this.opened.clear()
+        const results = await Promise.allSettled(documents.map((document) => document.close()))
+        const rejected = results.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+        )
+        if (rejected) throw rejected.reason
+    }
+
+    get openDocumentCount(): number {
+        return this.opened.size
+    }
+
+    private async probeCandidates(
+        source: DocumentSource,
+        signal?: AbortSignal,
+    ): Promise<readonly Candidate[]> {
+        const adapters = this.adapters.list()
+        const results: Candidate[] = []
+        for (const [order, adapter] of adapters.entries()) {
+            throwIfAborted(signal)
+            const result = await adapter.probe(source, signal)
+            throwIfAborted(signal)
+            if (typeof result === "boolean" ? result : result.supported) {
+                const normalized = typeof result === "boolean" ? { supported: result } : result
+                results.push({
+                    adapter,
+                    result: normalized,
+                    hint: isHintMatch(adapter, source) ? 1 : 0,
+                    order,
+                })
+            }
+        }
+        return results.sort(
+            (left, right) =>
+                (right.result.confidence ?? 0) - (left.result.confidence ?? 0) ||
+                right.hint - left.hint ||
+                left.order - right.order,
+        )
+    }
+}

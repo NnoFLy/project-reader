@@ -1,0 +1,5 @@
+export { DocumentAdapterRegistry } from "./document-adapter-registry"
+export type { Disposable } from "./document-adapter-registry"
+export { DocumentOpenError, DocumentService, UnsupportedDocumentError } from "./document-service"
+export { createFakeDocumentAdapter, FakeDocumentAdapter } from "./fake-document-adapter"
+export type { FakeDocumentOptions } from "./fake-document-adapter"
