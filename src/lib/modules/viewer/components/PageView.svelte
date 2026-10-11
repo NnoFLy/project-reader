@@ -1,6 +1,6 @@
 <script lang="ts">
-    import * as pdfjs from "pdfjs-dist"
-    import { type PDFDocument } from "$lib/modules/pdf"
+    import type { ViewerDocument } from "../viewerDocument"
+    import { renderViewerPageLayers } from "../viewerDocument"
     import { settingsStore } from "$lib/modules/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { searchStore } from "../stores/searchStore.svelte"
@@ -14,9 +14,7 @@
         type SpanRange,
     } from "../stores/notesStore.svelte"
     import { browser } from "$app/environment"
-    import { ViewerLinkService } from "./ViewerLinkService"
     import { untrack, onMount } from "svelte"
-    import { commandsStore } from "$lib/modules/commands"
     import * as m from "$lib/paraglide/messages"
 
     let {
@@ -29,7 +27,7 @@
         renderLayers = true,
         class: className = "",
     } = $props<{
-        pdf: PDFDocument | null
+        pdf: ViewerDocument | null
         pageNumber: number
         image: string | null
         width: number
@@ -45,79 +43,23 @@
     let cachedSpanRanges = $state<SpanRange[] | null>(null)
     let controller: AbortController | null = null
 
-    // PDF.js layers are built once at document scale 1. `scale` is display-only and
-    // reaches the existing image and overlays through --display-scale below.
-    const PDF_LAYER_BASE_SCALE = 1
-
     async function renderPageLayers(
-        targetPdf: PDFDocument,
+        targetPdf: ViewerDocument,
         pageNo: number,
         textContainer: HTMLElement,
         annotationContainer: HTMLDivElement | null,
         signal?: AbortSignal,
     ) {
         try {
-            const { pageProxy, textContent, annotations, viewport } =
-                await targetPdf.getPageDataForRendering(pageNo, PDF_LAYER_BASE_SCALE)
-            if (signal?.aborted) return
-
-            textContainer.innerHTML = ""
-            textContainer.style.setProperty("--scale-factor", PDF_LAYER_BASE_SCALE.toString())
-
-            const textLayer = new pdfjs.TextLayer({
-                textContentSource: textContent,
-                container: textContainer,
-                viewport: viewport.clone({ dontFlip: true }),
+            await renderViewerPageLayers(targetPdf, pageNo, {
+                textContainer,
+                annotationContainer,
+                signal,
+                onNavigate: () => undefined,
             })
-            await textLayer.render()
-            if (signal?.aborted) {
-                textContainer.innerHTML = ""
-                return
-            }
-
+            if (signal?.aborted) return
             cachedSpanRanges = buildSpanRanges(textContainer)
             renderCount += 1
-
-            if (annotationContainer) {
-                annotationContainer.innerHTML = ""
-                if (annotations.length === 0) return
-
-                const linkService = new ViewerLinkService(targetPdf, (targetPage) => {
-                    void commandsStore.execute("viewer.page.go-to", {
-                        page: targetPage,
-                        isJump: true,
-                    })
-                })
-                linkService.page = pageNo
-
-                annotationContainer.style.setProperty(
-                    "--scale-factor",
-                    PDF_LAYER_BASE_SCALE.toString(),
-                )
-
-                const annotationLayer = new pdfjs.AnnotationLayer({
-                    div: annotationContainer,
-                    accessibilityManager: null,
-                    annotationCanvasMap: null,
-                    annotationEditorUIManager: null,
-                    page: pageProxy,
-                    viewport: viewport.clone({ dontFlip: true }),
-                    structTreeLayer: null,
-                })
-
-                await annotationLayer.render({
-                    viewport: viewport.clone({ dontFlip: true }),
-                    div: annotationContainer,
-                    annotations,
-                    page: pageProxy,
-                    linkService,
-                    renderForms: false,
-                })
-
-                if (signal?.aborted) {
-                    annotationContainer.innerHTML = ""
-                }
-            }
         } catch (err) {
             if (signal?.aborted) return
             console.error(`[PageView] Failed to render page layers for page ${pageNo}`, err)

@@ -7,7 +7,7 @@
     import { commandsStore, getShortcutHint, useCommands } from "$lib/modules/commands"
     import { createViewerSidebarCloseCommand } from "../commands/viewerSidebarCloseCommand"
     import { untrack } from "svelte"
-    import type { FlatHeading } from "$lib/modules/pdf"
+    import type { DocumentOutlineEntry } from "$lib/document-model"
     import { Sidebar as GlobalSidebar, SidebarHeader } from "$lib/shared/ui/sidebar"
     import Tabs from "$lib/shared/ui/Tabs.svelte"
     import TabItem from "$lib/shared/ui/TabItem.svelte"
@@ -45,10 +45,10 @@
         presentation?: "docked" | "overlay"
         showBackdrop?: boolean
         isOutlineLoading?: boolean
-        outlineList?: FlatHeading[] | null
+        outlineList?: DocumentOutlineEntry[] | null
         currentPage?: number
         scrollPosition?: number
-        activeHeadings?: Set<FlatHeading>
+        activeHeadings?: Set<DocumentOutlineEntry>
     }>()
 
     const uid = $props.id()

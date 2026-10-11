@@ -1,14 +1,14 @@
 import { SvelteSet } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import { pushState } from "$app/navigation"
-import type { FlatHeading } from "$lib/modules/pdf"
+import type { DocumentOutlineEntry } from "$lib/document-model"
 import { vfsStore } from "$lib/modules/documents"
 import { type Book, fileNodeToBook } from "./viewerStore.types"
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 class ViewerStore {
     private book = $state<Book | null>(null)
-    private outlineList = $state<FlatHeading[] | null>(null)
+    private outlineList = $state<DocumentOutlineEntry[] | null>(null)
     private totalPages = $state<number>(0)
     isOutlineLoading = $state(false)
 
@@ -97,19 +97,20 @@ class ViewerStore {
     get activeOutline() {
         return this.outlineList
     }
-    set activeOutline(list: FlatHeading[] | null) {
+    set activeOutline(list: DocumentOutlineEntry[] | null) {
         this.outlineList = list
     }
 
     activeHeadings = $derived.by(() => {
-        if (!this.outlineList || this.outlineList.length === 0) return new SvelteSet<FlatHeading>()
+        if (!this.outlineList || this.outlineList.length === 0)
+            return new SvelteSet<DocumentOutlineEntry>()
 
         const onCurrentPage = this.outlineList.filter((h) => h.pageNumber === this.currentPage)
         if (onCurrentPage.length > 0) {
-            return new SvelteSet<FlatHeading>(onCurrentPage)
+            return new SvelteSet<DocumentOutlineEntry>(onCurrentPage)
         }
 
-        let precedingCandidate: FlatHeading | null = null
+        let precedingCandidate: DocumentOutlineEntry | null = null
         for (const heading of this.outlineList) {
             if (heading.pageNumber !== undefined && heading.pageNumber < this.currentPage) {
                 if (!precedingCandidate || heading.pageNumber >= precedingCandidate.pageNumber!) {
@@ -118,7 +119,7 @@ class ViewerStore {
             }
         }
 
-        const activeSet = new SvelteSet<FlatHeading>()
+        const activeSet = new SvelteSet<DocumentOutlineEntry>()
         if (precedingCandidate) {
             activeSet.add(precedingCandidate)
         }

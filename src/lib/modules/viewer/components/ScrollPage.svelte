@@ -2,14 +2,12 @@
     const viewerUI = useViewerUI()
     import { useViewerUI } from "../state/viewerUI.svelte"
     import { viewport } from "$lib/shared/state/viewport.svelte"
-    import { type PDFDocument } from "$lib/modules/pdf"
-    import { Page } from "$lib/modules/pdf"
+    import type { ViewerDocument } from "../viewerDocument"
+    import { renderViewerPageLayers } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import * as m from "$lib/paraglide/messages"
     import { untrack } from "svelte"
     import { settingsStore } from "$lib/modules/settings"
-    import * as pdfjs from "pdfjs-dist"
-    import { ViewerLinkService } from "./ViewerLinkService"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { searchStore } from "../stores/searchStore.svelte"
     import {
@@ -21,14 +19,13 @@
         type SpanRange,
     } from "../stores/notesStore.svelte"
     import { browser } from "$app/environment"
-    import { commandsStore } from "$lib/modules/commands"
 
     let isCompactPortrait = $derived(
         viewport.isCompact && viewport.innerWidth <= viewport.innerHeight,
     )
 
     let { pdf, pageNumber, scale, offsetY, width, height, registerSelectionPage } = $props<{
-        pdf: PDFDocument
+        pdf: ViewerDocument
         pageNumber: number
         scale: number
         offsetY: number
@@ -50,7 +47,7 @@
         `width: ${width}px; height: ${height}px; --aspect-ratio: ${width} / ${height}; --display-scale: ${scale};`,
     )
 
-    let bitmapPdf: PDFDocument | null = null
+    let bitmapPdf: ViewerDocument | null = null
     let bitmapPage = -1
 
     $effect(() => {
@@ -71,8 +68,8 @@
             const timeout = setTimeout(() => {
                 isLoading = true
                 currentPdf
-                    .getCanvasPage(new Page(pageNo), quality, controller.signal)
-                    .then((url: string) => {
+                    .renderPage(pageNo, { quality, signal: controller.signal })
+                    .then(({ url }: { url: string }) => {
                         if (controller.signal.aborted) return
                         imageUrl = url
                         isLoading = false
@@ -93,9 +90,7 @@
         })
     })
 
-    // Text and annotation DOM stays at a stable PDF viewport. CSS applies display zoom
-    // to the image and both overlays together through --display-scale.
-    const PDF_LAYER_BASE_SCALE = 1
+    // Adapters may provide native layers; otherwise the generic text capability is used.
 
     $effect(() => {
         if (!textLayerContainer || !annotationLayerContainer || !pdf) return
@@ -108,65 +103,15 @@
 
         const renderLayers = async () => {
             try {
-                const { pageProxy, textContent, annotations, viewport } =
-                    await targetPdf.getPageDataForRendering(pageNo, PDF_LAYER_BASE_SCALE)
-                if (controller.signal.aborted) return
-
-                textContainer.innerHTML = ""
-                textContainer.style.setProperty("--scale-factor", PDF_LAYER_BASE_SCALE.toString())
-
-                const textLayer = new pdfjs.TextLayer({
-                    textContentSource: textContent,
-                    container: textContainer,
-                    viewport: viewport.clone({ dontFlip: true }),
+                await renderViewerPageLayers(targetPdf, pageNo, {
+                    textContainer,
+                    annotationContainer,
+                    signal: controller.signal,
+                    onNavigate: () => undefined,
                 })
-
-                await textLayer.render()
-                if (controller.signal.aborted) {
-                    textContainer.innerHTML = ""
-                    return
-                }
+                if (controller.signal.aborted) return
                 cachedSpanRanges = buildSpanRanges(textContainer)
                 textLayerRenderCount += 1
-
-                annotationContainer.innerHTML = ""
-                if (annotations.length === 0) return
-
-                const linkService = new ViewerLinkService(targetPdf, (targetPage) => {
-                    void commandsStore.execute("viewer.page.go-to", {
-                        page: targetPage,
-                        isJump: true,
-                    })
-                })
-                linkService.page = pageNo
-
-                annotationContainer.style.setProperty(
-                    "--scale-factor",
-                    PDF_LAYER_BASE_SCALE.toString(),
-                )
-
-                const annotationLayer = new pdfjs.AnnotationLayer({
-                    div: annotationContainer,
-                    accessibilityManager: null,
-                    annotationCanvasMap: null,
-                    annotationEditorUIManager: null,
-                    page: pageProxy,
-                    viewport: viewport.clone({ dontFlip: true }),
-                    structTreeLayer: null,
-                })
-
-                await annotationLayer.render({
-                    viewport: viewport.clone({ dontFlip: true }),
-                    div: annotationContainer,
-                    annotations,
-                    page: pageProxy,
-                    linkService,
-                    renderForms: false,
-                })
-
-                if (controller.signal.aborted) {
-                    annotationContainer.innerHTML = ""
-                }
             } catch (err) {
                 if (controller.signal.aborted) return
                 console.error(`[ScrollPage] Failed to render layers for page ${pageNo}`, err)

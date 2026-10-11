@@ -3,7 +3,7 @@
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
-    import type { FlatHeading } from "$lib/modules/pdf"
+    import type { DocumentOutlineEntry } from "$lib/document-model"
     import { KeyboardHandler, commandsStore, useCommands } from "$lib/modules/commands"
     import { createViewerOutlineCommands } from "../commands/viewerOutlineCommands"
     import { MediaQuery } from "svelte/reactivity"
@@ -24,10 +24,10 @@
         interactive = true,
     } = $props<{
         isOutlineLoading: boolean
-        outlineList: FlatHeading[] | null
+        outlineList: DocumentOutlineEntry[] | null
         currentPage: number
         scrollPosition: number
-        activeHeadings: Set<FlatHeading>
+        activeHeadings: Set<DocumentOutlineEntry>
         onClose: () => void
         interactive?: boolean
     }>()
@@ -40,12 +40,12 @@
 
     let normalizedSearchQuery = $derived(searchQuery.toLowerCase())
     let filteredOutlineList = $derived(
-        outlineList?.filter((heading: FlatHeading) =>
+        outlineList?.filter((heading: DocumentOutlineEntry) =>
             heading.title.toLowerCase().includes(normalizedSearchQuery),
         ) ?? [],
     )
 
-    async function selectHeading(heading: FlatHeading) {
+    async function selectHeading(heading: DocumentOutlineEntry) {
         if (heading.pageNumber === undefined) return
 
         if (window.innerWidth <= 480) {
@@ -61,7 +61,7 @@
     }
 
     let selectedIndex = $derived.by(() => {
-        const activeIndex = filteredOutlineList.findIndex((heading: FlatHeading) =>
+        const activeIndex = filteredOutlineList.findIndex((heading: DocumentOutlineEntry) =>
             activeHeadings.has(heading),
         )
         let automaticIndex = activeIndex
@@ -176,7 +176,11 @@
     let contentRef: HTMLElement | undefined = $state()
     let hasScrolledInitially = false
 
-    function trackOutlineSelection(_index: number, _items: FlatHeading[], loading: boolean) {
+    function trackOutlineSelection(
+        _index: number,
+        _items: DocumentOutlineEntry[],
+        loading: boolean,
+    ) {
         return (content: HTMLElement) => {
             contentRef = content
             const frame = requestAnimationFrame(() => {

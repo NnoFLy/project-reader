@@ -1,9 +1,9 @@
 <script lang="ts">
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
-    import * as pdfjs from "pdfjs-dist"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
-    import { type PDFDocument } from "$lib/modules/pdf"
+    import type { ViewerDocument } from "../viewerDocument"
+    import { renderViewerPageLayers } from "../viewerDocument"
     import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { safeStorageGet } from "$lib/shared/state/safeStorage"
@@ -57,7 +57,7 @@
         container?: HTMLElement | null
         layoutMode?: "single" | "split" | "scroll"
         scale?: number
-        pdf: PDFDocument | null
+        pdf: ViewerDocument | null
         currentPageDim1?: { width: number; height: number } | null
         currentPageDim2?: { width: number; height: number } | null
         renderLayers?: boolean
@@ -803,35 +803,26 @@
         })
     })
 
-    // PDF.js layers use a stable base viewport. The reactive page scales only update
-    // wrapper geometry and --display-scale, preserving DOM ranges while zooming.
-    const PDF_LAYER_BASE_SCALE = 1
-
     async function renderPageLayers(
-        targetPdf: PDFDocument,
+        targetPdf: ViewerDocument,
         pageNo: number,
         textContainer: HTMLElement,
         annotationContainer: HTMLDivElement | null,
         signal?: AbortSignal,
     ) {
         try {
-            const { pageProxy, textContent, annotations, viewport } =
-                await targetPdf.getPageDataForRendering(pageNo, PDF_LAYER_BASE_SCALE)
-            if (signal?.aborted) return
-
-            textContainer.innerHTML = ""
-            textContainer.style.setProperty("--scale-factor", PDF_LAYER_BASE_SCALE.toString())
-
-            const textLayer = new pdfjs.TextLayer({
-                textContentSource: textContent,
-                container: textContainer,
-                viewport: viewport.clone({ dontFlip: true }),
+            await renderViewerPageLayers(targetPdf, pageNo, {
+                textContainer,
+                annotationContainer,
+                signal,
+                onNavigate: (targetPage) => {
+                    void commandsStore.execute("viewer.page.go-to", {
+                        page: targetPage,
+                        isJump: true,
+                    })
+                },
             })
-            await textLayer.render()
-            if (signal?.aborted) {
-                textContainer.innerHTML = ""
-                return
-            }
+            if (signal?.aborted) return
 
             if (textContainer === textLayer1) {
                 cachedSpanRanges1 = buildSpanRanges(textContainer)
@@ -839,47 +830,6 @@
             } else if (textContainer === textLayer2) {
                 cachedSpanRanges2 = buildSpanRanges(textContainer)
                 textLayer2RenderCount += 1
-            }
-
-            if (annotationContainer) {
-                annotationContainer.innerHTML = ""
-                if (annotations.length === 0) return
-
-                const linkService = new ViewerLinkService(targetPdf, (targetPage) => {
-                    void commandsStore.execute("viewer.page.go-to", {
-                        page: targetPage,
-                        isJump: true,
-                    })
-                })
-                linkService.page = pageNo
-
-                annotationContainer.style.setProperty(
-                    "--scale-factor",
-                    PDF_LAYER_BASE_SCALE.toString(),
-                )
-
-                const annotationLayer = new pdfjs.AnnotationLayer({
-                    div: annotationContainer,
-                    accessibilityManager: null,
-                    annotationCanvasMap: null,
-                    annotationEditorUIManager: null,
-                    page: pageProxy,
-                    viewport: viewport.clone({ dontFlip: true }),
-                    structTreeLayer: null,
-                })
-
-                await annotationLayer.render({
-                    viewport: viewport.clone({ dontFlip: true }),
-                    div: annotationContainer,
-                    annotations,
-                    page: pageProxy,
-                    linkService,
-                    renderForms: false,
-                })
-
-                if (signal?.aborted) {
-                    annotationContainer.innerHTML = ""
-                }
             }
         } catch (err) {
             if (signal?.aborted) return

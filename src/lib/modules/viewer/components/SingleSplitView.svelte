@@ -1,7 +1,7 @@
 <script lang="ts">
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
-    import { type PDFDocument } from "$lib/modules/pdf"
+    import type { ViewerDocument } from "../viewerDocument"
     import PageView from "./PageView.svelte"
 
     let {
@@ -17,7 +17,7 @@
         pageScale2,
         renderLayers,
     } = $props<{
-        pdf: PDFDocument | null
+        pdf: ViewerDocument | null
         isPageLoading: boolean
         layoutMode: "single" | "split"
         currentPage: number

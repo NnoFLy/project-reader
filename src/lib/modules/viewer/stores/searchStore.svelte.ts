@@ -1,8 +1,7 @@
 import { SvelteMap } from "svelte/reactivity"
 import { viewerStore } from "./viewerStore.svelte"
 import { vfsStore } from "$lib/modules/documents"
-import { createSearchWorker, type PDFDocument } from "$lib/modules/pdf"
-import { browser } from "$app/environment"
+import type { ViewerDocument } from "../viewerDocument"
 import { getSafeStorage } from "$lib/shared/state/safeStorage"
 import { untrack } from "svelte"
 import {
@@ -37,7 +36,7 @@ export class SearchStore {
     searchStartPage = $state<number | null>(null)
 
     private readonly historyRepository: SearchHistoryRepository
-    private currentPdf: PDFDocument | null = null
+    private currentPdf: ViewerDocument | null = null
     private currentBookId: string | null = null
 
     constructor(
@@ -60,7 +59,6 @@ export class SearchStore {
         const query = this.query
         this.searchRequestId += 1
         this.documentGeneration += 1
-        this.workerCorpusGeneration = -1
         this.matches = []
         this.notifyMatchesChanged()
         this._currentMatchIndex = -1
@@ -71,10 +69,6 @@ export class SearchStore {
         this.currentSearchAbortController = null
         this.indexingAbortController?.abort()
         this.indexingAbortController = null
-        if (this.worker) {
-            this.worker.terminate()
-            this.worker = null
-        }
         this.isActive = Boolean(query.trim())
         this.isIndexing = false
         this.updateCSSHighlights()
@@ -103,11 +97,9 @@ export class SearchStore {
     private searchTimeoutId: any = null
     private currentSearchAbortController: AbortController | null = null
     private indexingAbortController: AbortController | null = null
-    private worker: Worker | null = null
     private readonly vfsUnsubscribe: () => void
     private searchRequestId = 0
     private documentGeneration = 0
-    private workerCorpusGeneration = -1
     private matchesChangedListeners = new Set<() => void>()
 
     onMatchesChanged(listener: () => void) {
@@ -119,13 +111,12 @@ export class SearchStore {
         for (const listener of this.matchesChangedListeners) listener()
     }
 
-    initPdf({ pdf, bookId }: { pdf: PDFDocument; bookId: string }) {
+    initDocument({ pdf, bookId }: { pdf: ViewerDocument; bookId: string }) {
         if (this.currentPdf === pdf && this.currentBookId === bookId) return
         this.currentPdf = pdf
         this.currentBookId = bookId
         this.searchRequestId += 1
         this.documentGeneration += 1
-        this.workerCorpusGeneration = -1
 
         this.isActive = false
         this.query = ""
@@ -150,11 +141,6 @@ export class SearchStore {
         this.indexingAbortController?.abort()
         this.indexingAbortController = null
 
-        if (this.worker) {
-            this.worker.terminate()
-            this.worker = null
-        }
-
         this.isIndexing = false
     }
 
@@ -168,7 +154,7 @@ export class SearchStore {
         const controller = new AbortController()
         this.indexingAbortController = controller
         const { signal } = controller
-        const totalPages = pdf.pagesCount
+        const totalPages = pdf.pageCount
         const generation = vfsStore.getContentGeneration(bookId)
 
         try {
@@ -227,7 +213,7 @@ export class SearchStore {
                 for (let attempt = 0; attempt < 2; attempt += 1) {
                     if (!isCurrent()) return null
                     try {
-                        return await pdf.getTextContent(pageNumber, true)
+                        return await pdf.getText(pageNumber)
                     } catch (error) {
                         if (attempt === 1) {
                             console.warn(
@@ -248,7 +234,7 @@ export class SearchStore {
                     const textContent = await extractPage(pageNumber)
                     if (!isCurrent()) return
                     if (!textContent) continue
-                    const text = textContent.items.map((item: any) => item.str).join("")
+                    const text = textContent.map((item) => item.text).join("")
                     this.pageTexts.set(pageNumber, { original: text })
                     recordsToSave.push({ pageNumber, text })
                     if (recordsToSave.length >= 25) await flushRecords()
@@ -295,8 +281,6 @@ export class SearchStore {
             this.currentSearchAbortController.abort()
             this.currentSearchAbortController = null
         }
-        this.worker?.postMessage({ type: "cancel", payload: { searchId: this.searchRequestId } })
-
         const trimmed = newQuery.trim()
         if (!trimmed) {
             this.isActive = false
@@ -318,90 +302,58 @@ export class SearchStore {
             return
         }
         this.searchTimeoutId = setTimeout(() => {
-            this.runWorkerSearch(trimmed)
+            void this.runSearch(trimmed)
         }, 150)
     }
 
-    private async runWorkerSearch(q: string) {
-        if (!browser) return
-
-        const pdf = this.currentPdf
+    private async runSearch(q: string) {
+        const document = this.currentPdf
         const bookId = this.currentBookId
         const searchId = this.searchRequestId
         const controller = new AbortController()
         this.currentSearchAbortController = controller
-
-        if (!this.worker) {
-            const worker = await createSearchWorker()
-            if (
-                controller.signal.aborted ||
-                this.currentPdf !== pdf ||
-                this.currentBookId !== bookId ||
-                this.query.trim() !== q ||
-                this.searchRequestId !== searchId
-            ) {
-                worker.terminate()
-                return
-            }
-            this.worker = worker
-            this.workerCorpusGeneration = -1
-        }
-
-        if (this.workerCorpusGeneration !== this.documentGeneration) {
-            const pages: Record<number, string> = {}
-            for (const [pageNumber, page] of this.pageTexts) pages[pageNumber] = page.original
-            this.worker.postMessage({
-                type: "replace-corpus",
-                payload: { generation: this.documentGeneration, pages },
-            })
-            this.workerCorpusGeneration = this.documentGeneration
-        }
-
-        this.matches = []
-        this.notifyMatchesChanged()
-        this._currentMatchIndex = -1
-        this.isSearching = true
-
-        this.worker.onmessage = (e) => {
-            if (
-                controller.signal.aborted ||
-                this.currentPdf !== pdf ||
-                this.currentBookId !== bookId ||
-                this.query.trim() !== q ||
-                this.searchRequestId !== searchId
-            ) {
-                return
-            }
-            const { type, payload } = e.data
-            if (type === "results") {
-                const { matches, isPartial, searchId: resultSearchId } = payload
-                if (resultSearchId !== searchId) return
-                this.matches = [...this.matches, ...matches]
-                if (!isPartial) {
-                    this.isSearching = false
-                    this.currentSearchAbortController = null
-                }
-                this.notifyMatchesChanged()
-
-                const startPage = this.searchStartPage ?? 1
-                const nearestIdx = this.findNearestMatchIndex(this.matches, startPage)
-                if (nearestIdx !== -1 && nearestIdx !== this._currentMatchIndex) {
-                    this._currentMatchIndex = nearestIdx
-                    this.goToCurrentMatch()
-                }
-                this.updateCSSHighlights()
-            }
-        }
-
-        this.worker.postMessage({
-            type: "query",
-            payload: {
-                generation: this.documentGeneration,
-                query: q,
-                searchStartPage: this.searchStartPage ?? 1,
-                searchId,
-            },
+        const normalizedQuery = q.toLocaleLowerCase()
+        const startPage = this.searchStartPage ?? 1
+        const pageNumbers = [...this.pageTexts.keys()].sort((a, b) => {
+            const distanceA = a >= startPage ? a - startPage : a + this.pageTexts.size
+            const distanceB = b >= startPage ? b - startPage : b + this.pageTexts.size
+            return distanceA - distanceB
         })
+        const matches: SearchMatch[] = []
+
+        for (const pageNumber of pageNumbers) {
+            if (
+                controller.signal.aborted ||
+                this.currentPdf !== document ||
+                this.currentBookId !== bookId ||
+                this.query.trim() !== q ||
+                this.searchRequestId !== searchId
+            )
+                return
+            const text = this.pageTexts.get(pageNumber)?.original.toLocaleLowerCase() ?? ""
+            let index = text.indexOf(normalizedQuery)
+            while (index !== -1 && matches.length < 10000) {
+                matches.push({ pageNumber, start: index, end: index + normalizedQuery.length })
+                index = text.indexOf(normalizedQuery, index + 1)
+            }
+            if (matches.length >= 10000) break
+            await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        }
+
+        if (
+            controller.signal.aborted ||
+            this.currentPdf !== document ||
+            this.currentBookId !== bookId ||
+            this.searchRequestId !== searchId
+        )
+            return
+        this.matches = matches
+        this.isSearching = false
+        this.currentSearchAbortController = null
+        this.notifyMatchesChanged()
+        this._currentMatchIndex = this.findNearestMatchIndex(matches, startPage)
+        if (this._currentMatchIndex !== -1) this.goToCurrentMatch()
+        this.updateCSSHighlights()
     }
 
     selectMatch(query: string, matchIndex: number): SearchMatch | undefined {
@@ -571,7 +523,6 @@ export class SearchStore {
     reset() {
         this.searchRequestId += 1
         this.documentGeneration += 1
-        this.workerCorpusGeneration = -1
         this.currentPdf = null
         this.currentBookId = null
         this.isActive = false
@@ -595,11 +546,6 @@ export class SearchStore {
         }
         this.indexingAbortController?.abort()
         this.indexingAbortController = null
-        if (this.worker) {
-            this.worker.postMessage({ type: "dispose" })
-            this.worker.terminate()
-            this.worker = null
-        }
         if (this.highlightFrameId !== null && typeof cancelAnimationFrame !== "undefined") {
             cancelAnimationFrame(this.highlightFrameId)
             this.highlightFrameId = null

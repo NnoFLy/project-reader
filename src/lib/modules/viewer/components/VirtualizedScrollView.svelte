@@ -1,6 +1,6 @@
 <script lang="ts">
     import { viewport } from "$lib/shared/state/viewport.svelte"
-    import { type PDFDocument } from "$lib/modules/pdf"
+    import type { ViewerDocument } from "../viewerDocument"
     import ScrollPage from "./ScrollPage.svelte"
 
     let {
@@ -15,7 +15,7 @@
         getPageHeight,
         PAGE_GAP,
     } = $props<{
-        pdf: PDFDocument | null
+        pdf: ViewerDocument | null
         pageDimensions: { width: number; height: number }[]
         pageOffsets: number[]
         visibleRange: number[]

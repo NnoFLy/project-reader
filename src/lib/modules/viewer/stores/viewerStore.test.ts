@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("$app/environment", () => ({ browser: false }))
-vi.mock("$lib/modules/pdf", () => ({ PDFDocument: class {} }))
 
 import { vfsStore } from "$lib/modules/documents"
 import { viewerStore } from "./viewerStore.svelte"

@@ -1,20 +1,18 @@
-import { type PDFDocument } from "$lib/modules/pdf"
-import type { IPDFLinkService } from "pdfjs-dist/types/web/interfaces"
+import type { ViewerDocument } from "../viewerDocument"
 
-export class ViewerLinkService implements IPDFLinkService {
-    private pdfDoc: PDFDocument
-    private onNavigate: (pageNumber: number) => void
-    private _page: number = 1
-    private _rotation: number = 0
-    private _externalLinkEnabled: boolean = true
+/** Minimal link navigation bridge for viewer-owned document layer capabilities. */
+export class ViewerLinkService {
+    private _page = 1
+    private _rotation = 0
+    private _externalLinkEnabled = true
 
-    constructor(pdfDoc: PDFDocument, onNavigate: (pageNumber: number) => void) {
-        this.pdfDoc = pdfDoc
-        this.onNavigate = onNavigate
-    }
+    constructor(
+        private readonly document: ViewerDocument,
+        private readonly onNavigate: (pageNumber: number) => void,
+    ) {}
 
     get pagesCount(): number {
-        return this.pdfDoc.pagesCount
+        return this.document.pageCount
     }
 
     get page(): number {
@@ -45,46 +43,34 @@ export class ViewerLinkService implements IPDFLinkService {
         this._externalLinkEnabled = value
     }
 
-    async goToDestination(dest: string | any[]): Promise<void> {
-        const pageNumber = await this.pdfDoc.resolveDestinationToPage(dest)
-        if (pageNumber !== undefined && pageNumber >= 1 && pageNumber <= this.pagesCount) {
+    goToPage(value: number | string): void {
+        const pageNumber = typeof value === "string" ? Number.parseInt(value, 10) : value
+        if (Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= this.pagesCount) {
             this.onNavigate(pageNumber)
         }
     }
 
-    goToPage(val: number | string): void {
-        const pageNumber = typeof val === "string" ? parseInt(val, 10) : val
-        if (!isNaN(pageNumber) && pageNumber >= 1 && pageNumber <= this.pagesCount) {
-            this.onNavigate(pageNumber)
-        }
-    }
-
-    addLinkAttributes(link: HTMLAnchorElement, url: string, _newWindow?: boolean): void {
+    addLinkAttributes(link: HTMLAnchorElement, url: string): void {
         const isSafeProtocol = /^(https?:|mailto:|tel:)/i.test(url)
         link.href = isSafeProtocol ? url : "#"
         link.target = "_blank"
         link.rel = "noopener noreferrer"
     }
 
-    getDestinationHash(_dest: any): string {
+    getDestinationHash(): string {
         return "#"
     }
 
-    getAnchorUrl(_hash: any): string {
+    getAnchorUrl(): string {
         return "#"
     }
 
-    setHash(_hash: string): void {}
+    setHash(): void {}
 
     executeNamedAction(action: string): void {
-        if (action === "NextPage") {
-            this.goToPage(this.page + 1)
-        } else if (action === "PrevPage") {
-            this.goToPage(this.page - 1)
-        } else {
-            console.log("[ViewerLinkService] Named action:", action)
-        }
+        if (action === "NextPage") this.goToPage(this.page + 1)
+        else if (action === "PrevPage") this.goToPage(this.page - 1)
     }
 
-    executeSetOCGState(_action: object): void {}
+    executeSetOCGState(): void {}
 }

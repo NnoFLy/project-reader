@@ -1,4 +1,4 @@
-import { Page, type PDFDocument } from "$lib/modules/pdf"
+import type { ViewerDocument } from "../viewerDocument"
 import {
     executePageRenderPlan,
     type PageRenderPlanEntry,
@@ -11,7 +11,7 @@ export interface BookViewerBitmapResult {
     dimension: { width: number; height: number } | null
 }
 
-type BitmapPdf = Pick<PDFDocument, "getCanvasPage" | "getPageDimension">
+type BitmapDocument = Pick<ViewerDocument, "renderPage" | "getPage">
 
 export async function renderBookViewerBitmaps({
     pdf,
@@ -22,7 +22,7 @@ export async function renderBookViewerBitmaps({
     publish,
     onBackgroundError,
 }: {
-    pdf: BitmapPdf
+    pdf: BitmapDocument
     quality: number
     plan: readonly PageRenderPlanEntry[]
     signal: AbortSignal
@@ -38,9 +38,12 @@ export async function renderBookViewerBitmaps({
         signal,
         skipCurrent,
         render: async (pageNumber, renderSignal, role) => {
-            const image = await pdf.getCanvasPage(new Page(pageNumber), quality, renderSignal)
-            const dimension = role === "lookahead" ? null : await pdf.getPageDimension(pageNumber)
-            return { pageNumber, image, dimension }
+            const rendered = await pdf.renderPage(pageNumber, {
+                quality,
+                signal: renderSignal,
+            })
+            const dimension = role === "lookahead" ? null : await pdf.getPage(pageNumber)
+            return { pageNumber, image: rendered.url, dimension }
         },
         publish,
         onBackgroundError,

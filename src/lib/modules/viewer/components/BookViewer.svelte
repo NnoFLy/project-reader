@@ -3,8 +3,9 @@
 
     const viewerUI = mountViewerUI()
     import { viewport } from "$lib/shared/state/viewport.svelte"
-    import { PDFDocument, Page } from "$lib/modules/pdf"
-    import type { FlatHeading } from "$lib/modules/pdf"
+    import type { DocumentOutlineEntry } from "$lib/document-model"
+    import type { ViewerDocument } from "../viewerDocument"
+    import { getViewerDocumentLoader } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import * as m from "$lib/paraglide/messages"
@@ -335,12 +336,12 @@
     const url = $derived(currentBook?.url ?? "")
     const name = $derived(currentBook?.name ?? "")
 
-    let pdf = $state.raw<PDFDocument | null>(null)
+    let pdf = $state.raw<ViewerDocument | null>(null)
     let isLoaded = $state(false)
     let gestureHintDismissed = $state(true)
 
     let lastPageNo = 1
-    let lastBitmapPdf: PDFDocument | null = null
+    let lastBitmapPdf: ViewerDocument | null = null
     let lastBitmapLayout: "single" | "split" | "scroll" | null = null
     let lastBitmapQuality: number | null = null
     let currentPageImage = $state<string | null>(null)
@@ -598,18 +599,18 @@
         }
     })
 
-    let outlineList = $state<FlatHeading[] | null>(null)
+    let outlineList = $state<DocumentOutlineEntry[] | null>(null)
     let isOutlineLoading = $state(false)
 
     let activeHeadings = $derived.by(() => {
-        if (!outlineList || outlineList.length === 0) return new Set<FlatHeading>()
+        if (!outlineList || outlineList.length === 0) return new Set<DocumentOutlineEntry>()
 
         const onCurrentPage = outlineList.filter((h) => h.pageNumber === viewerStore.currentPage)
         if (onCurrentPage.length > 0) {
-            return new Set<FlatHeading>(onCurrentPage)
+            return new Set<DocumentOutlineEntry>(onCurrentPage)
         }
 
-        let precedingCandidate: FlatHeading | null = null
+        let precedingCandidate: DocumentOutlineEntry | null = null
         for (const heading of outlineList) {
             if (heading.pageNumber !== undefined && heading.pageNumber < viewerStore.currentPage) {
                 if (!precedingCandidate || heading.pageNumber >= precedingCandidate.pageNumber!) {
@@ -618,7 +619,7 @@
             }
         }
 
-        const activeSet = new Set<FlatHeading>()
+        const activeSet = new Set<DocumentOutlineEntry>()
         if (precedingCandidate) {
             activeSet.add(precedingCandidate)
         }
@@ -642,7 +643,7 @@
         }
 
         let canceled = false
-        let loadedDoc: PDFDocument | null = null
+        let loadedDoc: ViewerDocument | null = null
         let closeLoadedDoc: (() => Promise<void>) | null = null
         const loadingBookId = bookId
         const loadingContentGeneration = vfsStore.getContentGeneration(bookId)
@@ -656,7 +657,7 @@
             viewerStore.scrollPosition = currentBook?.scrollPosition || 0
 
             const loadPdf = async (pdfUrl: string) => {
-                let doc: PDFDocument | null = null
+                let doc: ViewerDocument | null = null
                 let closed = false
                 const closeDoc = async () => {
                     if (closed || !doc) return
@@ -666,9 +667,12 @@
                 closeLoadedDoc = closeDoc
 
                 try {
-                    const currentDoc = new PDFDocument(pdfUrl)
+                    const currentDoc = await getViewerDocumentLoader().open({
+                        id: loadingBookId,
+                        name: viewerStore.getCurrentBook()?.name ?? "document",
+                        url: pdfUrl,
+                    })
                     doc = currentDoc
-                    await currentDoc.load(settingsStore.scale)
 
                     if (
                         canceled ||
@@ -680,10 +684,8 @@
                     }
                     loadedDoc = currentDoc
                     pdf = currentDoc
-                    const [pagesCount, author] = await Promise.all([
-                        currentDoc.getPageNumber(),
-                        currentDoc.getAuthor(),
-                    ])
+                    const pagesCount = currentDoc.pageCount
+                    const author = currentDoc.metadata.author
                     if (
                         canceled ||
                         viewerStore.getCurrentBook()?.id !== loadingBookId ||
@@ -701,7 +703,7 @@
                         viewerStore.currentPage = 1
                     }
                     isLoaded = true
-                    searchStore.initPdf({ pdf: currentDoc, bookId })
+                    searchStore.initDocument({ pdf: currentDoc, bookId })
 
                     const currentBook = viewerStore.getCurrentBook()
                     if (
@@ -917,8 +919,10 @@
             for (const nextPageNo of nextPages) {
                 if (nextPageNo <= totalPages && !controller.signal.aborted) {
                     try {
-                        const page = new Page(nextPageNo)
-                        await currentPdf.getCanvasPage(page, quality, controller.signal)
+                        await currentPdf.renderPage(nextPageNo, {
+                            quality,
+                            signal: controller.signal,
+                        })
                     } catch (err) {
                         // Silently ignore abortion/cancellation errors
                     }
@@ -936,7 +940,7 @@
         searchStore.reset()
     })
 
-    let lastPdf: PDFDocument | null = null
+    let lastPdf: ViewerDocument | null = null
 
     $effect(() => {
         const currentPdf = pdf
@@ -965,10 +969,10 @@
             }
             const loadOutline = async () => {
                 try {
-                    const list = await currentPdf.getOutline()
+                    const list = (await currentPdf.getOutline?.()) ?? null
                     if (!canceled) {
                         untrack(() => {
-                            outlineList = list
+                            outlineList = list ? [...list] : null
                             isOutlineLoading = false
                         })
                     }
@@ -1258,8 +1262,8 @@
                                                 : settingsStore.scale}
                                             defaultScale={DEFAULT_SETTINGS.scale}
                                             defaultPageDimension={{
-                                                width: pdf?.defaultWidth || 612,
-                                                height: pdf?.defaultHeight || 792,
+                                                width: 612,
+                                                height: 792,
                                             }}
                                             isCompactPortrait={viewport.innerWidth <=
                                                 viewport.innerHeight}
@@ -1301,8 +1305,8 @@
                                                 : settingsStore.scale}
                                             defaultScale={DEFAULT_SETTINGS.scale}
                                             defaultPageDimension={{
-                                                width: pdf?.defaultWidth || 612,
-                                                height: pdf?.defaultHeight || 792,
+                                                width: 612,
+                                                height: 792,
                                             }}
                                             isCompactPortrait={viewport.innerWidth <=
                                                 viewport.innerHeight}

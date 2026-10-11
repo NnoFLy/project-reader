@@ -1,15 +1,23 @@
 import { describe, expect, it, vi } from "vitest"
-import { Page } from "$lib/modules/pdf"
 import { renderBookViewerBitmaps } from "./bookViewerPreload"
 import { createPageRenderPlan } from "./pageSliderPolicy"
 
-function createPdf(controller?: AbortController, abortOnPage?: number) {
+function createDocument(controller?: AbortController, abortOnPage?: number) {
     return {
-        getCanvasPage: vi.fn(async (page: Page, quality: number, _signal: AbortSignal) => {
-            if (page.pageNumber === abortOnPage) controller?.abort()
-            return `blob:${page.pageNumber}@${quality}`
-        }),
-        getPageDimension: vi.fn(async (pageNumber: number) => ({
+        renderPage: vi.fn(
+            async (pageNumber: number, options: { quality?: number; signal?: AbortSignal }) => {
+                if (pageNumber === abortOnPage) controller?.abort()
+                return {
+                    pageNumber,
+                    url: `blob:${pageNumber}@${options.quality}`,
+                    width: 600 + pageNumber,
+                    height: 900 + pageNumber,
+                    mimeType: "image/webp",
+                }
+            },
+        ),
+        getPage: vi.fn(async (pageNumber: number) => ({
+            pageNumber,
             width: 600 + pageNumber,
             height: 900 + pageNumber,
         })),
@@ -17,10 +25,10 @@ function createPdf(controller?: AbortController, abortOnPage?: number) {
 }
 
 describe("BookViewer bitmap preload wiring", () => {
-    it("passes exact PDF render arguments once and suppresses stale publication", async () => {
+    it("passes exact document render arguments once and suppresses stale publication", async () => {
         const controller = new AbortController()
         const quality = 2
-        const pdf = createPdf(controller, 7)
+        const document = createDocument(controller, 7)
         const plan = createPageRenderPlan({
             currentPage: 5,
             totalPages: 12,
@@ -30,43 +38,43 @@ describe("BookViewer bitmap preload wiring", () => {
         const publish = vi.fn()
 
         await renderBookViewerBitmaps({
-            pdf,
+            pdf: document,
             quality,
             plan,
             signal: controller.signal,
             publish,
         })
 
-        const submittedPages = pdf.getCanvasPage.mock.calls.map(([page]) => page.pageNumber)
+        const submittedPages = document.renderPage.mock.calls.map(([page]) => page)
         expect(submittedPages).toEqual([5, 6, 3, 4, 7])
         expect(new Set(submittedPages).size).toBe(submittedPages.length)
-        for (const [page, submittedQuality, signal] of pdf.getCanvasPage.mock.calls) {
-            expect(page).toBeInstanceOf(Page)
-            expect(submittedQuality).toBe(quality)
-            expect(signal).toBe(controller.signal)
+        for (const [page, options] of document.renderPage.mock.calls) {
+            expect(page).toBeTypeOf("number")
+            expect(options.quality).toBe(quality)
+            expect(options.signal).toBe(controller.signal)
         }
         expect(publish).toHaveBeenCalledWith("current", [
             {
                 pageNumber: 5,
                 image: "blob:5@2",
-                dimension: { width: 605, height: 905 },
+                dimension: { pageNumber: 5, width: 605, height: 905 },
             },
             {
                 pageNumber: 6,
                 image: "blob:6@2",
-                dimension: { width: 606, height: 906 },
+                dimension: { pageNumber: 6, width: 606, height: 906 },
             },
         ])
         expect(publish).toHaveBeenCalledWith("previous", [
             {
                 pageNumber: 3,
                 image: "blob:3@2",
-                dimension: { width: 603, height: 903 },
+                dimension: { pageNumber: 3, width: 603, height: 903 },
             },
             {
                 pageNumber: 4,
                 image: "blob:4@2",
-                dimension: { width: 604, height: 904 },
+                dimension: { pageNumber: 4, width: 604, height: 904 },
             },
         ])
         expect(publish).not.toHaveBeenCalledWith("next", expect.anything())
@@ -74,7 +82,7 @@ describe("BookViewer bitmap preload wiring", () => {
 
     it("publishes one overlapping split render into current and previous spreads", async () => {
         const controller = new AbortController()
-        const pdf = createPdf()
+        const document = createDocument()
         const publish = vi.fn()
         const plan = createPageRenderPlan({
             currentPage: 2,
@@ -84,14 +92,14 @@ describe("BookViewer bitmap preload wiring", () => {
         })
 
         await renderBookViewerBitmaps({
-            pdf,
+            pdf: document,
             quality: 1.5,
             plan,
             signal: controller.signal,
             publish,
         })
 
-        const submittedPages = pdf.getCanvasPage.mock.calls.map(([page]) => page.pageNumber)
+        const submittedPages = document.renderPage.mock.calls.map(([page]) => page)
         expect(submittedPages.filter((pageNumber) => pageNumber === 2)).toHaveLength(1)
         expect(new Set(submittedPages).size).toBe(submittedPages.length)
         expect(publish).toHaveBeenCalledWith(
