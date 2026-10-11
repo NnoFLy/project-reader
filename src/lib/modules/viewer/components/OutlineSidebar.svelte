@@ -226,7 +226,21 @@
             {m.no_outline()}
         </div>
     {:else if filteredOutlineList.length === 0}
-        <div class="no-outline">{m.no_matching_headings()}</div>
+        <div class="no-outline no-outline-actions">
+            <span>{m.no_matching_headings()}</span>
+            <Button
+                variant="ghost"
+                size="small"
+                onclick={() => {
+                    searchQuery = ""
+                    resetSelection()
+                    searchInputRef?.focus()
+                }}
+                aria-label={m.clear_search_aria()}
+            >
+                {m.clear_search_aria()}
+            </Button>
+        </div>
     {:else}
         <nav class="outline-nav">
             {#each filteredOutlineList as heading, index (heading)}
@@ -295,6 +309,12 @@
         font-size: var(--font-size-md);
         font-weight: 700;
         color: var(--faded-text-color);
+    }
+
+    .no-outline-actions {
+        display: grid;
+        justify-items: center;
+        gap: 12px;
     }
 
     .outline-nav {

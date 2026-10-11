@@ -24,11 +24,11 @@
     let isPicking = $state(false)
     let isImporting = $derived(isSubmitting || isPicking)
 
-    function processInputs(inputs: ImportInput[]) {
+    async function processInputs(inputs: ImportInput[]) {
         if (isSubmitting || inputs.length === 0) return
         isSubmitting = true
         try {
-            const completion = vfsStore.importFiles(inputs, vfsStore.currentFolderId, {
+            await vfsStore.importFiles(inputs, vfsStore.currentFolderId, {
                 onImported: async ({ id, name }) => {
                     if (!onimport) return
                     const url = await vfsStore.getFileUrl(id)
@@ -44,17 +44,15 @@
                     })
                 },
             })
-            void completion.catch((error) => {
-                console.error("Failed to complete import batch:", error)
-            })
+        } catch (error) {
+            console.error("Failed to complete import batch:", error)
         } finally {
-            // Registration is synchronous; metadata continues in the store queue.
             isSubmitting = false
         }
     }
 
     function processFiles(files: FileList | File[]) {
-        processInputs(Array.from(files, (file) => ({ name: file.name, source: file })))
+        void processInputs(Array.from(files, (file) => ({ name: file.name, source: file })))
     }
 
     function handleFileChange(event: Event) {
@@ -80,7 +78,9 @@
                     multiple: true,
                 })
 
-                processInputs(handles.map((handle) => ({ name: handle.name, source: handle })))
+                await processInputs(
+                    handles.map((handle) => ({ name: handle.name, source: handle })),
+                )
             } catch (err: unknown) {
                 if (!(err instanceof DOMException && err.name === "AbortError")) {
                     console.error("showOpenFilePicker failed, falling back to standard input", err)
@@ -319,7 +319,7 @@
 
     .reader-card {
         grid-column: 1 / -1;
-        background: var(--surface-color, #ffffff);
+        background: var(--surface-color);
         border: 3px solid var(--border-color);
         box-shadow: var(--shadow-elevated);
         margin-top: 8px;
@@ -331,7 +331,7 @@
 
     /* Neo-brutalist button style */
     .btn {
-        background: var(--surface-color, #ffffff);
+        background: var(--surface-color);
         border: 2px solid var(--border-color);
         font-family: inherit;
         font-size: var(--font-size-md);
@@ -358,7 +358,7 @@
         .btn:hover:not(:disabled) {
             transform: translate(-1px, -1px);
             box-shadow: 4px 4px 0 var(--shadow-color);
-            background: var(--surface-hover-color, #faf8f5);
+            background: var(--surface-hover-color);
         }
     }
 
@@ -378,7 +378,7 @@
     .upload-zone {
         padding: clamp(20px, 5vw, 36px);
         text-align: center;
-        background: var(--surface-color, #ffffff);
+        background: var(--surface-color);
     }
 
     .dashed-border {
@@ -562,7 +562,7 @@
     }
 
     .card-importer {
-        background-color: rgb(0 0 0 / 0);
+        background-color: transparent;
     }
 
     @media (--mobile-width) {
@@ -629,11 +629,7 @@
 
     .reader-card.drag-active .dashed-border {
         border-color: var(--primary-color);
-        background: rgba(255, 77, 77, 0.04);
-    }
-
-    :global(html.dark) .reader-card.drag-active .dashed-border {
-        background: rgba(184, 82, 68, 0.04);
+        background: color-mix(in srgb, var(--primary-color) 4%, transparent);
     }
 
     @keyframes float {
@@ -664,5 +660,12 @@
     .reader-card.importing {
         cursor: wait;
         opacity: 0.85;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .reader-card.drag-active .upload-icon-wrapper,
+        .card.drag-active .card-icon {
+            animation: none;
+        }
     }
 </style>

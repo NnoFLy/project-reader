@@ -2,6 +2,7 @@
     import type { Snippet } from "svelte"
     import { cubicOut } from "svelte/easing"
     import { onMount } from "svelte"
+    import { getFocusableElements, restoreFocus, trapTabKey } from "../modal/modalFocus"
 
     let {
         side = "left",
@@ -34,13 +35,24 @@
     }>()
 
     let returnFocus: HTMLElement | null = null
+    let sidebarRef = $state<HTMLElement | null>(null)
+
+    const isModalOverlay = $derived(presentation === "overlay" && showBackdrop)
+
+    function handleKeydown(event: KeyboardEvent) {
+        if (!isModalOverlay || !sidebarRef) return
+        trapTabKey(event, sidebarRef)
+    }
 
     onMount(() => {
         returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-        return () => {
-            const target = returnFocus
-            if (target?.isConnected) queueMicrotask(() => target.focus())
+        if (isModalOverlay) {
+            queueMicrotask(() => {
+                const firstFocusable = sidebarRef ? getFocusableElements(sidebarRef)[0] : null
+                firstFocusable?.focus()
+            })
         }
+        return () => restoreFocus(returnFocus)
     })
 
     function closeFromBackdrop(event: MouseEvent) {
@@ -70,11 +82,15 @@
 {/if}
 
 <aside
+    bind:this={sidebarRef}
     class={["sidebar", side, presentation]}
     style:--sidebar-width={width}
     transition:slideFromSide={{ duration }}
     onmouseleave={onMouseLeave}
+    onkeydowncapture={handleKeydown}
     aria-label={ariaLabel}
+    role={isModalOverlay ? "dialog" : undefined}
+    aria-modal={isModalOverlay ? "true" : undefined}
 >
     {@render header?.()}
     {@render search?.()}

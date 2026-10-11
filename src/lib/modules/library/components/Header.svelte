@@ -10,7 +10,6 @@
 
     import { getLanguageName } from "$lib/modules/settings"
     import AppUpdateButton from "$lib/shared/ui/AppUpdateButton.svelte"
-    import Input from "$lib/shared/ui/Input.svelte"
     import TerminalIcon from "$lib/shared/icons/TerminalIcon.svelte"
     import { vfsStore } from "$lib/modules/documents"
     import Button from "$lib/shared/ui/Button.svelte"
@@ -28,8 +27,6 @@
         { value: "dark", label: () => m.dark(), Icon: MoonIcon },
         { value: "system", label: () => m.system(), Icon: SystemIcon },
     ] as const
-
-    let inputValue = $state("")
 
     const currentThemeInfo = $derived(
         THEMES.find((t) => t.value === settingsStore.theme) || THEMES[2],
@@ -52,22 +49,16 @@
             <AppUpdateButton />
 
             {#if !viewport.isCompact}
-                <div class="search-btn">
+                <Button
+                    variant="action"
+                    class="search-prompt-button"
+                    square
+                    onclick={() => void commandsNode.execute("prompt.open")}
+                    aria-label={m.keymap_prompt()}
+                    tooltip={`${m.keymap_prompt()}${getShortcutHint(commandsNode, "prompt.open")}`}
+                >
                     <TerminalIcon class="search-icon" />
-                    <Input
-                        class="search-input-wrapper"
-                        classInput="search-input"
-                        placeholder={m.header_prompt_placeholder()}
-                        oninput={(event) => {
-                            const input = event.currentTarget as HTMLInputElement
-                            const initialQuery = input.value
-                            inputValue = ""
-                            input.value = ""
-                            void commandsStore.execute("prompt.open", { initialQuery })
-                        }}
-                        bind:value={inputValue}
-                    />
-                </div>
+                </Button>
             {/if}
 
             {#if currentBook}
@@ -190,74 +181,23 @@
         box-shadow: 0px 0px 0 var(--shadow-color);
     }
 
-    .search-btn {
+    .header-btn-wrapper :global(.search-prompt-button) {
         position: relative;
-        height: var(--header-control-height);
-        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--header-control-height);
+        min-width: var(--header-control-height);
+        padding: 0 !important;
+        line-height: 0;
+    }
 
-        :global(.search-input-wrapper) {
-            height: var(--header-control-height);
-            min-height: var(--header-control-height);
-            max-height: var(--header-control-height);
-
-            :global(.search-input) {
-                background: var(--surface-color) !important;
-                padding: 0 !important;
-                height: 100%;
-                padding-left: 32px !important;
-                padding-right: 12px !important;
-                box-shadow: var(--shadow-inline) !important;
-                transition:
-                    background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-                    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-                    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                overflow: hidden;
-            }
-
-            @media (hover: hover) {
-                :global(.search-input:hover) {
-                    background: var(--surface-hover-color) !important;
-                    transform: translate(-1px, -1px);
-                    box-shadow: 3px 3px 0 var(--shadow-color) !important;
-                }
-            }
-
-            :global(.search-input:focus) {
-                background: var(--surface-color) !important;
-                transform: translate(-1px, -1px);
-                box-shadow: 3px 3px 0 var(--shadow-color) !important;
-                border-color: var(--accent-color) !important;
-            }
-        }
-
-        :global(.search-icon) {
-            max-height: 100%;
-            position: absolute;
-            top: 50%;
-            left: 18px;
-            transform: translate(-50%, -50%);
-            width: 16px;
-            height: 16px;
-            color: var(--text-color);
-            margin-right: 12px;
-            flex-shrink: 0;
-            z-index: var(--z-2);
-            pointer-events: none;
-            transition:
-                color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-                transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        &:hover :global(.search-icon) {
-            transform: translate(calc(-50% - 1px), calc(-50% - 1px));
-        }
-
-        &:focus-within :global(.search-icon) {
-            transform: translate(calc(-50% - 1px), calc(-50% - 1px));
-            color: var(--accent-color);
-        }
+    .header-btn-wrapper :global(.search-prompt-button .search-icon) {
+        display: block;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        flex: 0 0 auto;
     }
 
     :global(.switcher-icon) {
@@ -290,16 +230,6 @@
             width: 100%;
             flex-wrap: wrap;
             gap: 16px;
-        }
-
-        .search-btn {
-            flex: 1;
-        }
-    }
-
-    @media (max-width: 640px) {
-        .search-btn {
-            flex: 1 1 100%;
         }
     }
 

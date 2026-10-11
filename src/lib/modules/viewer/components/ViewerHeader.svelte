@@ -137,8 +137,8 @@
         .viewer-header
             .remove-bookmark-btn:hover:not(:disabled):not(:active):not(.active):not(.open)
     ) {
-        background: var(--danger-active-color, #ff4d4d) !important;
-        color: var(--danger-text-color, #ffffff) !important;
+        background: var(--danger-active-color) !important;
+        color: var(--danger-text-color) !important;
     }
 
     :global(.viewer-header .left-sidebar-toggle.open:not(:active)) {

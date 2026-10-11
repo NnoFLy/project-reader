@@ -975,8 +975,12 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+        .selection-badge,
         .skeleton {
             animation: none;
+        }
+
+        .skeleton {
             background-position: 50% 0;
         }
     }

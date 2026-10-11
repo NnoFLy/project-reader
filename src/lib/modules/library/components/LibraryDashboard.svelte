@@ -14,6 +14,9 @@
     import CheckIcon from "$lib/shared/icons/CheckIcon.svelte"
     import MinusIcon from "$lib/shared/icons/MinusIcon.svelte"
     import NewFolderIcon from "$lib/shared/icons/NewFolderIcon.svelte"
+    import PinIcon from "$lib/shared/icons/PinIcon.svelte"
+    import BookOpenIcon from "$lib/shared/icons/BookOpenIcon.svelte"
+    import CheckCircleIcon from "$lib/shared/icons/CheckCircleIcon.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
 
     import { vfsStore } from "$lib/modules/documents"
@@ -115,6 +118,45 @@
     const allSelected = $derived(
         currentNodes.length > 0 && currentNodes.every((node) => vfsStore.selectedIds.has(node.id)),
     )
+    const selectedNodes = $derived(currentNodes.filter((node) => vfsStore.selectedIds.has(node.id)))
+    const selectedBooks = $derived(selectedNodes.filter((node) => node.type === "file"))
+    const allSelectedPinned = $derived(
+        selectedNodes.length > 0 && selectedNodes.every((node) => node.isPinned),
+    )
+
+    function isReadNode(node: VFSNode) {
+        return (
+            node.type === "file" &&
+            node.metadata.totalPages !== undefined &&
+            node.metadata.totalPages > 0 &&
+            (node.metadata.pageNumber || 1) === node.metadata.totalPages
+        )
+    }
+
+    const allSelectedBooksRead = $derived(
+        selectedBooks.length > 0 && selectedBooks.every((node) => isReadNode(node)),
+    )
+
+    async function toggleSelectedPinned() {
+        const isPinned = !allSelectedPinned
+        for (const node of selectedNodes) {
+            await libraryCommandScope.execute("library.node.pin.toggle", {
+                nodeId: node.id,
+                isPinned,
+            })
+        }
+    }
+
+    async function toggleSelectedReadState() {
+        const markAsRead = !allSelectedBooksRead
+        for (const node of selectedBooks) {
+            if (node.type !== "file") continue
+            await libraryCommandScope.execute("library.book.read-state.toggle", {
+                nodeId: node.id,
+                markAsRead,
+            })
+        }
+    }
 
     async function handleNodeClick(e: MouseEvent | KeyboardEvent | null, node: VFSNode) {
         const isEnter = e && e instanceof KeyboardEvent && e.key === "Enter"
@@ -400,6 +442,32 @@
                         )}
                 >
                     <span>{allSelected ? m.deselect_all() : m.select_all()}</span>
+                </Button>
+                <Button
+                    variant="brutalist"
+                    size="small"
+                    onclick={() => void toggleSelectedPinned()}
+                    disabled={selectedNodes.length === 0}
+                    aria-label={allSelectedPinned ? m.unpin() : m.pin()}
+                    tooltip={allSelectedPinned ? m.unpin() : m.pin()}
+                >
+                    <PinIcon />
+                    <span>{allSelectedPinned ? m.unpin() : m.pin()}</span>
+                </Button>
+                <Button
+                    variant="brutalist"
+                    size="small"
+                    onclick={() => void toggleSelectedReadState()}
+                    disabled={selectedBooks.length === 0}
+                    aria-label={allSelectedBooksRead ? m.mark_as_unread() : m.mark_as_read()}
+                    tooltip={allSelectedBooksRead ? m.mark_as_unread() : m.mark_as_read()}
+                >
+                    {#if allSelectedBooksRead}
+                        <BookOpenIcon />
+                    {:else}
+                        <CheckCircleIcon />
+                    {/if}
+                    <span>{allSelectedBooksRead ? m.mark_as_unread() : m.mark_as_read()}</span>
                 </Button>
                 <Button
                     variant="brutalist"
