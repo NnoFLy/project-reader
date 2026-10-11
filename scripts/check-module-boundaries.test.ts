@@ -171,11 +171,25 @@ describe("module boundary checker fixtures", () => {
 })
 
 describe("target architecture boundaries", () => {
-    it("accepts core, extension, and adapter imports", () => {
+    it("accepts foundational, extension, and adapter imports", () => {
         const root = fixture({
             "src/lib/core/contracts.ts": "export type CoreContract = string\n",
+            "src/lib/core/foundation.ts": [
+                'import type { ExtensionContract } from "$lib/extension-api/contracts"',
+                'import type { Document } from "$lib/document-model/document"',
+                'import type { ExtensionHost } from "$lib/extension-host"',
+                "void (0 as unknown as ExtensionContract)",
+                "void (0 as unknown as Document)",
+                "void (0 as unknown as ExtensionHost)",
+            ].join("\n"),
             "src/lib/extension-api/contracts.ts":
                 'import type { CoreContract } from "$lib/core/contracts"\nexport type ExtensionContract = CoreContract\n',
+            "src/lib/extensions/builtin/index.ts": [
+                'import type { AppExtension } from "../../extension-api"',
+                'import { ExtensionHost } from "../../extension-host"',
+                "void (0 as unknown as AppExtension)",
+                "void ExtensionHost",
+            ].join("\n"),
             "src/lib/extensions/builtin/viewer/index.ts": [
                 'import type { CoreContract } from "$lib/core/contracts"',
                 'import type { ExtensionContract } from "$lib/extension-api/contracts"',
@@ -207,6 +221,48 @@ describe("target architecture boundaries", () => {
             "core may only import core",
         ],
         [
+            "core importing an adapter",
+            "src/lib/core/main.ts",
+            'import "$lib/adapters/pdf"',
+            "core may only import core",
+        ],
+        [
+            "core importing routes",
+            "src/lib/core/main.ts",
+            'import "../../routes/+page"',
+            "core may only import core",
+        ],
+        [
+            "core importing shared code",
+            "src/lib/core/main.ts",
+            'import "$lib/shared/state/safeStorage"',
+            "core may only import core",
+        ],
+        [
+            "extension API importing a plugin",
+            "src/lib/extension-api/main.ts",
+            'import "$lib/extensions/builtin/viewer"',
+            "extension-api may only import core contracts",
+        ],
+        [
+            "extension host importing shared code",
+            "src/lib/extension-host/main.ts",
+            'import "$lib/shared/state/safeStorage"',
+            "extension-host may only import core and extension-api",
+        ],
+        [
+            "document model importing routes",
+            "src/lib/document-model/main.ts",
+            'import "../../routes/+page"',
+            "document-model may only import core contracts",
+        ],
+        [
+            "shared code importing a plugin",
+            "src/lib/shared/main.ts",
+            'import "$lib/extensions/builtin/viewer"',
+            "shared code may only import core-safe code",
+        ],
+        [
             "plugin importing another plugin",
             "src/lib/extensions/builtin/viewer/main.ts",
             'import "$lib/extensions/builtin/library"',
@@ -223,6 +279,18 @@ describe("target architecture boundaries", () => {
             "src/lib/extensions/builtin/pdf/adapter/main.ts",
             'import "$lib/extensions/builtin/viewer"',
             "extensions may not import another extension",
+        ],
+        [
+            "plugin importing shared code",
+            "src/lib/extensions/builtin/viewer/main.ts",
+            'import "$lib/shared/state/safeStorage"',
+            "plugin may not import shared",
+        ],
+        [
+            "adapter importing routes",
+            "src/lib/extensions/builtin/pdf/adapter/main.ts",
+            'import "../../../../../routes/+page"',
+            "adapter may not import routes",
         ],
         [
             "route importing a plugin",

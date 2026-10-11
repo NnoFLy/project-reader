@@ -181,6 +181,9 @@ function targetArea(sourceRoot, file) {
     }
     if (relative === "routes" || relative.startsWith("routes/")) return { kind: "routes" }
 
+    // The builtin extension registry is application composition, not an extension.
+    if (relative === "lib/extensions/builtin/index.ts") return { kind: "extension-host" }
+
     const adapterMatch = relative.match(
         /^lib\/(?:adapters|extensions\/builtin\/([^/]+)\/adapter(?:s)?)(?:\/|$)/,
     )
@@ -196,15 +199,20 @@ function targetArea(sourceRoot, file) {
 
 function targetBoundaryViolation(from, to) {
     if (!TARGET_LAYERS.has(from.kind) || !TARGET_LAYERS.has(to.kind)) return null
-    if (from.kind === "core" && to.kind !== "core") return "core may only import core"
-    if (from.kind === "extension-api" && !["core", "document-model"].includes(to.kind)) {
-        return "extension-api may only import core contracts"
+    const allowedTargets = {
+        core: ["core", "extension-api", "extension-host", "document-model"],
+        "extension-api": ["core", "extension-api", "document-model"],
+        "extension-host": ["core", "extension-api", "extension-host"],
+        "document-model": ["core", "document-model"],
     }
-    if (from.kind === "extension-host" && !["core", "extension-api"].includes(to.kind)) {
-        return "extension-host may only import core and extension-api"
+    const boundaryMessages = {
+        core: "core may only import core, extension-api, extension-host, and document-model",
+        "extension-api": "extension-api may only import core contracts",
+        "extension-host": "extension-host may only import core and extension-api",
+        "document-model": "document-model may only import core contracts",
     }
-    if (from.kind === "document-model" && !["core", "document-model"].includes(to.kind)) {
-        return "document-model may only import core contracts"
+    if (allowedTargets[from.kind] && !allowedTargets[from.kind].includes(to.kind)) {
+        return boundaryMessages[from.kind]
     }
     if (from.kind === "shared" && !["core", "document-model", "shared"].includes(to.kind)) {
         return "shared code may only import core-safe code"
