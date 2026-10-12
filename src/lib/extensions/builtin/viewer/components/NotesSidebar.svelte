@@ -2,14 +2,14 @@
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
-    import { useCommands, KeyboardHandler, commandsStore } from "$lib/modules/commands"
+    import { useCommands, KeyboardHandler, commandsStore } from "$lib/core/commands"
     import { MediaQuery } from "svelte/reactivity"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
     import { notesStore } from "../stores/notesStore.svelte"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
     import EditIcon from "$lib/shared/icons/EditIcon.svelte"
-    import type { UserNote } from "$lib/modules/documents"
+    import type { UserNote } from "$lib/core/documents"
     import {
         executeViewerNoteDelete,
         executeViewerNoteEdit,

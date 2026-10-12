@@ -4,7 +4,7 @@
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import type { ViewerPagedDocument } from "../viewerDocument"
     import { getViewerPageDimensions, renderViewerPageLayers } from "../viewerDocument"
-    import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
+    import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "../viewerHost"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { safeStorageGet } from "$lib/shared/state/safeStorage"
     import { searchStore } from "../stores/searchStore.svelte"
@@ -22,10 +22,10 @@
     import { onDestroy, untrack } from "svelte"
     import { MediaQuery, SvelteMap } from "svelte/reactivity"
     import { MEDIA_QUERIES } from "$lib/shared/state/breakpoints"
-    import { commandsStore, useCommands } from "$lib/modules/commands"
+    import { commandsStore, useCommands } from "$lib/core/commands"
     import { createViewerFitWidthCommand } from "../commands/viewerFitWidthCommand"
     import { ViewerLinkService } from "./ViewerLinkService"
-    import { promptStore } from "$lib/modules/prompt"
+    import { promptStore } from "../viewerHost"
     import {
         captureScrollAnchor,
         restoreScrollAnchor,

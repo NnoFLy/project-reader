@@ -12,6 +12,7 @@ import {
     type ExtensionManifest,
     type ExtensionStorage,
     type LegacyMigrationCapability,
+    type HostContext,
     type PermissionSet,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
@@ -28,6 +29,7 @@ export interface ExtensionHostOptions {
     readonly notifications?: NotificationServiceImpl
     readonly documentService?: DocumentService
     readonly migration?: LegacyMigrationCapability
+    readonly hostContext?: HostContext
 }
 
 interface ExtensionRuntime {
@@ -50,11 +52,13 @@ export class ExtensionHost {
     private readonly runtimes = new Map<string, ExtensionRuntime>()
     private readonly storage: StorageBackend
     private readonly migration?: LegacyMigrationCapability
+    private readonly hostContext: HostContext
     private disposing = false
     private disposal?: Promise<void>
     constructor(options: ExtensionHostOptions) {
         this.storage = options.storage ?? new MemoryStorageBackend()
         this.migration = options.migration
+        this.hostContext = options.hostContext ?? {}
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
@@ -238,6 +242,7 @@ export class ExtensionHost {
             const context: ExtensionContext = {
                 extension: extensionInfo(manifest),
                 permissions: runtime.permissions,
+                host: this.hostContext,
                 commands: registries.commands,
                 views: registries.views,
                 settings: registries.settings,

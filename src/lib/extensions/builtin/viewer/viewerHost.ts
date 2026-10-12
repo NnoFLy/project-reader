@@ -1,15 +1,14 @@
-import type { CommandRegistry, StorageNamespace } from "$lib/extension-api"
-import type { CommandScope } from "$lib/modules/commands"
-import type { PromptService } from "$lib/modules/prompt"
+import type {
+    HostContext,
+    PromptHostCapability,
+    SettingsCapability,
+    StorageNamespace,
+} from "$lib/extension-api"
+import type { Bookmark, UserNote } from "$lib/core/documents"
+export type { PromptItem, PromptService } from "$lib/extension-api"
 
-export interface ViewerPromptCapability {
-    promptStore: PromptService
-    getPromptCommandRegistry: () => CommandRegistry | undefined
-    openCommandPalette: (
-        source?: CommandScope | CommandRegistry,
-        initialQuery?: string,
-    ) => Promise<void>
-}
+export type ViewerPromptCapability = PromptHostCapability
+export type ViewerSettingsCapability = SettingsCapability
 
 export interface ViewerLibraryCapability {
     readonly nodes: Readonly<Record<string, ViewerFileNode | undefined>>
@@ -64,24 +63,7 @@ export type IndexedText = {
     pageNumber: number
     text: string
 }
-export type Bookmark = {
-    id: string
-    bookId: string
-    pageNumber: number
-    name: string
-    createdAt: number
-}
-export type UserNote = {
-    id: string
-    bookId: string
-    pageNumber: number
-    start: number
-    end: number
-    text: string
-    noteContent: string
-    color: "yellow" | "green" | "blue" | "pink" | "purple"
-    createdAt: number
-}
+export type { Bookmark, UserNote } from "$lib/core/documents"
 
 export interface ViewerFileNode {
     id: string
@@ -132,6 +114,8 @@ let installedLibrary: ViewerLibraryCapability | undefined
 let installedLibraryMutations: ViewerLibraryMutationCapability | undefined
 let viewerStorage: StorageNamespace | undefined
 let installedPrompt: ViewerPromptCapability | undefined
+let installedSettings: ViewerSettingsCapability | undefined
+let installedHost: HostContext | undefined
 
 export const viewerFileCapability = new Proxy(unavailable, {
     get: (_, key: keyof ViewerFileCapability) => installed[key],
@@ -171,8 +155,9 @@ export function getViewerLibraryMutationCapability(): ViewerLibraryMutationCapab
 /** Injects host file access, library state, and namespaced storage at activation time. */
 export const viewerPromptCapability = new Proxy({} as ViewerPromptCapability, {
     get: (_, key: keyof ViewerPromptCapability) => {
-        if (!installedPrompt) throw new Error("The viewer prompt capability is unavailable")
-        return installedPrompt[key]
+        const prompt = installedPrompt ?? installedHost?.prompt
+        if (!prompt) throw new Error("The viewer prompt capability is unavailable")
+        return prompt[key]
     },
 }) as ViewerPromptCapability
 
@@ -182,13 +167,59 @@ export function installViewerHostCapabilities(capabilities: {
     libraryMutations?: ViewerLibraryMutationCapability
     storage?: StorageNamespace
     prompt?: ViewerPromptCapability
+    settings?: ViewerSettingsCapability
+    host?: HostContext
 }): void {
     installed = capabilities.files ?? unavailable
     installedLibrary = capabilities.library
     installedLibraryMutations = capabilities.libraryMutations
     viewerStorage = capabilities.storage
     installedPrompt = capabilities.prompt
+    installedSettings = capabilities.settings
+    installedHost = capabilities.host
 }
+
+export const promptStore = new Proxy({} as ViewerPromptCapability["promptStore"], {
+    get: (_, key: keyof ViewerPromptCapability["promptStore"]) =>
+        viewerPromptCapability.promptStore[key],
+}) as ViewerPromptCapability["promptStore"]
+
+export const settingsStore = new Proxy({} as ViewerSettingsCapability["settingsStore"], {
+    get: (_, key: keyof ViewerSettingsCapability["settingsStore"]) =>
+        viewerSettingsCapability.settingsStore[key],
+    set: (_, key: keyof ViewerSettingsCapability["settingsStore"], value: unknown) => {
+        Reflect.set(viewerSettingsCapability.settingsStore, key, value)
+        return true
+    },
+}) as ViewerSettingsCapability["settingsStore"]
+
+export const CONSTANTS = new Proxy({} as ViewerSettingsCapability["CONSTANTS"], {
+    get: (_, key: keyof ViewerSettingsCapability["CONSTANTS"]) =>
+        viewerSettingsCapability.CONSTANTS[key],
+}) as ViewerSettingsCapability["CONSTANTS"]
+export const DEFAULT_SETTINGS = new Proxy({} as ViewerSettingsCapability["DEFAULT_SETTINGS"], {
+    get: (_, key: keyof ViewerSettingsCapability["DEFAULT_SETTINGS"]) =>
+        viewerSettingsCapability.DEFAULT_SETTINGS[key],
+}) as ViewerSettingsCapability["DEFAULT_SETTINGS"]
+export const settingsCommands = new Proxy({} as ViewerSettingsCapability["settingsCommands"], {
+    get: (_, key: string) => viewerSettingsCapability.settingsCommands[key],
+}) as ViewerSettingsCapability["settingsCommands"]
+export const localizedPath = (path: string) => viewerSettingsCapability.localizedPath(path)
+export const getLanguageName = (locale: string) => viewerSettingsCapability.getLanguageName(locale)
+export const getLocalizedCurrentHref = (
+    url: URL,
+    locale: ViewerSettingsCapability["DEFAULT_SETTINGS"]["language"],
+) => viewerSettingsCapability.getLocalizedCurrentHref(url, locale)
+export type Theme = ViewerSettingsCapability["DEFAULT_SETTINGS"]["theme"]
+export type AppLocale = ViewerSettingsCapability["DEFAULT_SETTINGS"]["language"]
+
+export const viewerSettingsCapability = new Proxy({} as ViewerSettingsCapability, {
+    get: (_, key: keyof ViewerSettingsCapability) => {
+        const settings = installedSettings ?? installedHost?.settings
+        if (!settings) throw new Error("The viewer settings capability is unavailable")
+        return settings[key]
+    },
+}) as ViewerSettingsCapability
 
 export function getViewerStorage(): StorageNamespace | undefined {
     return viewerStorage

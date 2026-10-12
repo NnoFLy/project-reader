@@ -6,13 +6,13 @@
         KeyboardHandler,
         commandsStore,
         type CommandScope,
-    } from "$lib/modules/commands"
+    } from "$lib/core/commands"
     import { MediaQuery } from "svelte/reactivity"
     import Button from "$lib/shared/ui/Button.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { bookmarksStore } from "../stores/bookmarksStore.svelte"
-    import type { Bookmark } from "$lib/modules/documents"
+    import type { Bookmark } from "$lib/core/documents"
     import type { ViewerBookmarkEditPayload } from "../commands/viewerCommandPayloads"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
     import EditIcon from "$lib/shared/icons/EditIcon.svelte"

@@ -26,6 +26,7 @@ export type {
     ViewerLibraryCapability,
     ViewerLibraryMutationCapability,
     ViewerPromptCapability,
+    ViewerSettingsCapability,
 } from "./viewerHost"
 
 export const VIEWER_VIEW_ID = "viewer.reader"
@@ -43,7 +44,9 @@ export function activateViewer(
         library: libraryCapability,
         libraryMutations: libraryMutationCapability,
         storage: viewerStorage,
-        prompt: promptCapability,
+        prompt: promptCapability ?? context.host?.prompt,
+        settings: context.host?.settings,
+        host: context.host,
     })
     viewerStore.reset()
     bookmarksStore.reset()

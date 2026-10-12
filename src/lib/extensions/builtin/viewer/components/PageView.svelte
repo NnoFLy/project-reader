@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { ViewerPagedDocument } from "../viewerDocument"
     import { renderViewerPageLayers } from "../viewerDocument"
-    import { settingsStore } from "$lib/modules/settings"
+    import { settingsStore } from "$lib/core/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { searchStore } from "../stores/searchStore.svelte"
     import {

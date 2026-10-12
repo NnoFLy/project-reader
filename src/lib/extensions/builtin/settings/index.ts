@@ -1,7 +1,15 @@
-import type { ExtensionContext, SettingContribution } from "$lib/extension-api"
+import type { ExtensionContext, SettingContribution, SettingsCapability } from "$lib/extension-api"
 import SettingsView from "./SettingsView.svelte"
 import { settingsCommands, type SettingsCommandPayload } from "./commands/settingsCommands"
-import { configureSettings, CONSTANTS, settingsStore } from "./state/settingsStore.svelte"
+import { installSettingsCapability } from "$lib/core/settings"
+import {
+    configureSettings,
+    CONSTANTS,
+    DEFAULT_SETTINGS,
+    settingsStore,
+} from "./state/settingsStore.svelte"
+import { getLocalizedCurrentHref, localizedPath } from "./language/language"
+import { getLanguageName } from "./language/locale"
 
 export const SETTINGS_VIEW_ID = "settings.panel"
 
@@ -61,6 +69,24 @@ const settingDefinitions = [
 ] as const
 
 export function activateSettings(context: ExtensionContext): void {
+    if (context.host) {
+        const capability: SettingsCapability = {
+            settingsStore,
+            CONSTANTS,
+            DEFAULT_SETTINGS,
+            settingsCommands,
+            localizedPath,
+            getLanguageName,
+            getLocalizedCurrentHref,
+        }
+        context.host.settings = capability
+        installSettingsCapability(capability)
+        context.lifecycle.onDispose(() => {
+            if (context.host?.settings?.settingsStore === settingsStore)
+                context.host.settings = undefined
+            installSettingsCapability(undefined)
+        })
+    }
     context.views.registerNative({
         id: SETTINGS_VIEW_ID,
         slot: "workbench.sidebar",

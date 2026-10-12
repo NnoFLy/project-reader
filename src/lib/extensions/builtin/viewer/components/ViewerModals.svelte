@@ -11,7 +11,7 @@
     import Input from "$lib/shared/ui/Input.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import DeleteConfirmModal from "./DeleteConfirmModal.svelte"
-    import type { CommandScope } from "$lib/modules/commands"
+    import type { CommandScope } from "$lib/core/commands"
     import type { ViewerBookmarkAddPayload } from "../commands/viewerCommandPayloads"
     import {
         executeViewerBookmarkDelete,

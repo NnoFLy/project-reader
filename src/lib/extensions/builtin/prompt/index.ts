@@ -20,10 +20,10 @@ export type { PromptCommandActions } from "./promptCommands"
 export { promptStore } from "./stores/promptStore.svelte"
 
 import type { ExtensionContext } from "$lib/extension-api"
-import { isSerializablePayload, serializablePayload } from "$lib/modules/commands"
+import { isSerializablePayload, serializablePayload } from "$lib/core/commands"
 import { openCommandPalette } from "./commands/commandPalette"
 import Prompt from "./components/Prompt.svelte"
-import { setPromptCommandRegistry } from "./commandRegistry"
+import { getPromptCommandRegistry, setPromptCommandRegistry } from "./commandRegistry"
 import { promptStore } from "./stores/promptStore.svelte"
 
 export const PROMPT_VIEW_ID = "prompt.palette"
@@ -42,10 +42,18 @@ function isPromptOpenPayload(payload: unknown): payload is PromptOpenPayload | u
 }
 
 export function activatePrompt(context: ExtensionContext): void {
+    if (context.host) {
+        context.host.prompt = {
+            promptStore,
+            getPromptCommandRegistry,
+            openCommandPalette,
+        }
+    }
     setPromptCommandRegistry(context.commands)
     context.lifecycle.onDispose(() => {
         promptStore.reset()
         setPromptCommandRegistry(undefined)
+        if (context.host?.prompt?.promptStore === promptStore) context.host.prompt = undefined
     })
 
     context.commands.register({

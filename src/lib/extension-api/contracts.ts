@@ -101,6 +101,8 @@ export interface ExtensionContext {
     readonly extension: ExtensionInfo
     /** Permissions are supplied by the host; manually created contexts may omit them. */
     readonly permissions?: import("./permissions").PermissionSet
+    /** Host-owned capabilities shared by extensions without builtin module imports. */
+    readonly host?: import("./settings").HostContext
     readonly commands: import("./commands").CommandRegistry
     readonly views: import("./views").ViewRegistry
     readonly settings: import("./settings").SettingsRegistry

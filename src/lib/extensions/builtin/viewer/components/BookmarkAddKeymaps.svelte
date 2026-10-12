@@ -1,8 +1,8 @@
 <script lang="ts">
-    import { commandsStore, type CommandScope } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
+    import { commandsStore, type CommandScope } from "$lib/core/commands"
+    import { useModalCommands } from "$lib/core/commands"
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
-    import { defineCommands } from "$lib/modules/commands"
+    import { defineCommands } from "$lib/core/commands"
     import type { ViewerBookmarkAddPayload } from "../commands/viewerCommandPayloads"
     import * as m from "$lib/paraglide/messages"
 

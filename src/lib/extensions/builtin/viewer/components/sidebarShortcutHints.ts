@@ -1,4 +1,4 @@
-import { KeyboardHandler } from "$lib/modules/commands"
+import { KeyboardHandler } from "$lib/core/commands"
 
 export type SidebarShortcutPair = { display: string }
 

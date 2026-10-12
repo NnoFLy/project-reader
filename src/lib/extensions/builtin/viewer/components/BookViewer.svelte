@@ -38,8 +38,8 @@
     import { mountViewerUIStore } from "../stores/viewerUIStore.svelte"
 
     const viewerUIStore = mountViewerUIStore()
-    import { localizedPath } from "$lib/modules/settings"
-    import { DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
+    import { localizedPath } from "$lib/core/settings"
+    import { DEFAULT_SETTINGS, settingsStore } from "$lib/core/settings"
     import { motionPreferences } from "$lib/shared/state/motion.svelte"
     import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
@@ -49,14 +49,14 @@
         getShortcutHint,
         commandsStore,
         type CommandScope,
-    } from "$lib/modules/commands"
+    } from "$lib/core/commands"
     import TerminalIcon from "$lib/shared/icons/TerminalIcon.svelte"
     import MinimizeIcon from "$lib/shared/icons/MinimizeIcon.svelte"
     import MaximizeIcon from "$lib/shared/icons/MaximizeIcon.svelte"
     import SearchIcon from "$lib/shared/icons/SearchIcon.svelte"
     import ChevronIcon from "$lib/shared/icons/ChevronIcon.svelte"
     import { Slider, type SliderDirection } from "$lib/shared/ui/slider"
-    import { settingsCommands } from "$lib/modules/settings"
+    import { settingsCommands } from "$lib/core/settings"
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"

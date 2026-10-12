@@ -1,5 +1,5 @@
-import { commandsStore } from "$lib/modules/commands"
-import type { CommandExecutionResult } from "$lib/modules/commands"
+import { commandsStore } from "$lib/core/commands"
+import type { CommandExecutionResult } from "$lib/core/commands"
 import type {
     ViewerBookmarkAddPayload,
     ViewerBookmarkDeletePayload,

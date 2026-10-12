@@ -1,4 +1,4 @@
-import { defineCommands } from "$lib/modules/commands"
+import { defineCommands } from "$lib/core/commands"
 
 export interface PromptCommandActions {
     close: () => void

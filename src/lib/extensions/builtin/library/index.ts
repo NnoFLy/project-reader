@@ -8,7 +8,7 @@ import {
     LibraryUIController,
 } from "./state/libraryUI.svelte"
 import { configurePromptStorage } from "./commands/promptStore.svelte"
-import type { PromptService } from "./commands/prompt.types"
+import type { PromptService } from "$lib/extension-api"
 import { configureLibraryStore, installDocumentService } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 import { configureLibraryHostBridge } from "./state/libraryHostBridge"
@@ -24,7 +24,7 @@ export const LIBRARY_VIEW_ID = "library.page"
 
 export async function activateLibrary(
     context: ExtensionContext,
-    prompt?: PromptService,
+    prompt: PromptService | undefined,
     onDispose?: () => void,
 ): Promise<void> {
     const libraryStorage = context.storage.namespace("library")
@@ -32,17 +32,23 @@ export async function activateLibrary(
     const store = configureLibraryStore(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
+    const unavailablePrompt: PromptService = {
+        choose: async () => undefined,
+        open: async () => undefined,
+        close: () => undefined,
+        setQuery: () => undefined,
+        refresh: () => undefined,
+        snapshot: null,
+        isOpen: false,
+        query: "",
+    }
+    const hostPrompt = context.host
+        ? new Proxy(unavailablePrompt, {
+              get: (_, key: keyof PromptService) => context.host?.prompt?.promptStore[key],
+          })
+        : unavailablePrompt
     configureLibraryHostBridge({
-        prompt: prompt ?? {
-            choose: async () => undefined,
-            open: async () => undefined,
-            close: () => undefined,
-            setQuery: () => undefined,
-            refresh: () => undefined,
-            snapshot: null,
-            isOpen: false,
-            query: "",
-        },
+        prompt: prompt ?? hostPrompt,
         execute: (commandId, payload) => context.commands.execute(commandId, payload),
     })
     configureLibraryNotifications((message, level = "info") => {

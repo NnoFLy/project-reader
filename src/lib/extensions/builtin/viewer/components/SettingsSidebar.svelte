@@ -12,14 +12,14 @@
     import MoonIcon from "$lib/shared/icons/MoonIcon.svelte"
     import SystemIcon from "$lib/shared/icons/SystemIcon.svelte"
     import Toggle from "$lib/shared/ui/Toggle.svelte"
-    import { CONSTANTS, settingsStore, type Theme } from "$lib/modules/settings"
+    import { CONSTANTS, settingsStore, type Theme } from "$lib/core/settings"
     import { locales, getLocale } from "$lib/paraglide/runtime"
     import { resolve } from "$app/paths"
     import { page } from "$app/state"
     import GlobeIcon from "$lib/shared/icons/GlobeIcon.svelte"
-    import { getLanguageName } from "$lib/modules/settings"
-    import { getLocalizedCurrentHref, type AppLocale } from "$lib/modules/settings"
-    import { commandsStore } from "$lib/modules/commands"
+    import { getLanguageName } from "$lib/core/settings"
+    import { getLocalizedCurrentHref, type AppLocale } from "$lib/core/settings"
+    import { commandsStore } from "$lib/core/commands"
 
     let isShortHeight = $derived(viewport.isShortHeight)
 

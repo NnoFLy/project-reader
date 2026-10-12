@@ -16,7 +16,7 @@
         type CommandScope,
         getShortcutHint,
         commandsStore,
-    } from "$lib/modules/commands"
+    } from "$lib/core/commands"
 
     let {
         name,

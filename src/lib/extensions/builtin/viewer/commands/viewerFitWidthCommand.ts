@@ -1,4 +1,4 @@
-import { defineCommands } from "$lib/modules/commands"
+import { defineCommands } from "$lib/core/commands"
 import * as m from "$lib/paraglide/messages"
 
 export function createViewerFitWidthCommand(fitToWidth: () => void) {

@@ -4,7 +4,7 @@
     import SearchIcon from "$lib/shared/icons/SearchIcon.svelte"
     import SearchNoResultsIcon from "$lib/shared/icons/SearchNoResultsIcon.svelte"
     import CloseIcon from "$lib/shared/icons/CloseIcon.svelte"
-    import { useCommands } from "$lib/modules/commands"
+    import { useCommands } from "$lib/core/commands"
     import { createPromptCommands } from "../promptCommands"
     import type { PromptSnapshot } from "../prompt.types"
     import { promptStore } from "../stores/promptStore.svelte"

@@ -3,9 +3,9 @@
     import CloseIcon from "$lib/shared/icons/CloseIcon.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
-    import { commandsStore, getShortcutHint } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
+    import { commandsStore, getShortcutHint } from "$lib/core/commands"
+    import { defineCommands } from "$lib/core/commands"
+    import { useModalCommands } from "$lib/core/commands"
 
     type NoteColor = "yellow" | "green" | "blue" | "pink" | "purple"
 

@@ -1,4 +1,4 @@
-import { defineCommands, type AnyCommandDefinition } from "$lib/modules/commands"
+import { defineCommands, type AnyCommandDefinition } from "$lib/core/commands"
 
 interface ViewerOutlineCommandOptions {
     nextLabel: () => string

@@ -1,8 +1,16 @@
-import { settingsCommands } from "$lib/modules/settings"
+import { settingsCommands } from "$lib/core/settings"
 
 export const viewerSettingsCommands = {
-    zoomIn: settingsCommands["settings.zoom.in"],
-    zoomOut: settingsCommands["settings.zoom.out"],
-    qualityIn: settingsCommands["settings.quality.in"],
-    qualityOut: settingsCommands["settings.quality.out"],
+    get zoomIn() {
+        return settingsCommands["settings.zoom.in"]
+    },
+    get zoomOut() {
+        return settingsCommands["settings.zoom.out"]
+    },
+    get qualityIn() {
+        return settingsCommands["settings.quality.in"]
+    },
+    get qualityOut() {
+        return settingsCommands["settings.quality.out"]
+    },
 }

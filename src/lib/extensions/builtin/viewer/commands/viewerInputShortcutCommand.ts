@@ -1,4 +1,4 @@
-import type { AnyCommandDefinition } from "$lib/modules/commands"
+import type { AnyCommandDefinition } from "$lib/core/commands"
 
 export function withViewerInputShortcut(
     command: AnyCommandDefinition,

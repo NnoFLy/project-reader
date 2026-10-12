@@ -2,11 +2,11 @@
     import * as m from "$lib/paraglide/messages"
     import Button from "$lib/shared/ui/Button.svelte"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
-    import { commandsStore, getShortcutHint } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
+    import { commandsStore, getShortcutHint } from "$lib/core/commands"
+    import { defineCommands } from "$lib/core/commands"
+    import { useModalCommands } from "$lib/core/commands"
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
-    import type { UserNote } from "$lib/modules/documents"
+    import type { UserNote } from "$lib/core/documents"
 
     let {
         activePopup,

@@ -1,6 +1,6 @@
 import { tick } from "svelte"
 import type { CommandRegistry, RegisteredCommand } from "$lib/extension-api"
-import { commandsStore, formatKeyString, type CommandScope } from "$lib/modules/commands"
+import { commandsStore, formatKeyString, type CommandScope } from "$lib/core/commands"
 import { getPromptCommandRegistry } from "../commandRegistry"
 import { promptStore, type PromptItem } from "../index"
 import * as m from "$lib/paraglide/messages"

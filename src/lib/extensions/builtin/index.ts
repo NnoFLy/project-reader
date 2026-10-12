@@ -5,7 +5,7 @@ import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
 import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
 import { activateLibrary, libraryStore } from "./library"
 import { installDocumentService } from "./library/state/libraryStore.svelte"
-import { activatePrompt, getPromptCommandRegistry, openCommandPalette, promptStore } from "./prompt"
+import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
 import {
     activateViewer,
@@ -111,6 +111,7 @@ const manifest = (
     name: string,
     activationEvents: ExtensionManifest["activationEvents"],
     contributes: ExtensionManifest["contributes"] = undefined,
+    dependencies: ExtensionManifest["dependencies"] = undefined,
 ): ExtensionManifest => ({
     id,
     name,
@@ -120,6 +121,7 @@ const manifest = (
     activationEvents,
     permissions: ["commands", "documents", "notifications", "settings", "storage", "views"],
     contributes,
+    dependencies,
 })
 
 // Keep the contribution itself format-neutral so importing the host does not import PDF.js.
@@ -168,7 +170,9 @@ const builtinExtensions: readonly AppExtension[] = [
     {
         manifest: BUILTIN_MANIFESTS[0],
         activate: (context) =>
-            activateLibrary(context, promptStore, () => installViewerDocumentService(undefined)),
+            activateLibrary(context, context.host?.prompt?.promptStore, () =>
+                installViewerDocumentService(undefined),
+            ),
     },
     {
         manifest: BUILTIN_MANIFESTS[1],
@@ -182,11 +186,6 @@ const builtinExtensions: readonly AppExtension[] = [
                 builtinViewerFileCapability,
                 builtinViewerLibraryCapability,
                 builtinViewerLibraryMutations,
-                {
-                    promptStore,
-                    getPromptCommandRegistry,
-                    openCommandPalette,
-                },
             ),
     },
     {

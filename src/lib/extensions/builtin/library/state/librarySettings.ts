@@ -1,6 +1,6 @@
-export { settingsStore } from "$lib/modules/settings"
-export { getLanguageName } from "$lib/modules/settings"
-export { localizedPath } from "$lib/modules/settings"
+export { settingsStore } from "$lib/core/settings"
+export { getLanguageName } from "$lib/core/settings"
+export { localizedPath } from "$lib/core/settings"
 
 export function isBrowser(): boolean {
     return typeof window !== "undefined"
