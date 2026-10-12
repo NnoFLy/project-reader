@@ -1,5 +1,4 @@
 export type {
-    AppCommandPayloads,
     CommandId,
     ExecuteArgs,
     Locale,
