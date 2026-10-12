@@ -8,7 +8,7 @@ const {
     getCurrentBook,
     onLibraryBookOpen,
     nodes,
-    vfsStore,
+    viewerFileCapability,
 } = vi.hoisted(() => {
     const restoreFileAccess = vi.fn()
     const waitForRelink = vi.fn(async () => undefined)
@@ -21,7 +21,7 @@ const {
         getCurrentBook: vi.fn(),
         onLibraryBookOpen: vi.fn(),
         nodes,
-        vfsStore: {
+        viewerFileCapability: {
             nodes,
             restoreFileAccess,
             waitForRelink,
@@ -38,7 +38,7 @@ const {
 
 vi.mock("$app/navigation", () => ({ goto }))
 vi.mock("$app/paths", () => ({ resolve: (path: string) => path }))
-vi.mock("$lib/modules/documents", () => ({ vfsStore }))
+vi.mock("../viewerHost", () => ({ viewerFileCapability }))
 vi.mock("$lib/modules/settings", () => ({ localizedPath: (path: string) => path }))
 vi.mock("../stores/viewerStore.svelte", () => ({
     viewerStore: { setCurrentBook, getCurrentBook },
@@ -60,23 +60,24 @@ describe("viewer.open integration", () => {
     beforeEach(() => {
         vi.clearAllMocks()
         getCurrentBook.mockReset()
-        vfsStore.getFileUrl.mockReset()
-        vfsStore.getContentGeneration.mockReturnValue(0)
-        vfsStore.isCurrentContent.mockReturnValue(true)
-        vfsStore.isCurrentFileUrl.mockReturnValue(true)
+        viewerFileCapability.getFileUrl.mockReset()
+        viewerFileCapability.getContentGeneration.mockReturnValue(0)
+        viewerFileCapability.isCurrentContent.mockReturnValue(true)
+        viewerFileCapability.isCurrentFileUrl.mockReturnValue(true)
         for (const id of Object.keys(nodes)) delete nodes[id]
-        for (const id of Object.keys(vfsStore.fileUrls)) delete vfsStore.fileUrls[id]
+        for (const id of Object.keys(viewerFileCapability.fileUrls))
+            delete viewerFileCapability.fileUrls[id]
     })
 
     it("opens an accessible file and navigates only after the viewer accepts it", async () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "blob:book", isLocked: false }
-        vfsStore.fileUrls.book = "blob:book"
+        viewerFileCapability.fileUrls.book = "blob:book"
         const onFileAccessFailure = vi.fn()
 
         await createViewerOpenCommand({ onFileAccessFailure }).run({ bookId: "book" })
 
         expect(setCurrentBook).toHaveBeenCalledWith({ id: "book", name: "Book", url: "blob:book" })
-        expect(vfsStore.clearForwardHistory).toHaveBeenCalledOnce()
+        expect(viewerFileCapability.clearForwardHistory).toHaveBeenCalledOnce()
         expect(goto).toHaveBeenCalledWith("/viewer")
         expect(onFileAccessFailure).not.toHaveBeenCalled()
     })
@@ -87,7 +88,7 @@ describe("viewer.open integration", () => {
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
-        expect(vfsStore.getFileUrl).not.toHaveBeenCalled()
+        expect(viewerFileCapability.getFileUrl).not.toHaveBeenCalled()
         expect(setCurrentBook).toHaveBeenCalledWith({
             id: "book",
             name: "Book",
@@ -97,7 +98,7 @@ describe("viewer.open integration", () => {
 
     it("rejects a supplied URL that is no longer current", async () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "blob:old", isLocked: false }
-        vfsStore.isCurrentFileUrl.mockReturnValue(false)
+        viewerFileCapability.isCurrentFileUrl.mockReturnValue(false)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
@@ -107,13 +108,13 @@ describe("viewer.open integration", () => {
 
     it("does not navigate when the viewer rejects a book after URL acquisition", async () => {
         nodes.book = { id: "book", type: "file", name: "Book", isLocked: false }
-        vfsStore.getFileUrl.mockResolvedValue("blob:book")
+        viewerFileCapability.getFileUrl.mockResolvedValue("blob:book")
         setCurrentBook.mockResolvedValueOnce(false)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
         expect(setCurrentBook).toHaveBeenCalledWith({ id: "book", name: "Book", url: "blob:book" })
-        expect(vfsStore.clearForwardHistory).not.toHaveBeenCalled()
+        expect(viewerFileCapability.clearForwardHistory).not.toHaveBeenCalled()
         expect(goto).not.toHaveBeenCalled()
     })
 
@@ -121,14 +122,14 @@ describe("viewer.open integration", () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "old", isLocked: true }
         restoreFileAccess.mockImplementation(async () => {
             nodes.book = { ...nodes.book, url: "restored", isLocked: false }
-            vfsStore.fileUrls.book = "restored"
+            viewerFileCapability.fileUrls.book = "restored"
             return "restored"
         })
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
         expect(restoreFileAccess).toHaveBeenCalledWith("book")
-        expect(vfsStore.getFileUrl).not.toHaveBeenCalled()
+        expect(viewerFileCapability.getFileUrl).not.toHaveBeenCalled()
         expect(setCurrentBook).toHaveBeenCalledWith(expect.objectContaining({ url: "restored" }))
         expect(goto).toHaveBeenCalledWith("/viewer")
     })
@@ -139,12 +140,12 @@ describe("viewer.open integration", () => {
             nodes.book = { ...nodes.book, url: "blob:restored", isLocked: false }
             return "blob:restored"
         })
-        vfsStore.isCurrentFileUrl.mockReturnValue(false)
-        vfsStore.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.isCurrentFileUrl.mockReturnValue(false)
+        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
-        expect(vfsStore.revokeFileUrl).toHaveBeenCalledWith("book", "blob:restored")
+        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("book", "blob:restored")
         expect(setCurrentBook).not.toHaveBeenCalled()
     })
 
@@ -159,12 +160,12 @@ describe("viewer.open integration", () => {
                 nodes.book = { ...nodes.book, url: "blob:second", isLocked: false }
                 return "blob:second"
             })
-        vfsStore.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
         expect(restoreFileAccess).toHaveBeenCalledTimes(2)
-        expect(vfsStore.revokeFileUrl).toHaveBeenCalledWith("book", "blob:first")
+        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("book", "blob:first")
         expect(setCurrentBook).toHaveBeenCalledWith(
             expect.objectContaining({ id: "book", url: "blob:second" }),
         )
@@ -172,7 +173,7 @@ describe("viewer.open integration", () => {
 
     it("ignores an older overlapping open after its file access resolves", async () => {
         let resolveFirst: ((url: string) => void) | undefined
-        vfsStore.getFileUrl.mockImplementation((id: string) =>
+        viewerFileCapability.getFileUrl.mockImplementation((id: string) =>
             id === "first"
                 ? new Promise<string>((resolve) => {
                       resolveFirst = resolve
@@ -201,13 +202,13 @@ describe("viewer.open integration", () => {
 
     it("releases an overlapping URL through the VFS owner when it is cached", async () => {
         let resolveFirst: ((url: string) => void) | undefined
-        vfsStore.getFileUrl.mockImplementationOnce(
+        viewerFileCapability.getFileUrl.mockImplementationOnce(
             () =>
                 new Promise<string>((resolve) => {
                     resolveFirst = resolve
                 }),
         )
-        vfsStore.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
         nodes.first = { id: "first", type: "file", name: "First", isLocked: false }
         nodes.second = {
             id: "second",
@@ -224,7 +225,7 @@ describe("viewer.open integration", () => {
         resolveFirst?.("blob:first")
         await firstOpen
 
-        expect(vfsStore.revokeFileUrl).toHaveBeenCalledWith("first", "blob:first")
+        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("first", "blob:first")
     })
 
     it("keeps the transferred shared URL lease when an older same-book open becomes stale", async () => {
@@ -235,7 +236,7 @@ describe("viewer.open integration", () => {
                     resolveFirst = resolve
                 }),
         )
-        vfsStore.getFileUrl.mockResolvedValue("blob:shared")
+        viewerFileCapability.getFileUrl.mockResolvedValue("blob:shared")
         nodes.book = { id: "book", type: "file", name: "Book", isLocked: false }
         const command = createViewerOpenCommand({ onFileAccessFailure: vi.fn() })
 
@@ -249,7 +250,7 @@ describe("viewer.open integration", () => {
 
         // Acceptance transferred the older operation's lease to the active viewer. A newer
         // same-book reuse must not let the stale older command release that lease.
-        expect(vfsStore.revokeFileUrl).not.toHaveBeenCalledWith("book", "blob:shared")
+        expect(viewerFileCapability.revokeFileUrl).not.toHaveBeenCalledWith("book", "blob:shared")
     })
 
     it("does not revoke the active URL when an older accepted open loses to reuse failure", async () => {
@@ -257,10 +258,10 @@ describe("viewer.open integration", () => {
         let resolveFirstAcceptance!: () => void
         let fileUrlChecks = 0
         const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
-        vfsStore.getFileUrl.mockImplementation(
+        viewerFileCapability.getFileUrl.mockImplementation(
             () => new Promise<string>((resolve) => (resolveFirstUrl = resolve)),
         )
-        vfsStore.isCurrentFileUrl.mockImplementation(() => ++fileUrlChecks > 1)
+        viewerFileCapability.isCurrentFileUrl.mockImplementation(() => ++fileUrlChecks > 1)
         nodes.book = { id: "book", type: "file", name: "Book", isLocked: false }
         getCurrentBook.mockReturnValue({ id: "book", url: "blob:active" })
         const error = new Error("newer same-book open failed")
@@ -293,7 +294,7 @@ describe("viewer.open integration", () => {
             )
             .mockImplementationOnce(async () => {
                 nodes.book = { ...nodes.book, url: "restored", isLocked: false }
-                vfsStore.fileUrls.book = "restored"
+                viewerFileCapability.fileUrls.book = "restored"
                 return "restored"
             })
 
@@ -317,7 +318,7 @@ describe("viewer.open integration", () => {
 
         expect(onFileAccessFailure).toHaveBeenCalledWith({ bookId: "book", error })
         expect(setCurrentBook).not.toHaveBeenCalled()
-        expect(vfsStore.clearForwardHistory).not.toHaveBeenCalled()
+        expect(viewerFileCapability.clearForwardHistory).not.toHaveBeenCalled()
         expect(goto).not.toHaveBeenCalled()
     })
 
@@ -333,7 +334,7 @@ describe("viewer.open integration", () => {
 
         expect(onFileAccessFailure).not.toHaveBeenCalled()
         expect(setCurrentBook).toHaveBeenLastCalledWith(null)
-        expect(vfsStore.clearForwardHistory).not.toHaveBeenCalled()
+        expect(viewerFileCapability.clearForwardHistory).not.toHaveBeenCalled()
         expect(goto).not.toHaveBeenCalled()
     })
 

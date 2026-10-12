@@ -4,9 +4,41 @@ import { pushState } from "$app/navigation"
 import type { DocumentOutlineEntry } from "$lib/document-model"
 import { vfsStore } from "$lib/modules/documents"
 import { type Book, fileNodeToBook } from "./viewerStore.types"
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from "$lib/shared/state/safeStorage"
+import type { StorageNamespace } from "$lib/extension-api"
 
 class ViewerStore {
+    private storage: StorageNamespace | undefined
+    private storageGeneration = 0
+    private persistenceQueue: Promise<void> = Promise.resolve()
+
+    async configureStorage(storage: StorageNamespace): Promise<void> {
+        this.storage = storage
+        const generation = ++this.storageGeneration
+        const bookSwitchGeneration = this.bookSwitchGeneration
+        try {
+            const savedBook = await storage.get<Book>("book")
+            if (
+                this.disposed ||
+                generation !== this.storageGeneration ||
+                bookSwitchGeneration !== this.bookSwitchGeneration ||
+                this.book ||
+                !savedBook
+            )
+                return
+            this.book = {
+                ...savedBook,
+                url: savedBook.url?.startsWith("blob:") ? "" : savedBook.url,
+                previewDataUrl: savedBook.previewDataUrl?.startsWith("blob:")
+                    ? ""
+                    : savedBook.previewDataUrl,
+            }
+            this.currentPage = savedBook.pageNumber || 1
+            this.scrollPosition = savedBook.scrollPosition || 0
+        } catch (error) {
+            console.error("[ViewerStore] Failed to restore book:", error)
+        }
+    }
+
     private book = $state<Book | null>(null)
     private outlineList = $state<DocumentOutlineEntry[] | null>(null)
     private totalPages = $state<number>(0)
@@ -24,7 +56,7 @@ class ViewerStore {
     private readonly pendingBookSwitches = new Map<string, number>()
     private readonly deferredStaleUrls = new Map<string, { id: string; url: string }[]>()
     private readonly vfsUnsubscribers: (() => void)[] = []
-    private readonly flush = () => this.persistToLocalStorage(true)
+    private readonly flush = () => this.persistViewerState(true)
     private readonly handleVisibilityChange = () => {
         if (document.visibilityState === "hidden") this.flush()
     }
@@ -49,21 +81,6 @@ class ViewerStore {
         )
 
         if (browser) {
-            const savedBook = safeStorageGet("book")
-            if (savedBook) {
-                try {
-                    const parsed = JSON.parse(savedBook) as Book
-                    // Clean up any stale blob URLs from storage
-                    if (parsed.url?.startsWith("blob:")) parsed.url = ""
-                    if (parsed.previewDataUrl?.startsWith("blob:")) parsed.previewDataUrl = ""
-                    this.book = parsed
-                    this.currentPage = parsed.pageNumber || 1
-                    this.scrollPosition = parsed.scrollPosition || 0
-                } catch (e) {
-                    console.error("Failed to parse book from localStorage", e)
-                }
-            }
-
             window.addEventListener("visibilitychange", this.handleVisibilityChange)
             window.addEventListener("beforeunload", this.flush)
             this.listening = true
@@ -193,7 +210,7 @@ class ViewerStore {
         if (oldBook.url) this.releaseStaleUrl(oldBook.id, oldBook.url)
         this.book = null
         vfsStore.activeFileId = null
-        this.persistToLocalStorage(true)
+        this.persistViewerState(true)
     }
 
     async syncWithBooks() {
@@ -272,7 +289,7 @@ class ViewerStore {
 
     private saveTimeout: ReturnType<typeof setTimeout> | null = null
 
-    private persistToLocalStorage(immediate = false) {
+    private persistViewerState(immediate = false) {
         if (!browser) return
 
         if (this.saveTimeout) {
@@ -281,15 +298,21 @@ class ViewerStore {
         }
 
         const save = () => {
+            const storage = this.storage
+            if (!storage) return
+            let savedBook: Book | undefined
             if (this.book) {
                 const clean = { ...this.book }
                 // Never persist blob URLs
                 if (clean.url?.startsWith("blob:")) clean.url = ""
                 if (clean.previewDataUrl?.startsWith("blob:")) clean.previewDataUrl = ""
-                safeStorageSet("book", JSON.stringify(clean))
-            } else {
-                safeStorageRemove("book")
+                savedBook = clean
             }
+            this.persistenceQueue = this.persistenceQueue
+                .then(() => (savedBook ? storage.set("book", savedBook) : storage.delete("book")))
+                .catch((error) => {
+                    console.error("[ViewerStore] Failed to persist book:", error)
+                })
         }
 
         if (immediate) {
@@ -397,7 +420,7 @@ class ViewerStore {
                             url: "",
                             isLocked: vfsStore.isLockedMap[newBook.id] ?? true,
                         }
-                        this.persistToLocalStorage(true)
+                        this.persistViewerState(true)
                     }
                     return false
                 }
@@ -415,7 +438,7 @@ class ViewerStore {
         // Set the active book state only after a missing URL has been resolved.
         this.book = newBook
         vfsStore.activeFileId = newBookId ?? null
-        this.persistToLocalStorage(true)
+        this.persistViewerState(true)
 
         if (newBook) {
             this.currentPage = newBook.pageNumber || 1
@@ -432,7 +455,7 @@ class ViewerStore {
                 if (hasChanges) {
                     this.book = { ...newBook }
                 }
-                this.persistToLocalStorage(true)
+                this.persistViewerState(true)
             }
         }
         return true
@@ -505,7 +528,7 @@ class ViewerStore {
             }
 
             this.book = book
-            this.persistToLocalStorage(false)
+            this.persistViewerState(false)
         }
     }
 }

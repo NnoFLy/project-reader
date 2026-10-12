@@ -1,4 +1,4 @@
-import { isSerializablePayload } from "$lib/modules/commands"
+import { isSerializablePayload } from "./serializable"
 
 export interface ViewerOpenPayload {
     bookId?: string

@@ -1,4 +1,4 @@
-import type { FileNode } from "$lib/modules/documents"
+import type { ViewerFileNode } from "../viewerHost"
 
 export interface Book {
     id: string
@@ -14,7 +14,7 @@ export interface Book {
     author?: string | null
 }
 
-export function fileNodeToBook(node: FileNode): Book {
+export function fileNodeToBook(node: ViewerFileNode): Book {
     return {
         id: node.id,
         name: node.name,

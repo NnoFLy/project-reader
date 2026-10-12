@@ -1,7 +1,7 @@
 import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
 import { commandsStore, defineCommands } from "$lib/modules/commands"
-import { vfsStore, type FileNode } from "$lib/modules/documents"
+import { viewerFileCapability, type ViewerFileNode } from "../viewerHost"
 import { localizedPath } from "$lib/modules/settings"
 import { viewerStore } from "../stores/viewerStore.svelte"
 import type { ViewerPayload } from "./viewerCommandPayloads"
@@ -30,14 +30,15 @@ export function createViewerOpenCommand(options: {
         if (!refs) return
         if (refs > 1) pendingFileUrlRefs.set(key, refs - 1)
         else pendingFileUrlRefs.delete(key)
-        // Every tracked acquisition owns one VFS lease. Releasing one lease must not be
-        // skipped merely because another open currently points at the same URL. If the VFS
+        // Every tracked acquisition owns one file capability lease. Releasing one lease must not be
+        // skipped merely because another open currently points at the same URL. If the capability
         // lease is already gone, only revoke an unowned URL; an active matching book may still
         // publish this exact URL after a newer same-book open reused it.
-        if (stale && !vfsStore.revokeFileUrl(id, url)) {
+        if (stale && !viewerFileCapability.revokeFileUrl(id, url)) {
             const activeBook = viewerStore.getCurrentBook()
             const isPublishedByActiveBook = activeBook?.id === id && activeBook.url === url
-            if (!isPublishedByActiveBook && vfsStore.fileUrls[id] !== url) URL.revokeObjectURL(url)
+            if (!isPublishedByActiveBook && viewerFileCapability.fileUrls[id] !== url)
+                URL.revokeObjectURL(url)
         }
     }
     const releaseAllFileUrls = (
@@ -69,7 +70,9 @@ export function createViewerOpenCommand(options: {
                 }
 
                 const generation = ++openGeneration
-                let fileNode = vfsStore.nodes[payload.bookId] as FileNode | undefined
+                let fileNode = viewerFileCapability.nodes[payload.bookId] as
+                    | ViewerFileNode
+                    | undefined
                 if (!fileNode || fileNode.type !== "file") return
 
                 const acquiredLeases: { id: string; url: string }[] = []
@@ -78,7 +81,9 @@ export function createViewerOpenCommand(options: {
                 let attemptedBookUrl = ""
                 while (fileNode.isLocked) {
                     try {
-                        const restoredUrl = await vfsStore.restoreFileAccess(fileNode.id)
+                        const restoredUrl = await viewerFileCapability.restoreFileAccess(
+                            fileNode.id,
+                        )
                         if (restoredUrl) {
                             acquiredUrl = restoredUrl
                             trackFileUrl(fileNode.id, restoredUrl)
@@ -88,7 +93,7 @@ export function createViewerOpenCommand(options: {
                             releaseAllFileUrls(acquiredLeases)
                             return
                         }
-                        fileNode = vfsStore.nodes[fileNode.id] as FileNode
+                        fileNode = viewerFileCapability.nodes[fileNode.id] as ViewerFileNode
                         if (!fileNode || fileNode.type !== "file") {
                             releaseAllFileUrls(acquiredLeases)
                             return
@@ -99,12 +104,12 @@ export function createViewerOpenCommand(options: {
                             return
                         }
                         if (error instanceof Error && error.name === "ContentSupersededError") {
-                            await vfsStore.waitForRelink(fileNode.id)
+                            await viewerFileCapability.waitForRelink(fileNode.id)
                             if (generation !== openGeneration) {
                                 releaseAllFileUrls(acquiredLeases)
                                 return
                             }
-                            fileNode = vfsStore.nodes[fileNode.id] as FileNode
+                            fileNode = viewerFileCapability.nodes[fileNode.id] as ViewerFileNode
                             if (!fileNode || fileNode.type !== "file") {
                                 releaseAllFileUrls(acquiredLeases)
                                 return
@@ -120,12 +125,16 @@ export function createViewerOpenCommand(options: {
 
                 try {
                     const book = fileNodeToBook(fileNode)
-                    const contentGeneration = vfsStore.getContentGeneration(fileNode.id)
+                    const contentGeneration = viewerFileCapability.getContentGeneration(fileNode.id)
                     const activeBook = viewerStore.getCurrentBook()
                     const reusableUrl =
                         activeBook?.id === fileNode.id &&
                         activeBook.url &&
-                        vfsStore.isCurrentFileUrl(fileNode.id, activeBook.url, contentGeneration)
+                        viewerFileCapability.isCurrentFileUrl(
+                            fileNode.id,
+                            activeBook.url,
+                            contentGeneration,
+                        )
                     // Reopening the active book reuses its existing lease instead of
                     // acquiring another viewer claim for the same Object URL.
                     if (reusableUrl) {
@@ -134,13 +143,17 @@ export function createViewerOpenCommand(options: {
                     } else if (acquiredUrl) book.url = acquiredUrl
                     if (
                         book.url &&
-                        !vfsStore.isCurrentFileUrl(fileNode.id, book.url, contentGeneration)
+                        !viewerFileCapability.isCurrentFileUrl(
+                            fileNode.id,
+                            book.url,
+                            contentGeneration,
+                        )
                     ) {
                         releaseAllFileUrls(acquiredLeases)
                         return
                     }
                     if (!book.url) {
-                        book.url = await vfsStore.getFileUrl(fileNode.id)
+                        book.url = await viewerFileCapability.getFileUrl(fileNode.id)
                         if (book.url) {
                             acquiredUrl = book.url
                             trackFileUrl(fileNode.id, book.url)
@@ -149,7 +162,7 @@ export function createViewerOpenCommand(options: {
                     }
                     if (
                         generation !== openGeneration ||
-                        !vfsStore.isCurrentContent(fileNode.id, contentGeneration)
+                        !viewerFileCapability.isCurrentContent(fileNode.id, contentGeneration)
                     ) {
                         releaseAllFileUrls(acquiredLeases)
                         return
@@ -162,7 +175,13 @@ export function createViewerOpenCommand(options: {
                         releaseAllFileUrls(acquiredLeases)
                         return
                     }
-                    if (!vfsStore.isCurrentFileUrl(fileNode.id, book.url, contentGeneration)) {
+                    if (
+                        !viewerFileCapability.isCurrentFileUrl(
+                            fileNode.id,
+                            book.url,
+                            contentGeneration,
+                        )
+                    ) {
                         releaseAllFileUrls(acquiredLeases)
                         return
                     }
@@ -202,7 +221,7 @@ export function createViewerOpenCommand(options: {
                     throw error
                 }
 
-                vfsStore.clearForwardHistory()
+                viewerFileCapability.clearForwardHistory()
                 await goto(resolve(localizedPath("/viewer") as any))
             },
         },

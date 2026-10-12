@@ -50,6 +50,16 @@ describe("built-in contributions", () => {
             "library.node.relink",
             "prompt.open",
             "prompt.close",
+            "viewer.open",
+            "settings.theme",
+            "settings.layout",
+            "settings.language",
+            "settings.zoom.in",
+            "settings.zoom.out",
+            "settings.quality.in",
+            "settings.quality.out",
+            "settings.animations.toggle",
+            "settings.pdf-title.toggle",
         ])
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
 
