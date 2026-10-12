@@ -350,6 +350,21 @@ describe("notesStore live editing", () => {
         await loading
     })
 
+    it("logs a sanitized diagnostic when loading fails", async () => {
+        const error = new Error("secret note content")
+        getByBookId.mockRejectedValueOnce(error)
+        const log = vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        await notesStore.loadNotesForBook("book-1")
+
+        expect(log).toHaveBeenCalledWith("[NotesStore] Failed to load notes:", {
+            code: "ViewerStorageError",
+            message: "Unable to load notes",
+        })
+        expect(JSON.stringify(log.mock.calls[0])).not.toContain(error.message)
+        log.mockRestore()
+    })
+
     it("does not publish a pending load after disposal", async () => {
         let resolveLoad!: (records: (typeof note)[]) => void
         getByBookId.mockImplementationOnce(

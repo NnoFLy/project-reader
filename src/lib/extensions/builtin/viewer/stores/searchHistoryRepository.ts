@@ -1,3 +1,5 @@
+import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
+
 const STORAGE_KEY = "viewer.searchHistory.v1"
 const LEGACY_STORAGE_KEY = "search_history"
 const HISTORY_LIMIT = 10
@@ -59,7 +61,10 @@ export class LocalSearchHistoryRepository implements SearchHistoryRepository {
         try {
             this.storage?.setItem(STORAGE_KEY, JSON.stringify(histories))
         } catch (error) {
-            console.error("[SearchHistoryRepository] Failed to save search history:", error)
+            console.error(
+                "[SearchHistoryRepository] Failed to save search history:",
+                getViewerStorageErrorDiagnostic(error, "Unable to save search history"),
+            )
         }
     }
 }

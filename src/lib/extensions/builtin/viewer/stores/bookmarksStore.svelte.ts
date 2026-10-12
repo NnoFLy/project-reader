@@ -7,6 +7,7 @@ import {
     viewerLibraryMutationCapability as vfsMutations,
     type Bookmark,
 } from "../viewerHost"
+import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
 
 class BookmarksStore {
     private files = getViewerLibraryCapability() ?? vfsStore
@@ -97,8 +98,11 @@ class BookmarksStore {
             this.bookmarks = loaded
                 .filter((bookmark) => validBookIds.has(bookmark.bookId))
                 .sort((a, b) => b.createdAt - a.createdAt)
-        } catch (e) {
-            console.error("[BookmarksStore] Failed to load bookmarks:", e)
+        } catch (error) {
+            console.error(
+                "[BookmarksStore] Failed to load bookmarks:",
+                getViewerStorageErrorDiagnostic(error, "Unable to load bookmarks"),
+            )
         }
     }
 
@@ -145,8 +149,11 @@ class BookmarksStore {
             this.bookmarks.unshift(bookmark)
             this.bookmarks = [...this.bookmarks] // force reactivity
             return bookmark
-        } catch (e) {
-            console.error("[BookmarksStore] Failed to add bookmark:", e)
+        } catch (error) {
+            console.error(
+                "[BookmarksStore] Failed to add bookmark:",
+                getViewerStorageErrorDiagnostic(error, "Unable to add bookmark"),
+            )
             return null
         } finally {
             this.loadGeneration++
@@ -195,8 +202,11 @@ class BookmarksStore {
                 if (index === -1) return
                 this.bookmarks[index] = updated
                 this.bookmarks = [...this.bookmarks]
-            } catch (e) {
-                console.error("[BookmarksStore] Failed to update bookmark:", e)
+            } catch (error) {
+                console.error(
+                    "[BookmarksStore] Failed to update bookmark:",
+                    getViewerStorageErrorDiagnostic(error, "Unable to update bookmark"),
+                )
             } finally {
                 this.loadGeneration++
             }
@@ -273,8 +283,11 @@ class BookmarksStore {
             )
                 return
             this.bookmarks = this.bookmarks.filter((b) => b.id !== id)
-        } catch (e) {
-            console.error("[BookmarksStore] Failed to delete bookmark:", e)
+        } catch (error) {
+            console.error(
+                "[BookmarksStore] Failed to delete bookmark:",
+                getViewerStorageErrorDiagnostic(error, "Unable to delete bookmark"),
+            )
         } finally {
             // Clear only this deletion's tombstone. A newer deletion generation remains
             // protected while a completed deletion does not leave the bookmark permanently

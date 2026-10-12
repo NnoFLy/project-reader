@@ -349,6 +349,21 @@ describe("bookmarksStore book deletion races", () => {
         expect(bookmarksStore.bookmarks).toEqual([])
     })
 
+    it("logs a sanitized diagnostic when loading fails", async () => {
+        const error = new Error("secret bookmark content")
+        getAll.mockRejectedValueOnce(error)
+        const log = vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        await bookmarksStore.loadAllBookmarks()
+
+        expect(log).toHaveBeenCalledWith("[BookmarksStore] Failed to load bookmarks:", {
+            code: "ViewerStorageError",
+            message: "Unable to load bookmarks",
+        })
+        expect(JSON.stringify(log.mock.calls[0])).not.toContain(error.message)
+        log.mockRestore()
+    })
+
     it("does not publish a bookmark write that finishes after disposal", async () => {
         let resolvePut!: () => void
         put.mockImplementationOnce(

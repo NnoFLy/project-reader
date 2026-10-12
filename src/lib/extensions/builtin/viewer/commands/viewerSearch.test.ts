@@ -259,4 +259,24 @@ describe("search history repository", () => {
         broken.setItem("viewer.searchHistory.v1", "not-json")
         expect(new LocalSearchHistoryRepository(broken).load("book")).toEqual([])
     })
+
+    it("logs a sanitized diagnostic when persistence fails", () => {
+        const error = new Error("secret query and document text")
+        const broken = {
+            ...storage(),
+            setItem: () => {
+                throw error
+            },
+        }
+        const log = vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        new LocalSearchHistoryRepository(broken).save("book", ["query"])
+
+        expect(log).toHaveBeenCalledWith(
+            "[SearchHistoryRepository] Failed to save search history:",
+            { code: "ViewerStorageError", message: "Unable to save search history" },
+        )
+        expect(JSON.stringify(log.mock.calls[0])).not.toContain(error.message)
+        log.mockRestore()
+    })
 })

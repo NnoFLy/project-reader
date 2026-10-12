@@ -9,6 +9,7 @@ import {
     viewerLibraryMutationCapability as vfsMutations,
     type UserNote,
 } from "../viewerHost"
+import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
 
 export interface SelectionState {
     bookId: string
@@ -188,8 +189,11 @@ class NotesStore {
             this.editorCoords = null
             this.pageRanges.clear()
             this.updateCSSHighlights()
-        } catch (e) {
-            console.error("[NotesStore] Failed to load notes:", e)
+        } catch (error) {
+            console.error(
+                "[NotesStore] Failed to load notes:",
+                getViewerStorageErrorDiagnostic(error, "Unable to load notes"),
+            )
         }
     }
 
@@ -279,8 +283,11 @@ class NotesStore {
             // Trigger highlight refresh
             this.queueHighlightUpdate()
             return note
-        } catch (e) {
-            console.error("[NotesStore] Failed to add note:", e)
+        } catch (error) {
+            console.error(
+                "[NotesStore] Failed to add note:",
+                getViewerStorageErrorDiagnostic(error, "Unable to add note"),
+            )
             return null
         } finally {
             this.invalidateBookLoad(bookId)
@@ -360,8 +367,11 @@ class NotesStore {
                 // An active deletion tombstone is serialized after this write and owns cleanup.
                 // Store disposal likewise must not delete an already persisted note.
             }
-        } catch (e) {
-            console.error("[NotesStore] Failed to update note:", e)
+        } catch (error) {
+            console.error(
+                "[NotesStore] Failed to update note:",
+                getViewerStorageErrorDiagnostic(error, "Unable to update note"),
+            )
         } finally {
             this.invalidateBookLoad(note.bookId)
         }
@@ -448,8 +458,11 @@ class NotesStore {
                 this.editorCoords = null
             }
             this.queueHighlightUpdate()
-        } catch (e) {
-            console.error("[NotesStore] Failed to delete note:", e)
+        } catch (error) {
+            console.error(
+                "[NotesStore] Failed to delete note:",
+                getViewerStorageErrorDiagnostic(error, "Unable to delete note"),
+            )
         } finally {
             // Clear only this deletion's tombstone. A newer deletion generation remains
             // protected while a completed deletion does not leave the note permanently blocked.
@@ -585,8 +598,11 @@ class NotesStore {
                 CSS.highlights.set("user-note-purple", new Highlight(...purpleRanges))
                 // @ts-ignore
                 CSS.highlights.set("user-note-active", new Highlight(...activeRanges))
-            } catch (e) {
-                console.error("[NotesStore] Failed to update CSS Highlights:", e)
+            } catch (error) {
+                console.error(
+                    "[NotesStore] Failed to update CSS Highlights:",
+                    getViewerStorageErrorDiagnostic(error, "Unable to update note highlights"),
+                )
             }
         })
     }

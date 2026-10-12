@@ -163,15 +163,20 @@
 
         const notificationService = hostContext.application.host.notifications
         const notificationTimers = new Map<string, number>()
-        const dismiss = (id: string) => {
+        const removeFromView = (id: string) => {
             const timer = notificationTimers.get(id)
             if (timer !== undefined) window.clearTimeout(timer)
             notificationTimers.delete(id)
-            notificationService.dismiss(id)
             notifications = notifications.filter((current) => current.id !== id)
         }
+        const dismiss = (id: string) => {
+            removeFromView(id)
+            notificationService.dismiss(id)
+        }
         const show = (notification: Notification) => {
-            dismiss(notification.id)
+            // Replacing the view must not dispose the service handle for a newly shown
+            // notification. The service owns that handle and its caller may still need it.
+            removeFromView(notification.id)
             notifications = [...notifications, notification]
             notificationTimers.set(
                 notification.id,
