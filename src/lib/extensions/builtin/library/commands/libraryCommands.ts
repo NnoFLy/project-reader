@@ -137,7 +137,7 @@ async function moveNodes(
             await vfsStore.moveNode(id, targetFolderId)
         } catch (error) {
             console.error(`Failed to move node ${id}:`, error)
-            alert(error instanceof Error ? error.message : String(error))
+            alert(m.folder_rename_failed())
         }
     }
     libraryUI.nodeToMoveId = null

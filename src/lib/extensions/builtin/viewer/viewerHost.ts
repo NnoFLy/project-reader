@@ -1,8 +1,14 @@
-import type { StorageNamespace } from "$lib/extension-api"
+import type { CommandRegistry, StorageNamespace } from "$lib/extension-api"
+import type { CommandScope } from "$lib/modules/commands"
+import type { PromptService } from "$lib/modules/prompt"
+
 export interface ViewerPromptCapability {
-    promptStore: any
-    getPromptCommandRegistry: () => any
-    openCommandPalette: (source?: any, initialQuery?: string) => Promise<void>
+    promptStore: PromptService
+    getPromptCommandRegistry: () => CommandRegistry | undefined
+    openCommandPalette: (
+        source?: CommandScope | CommandRegistry,
+        initialQuery?: string,
+    ) => Promise<void>
 }
 
 export interface ViewerLibraryCapability {

@@ -166,6 +166,27 @@ describe("library commands", () => {
         scope.destroy()
     })
 
+    it("shows a localized move failure without exposing the internal error", async () => {
+        const error = new Error("sensitive storage details")
+        const moveNode = vi.spyOn(vfsStore, "moveNode").mockRejectedValueOnce(error)
+        const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {})
+        const alert = vi.fn()
+        vi.stubGlobal("alert", alert)
+
+        await libraryCommands["library.node.move"].run({
+            nodeId: "book",
+            targetFolderId: null,
+        })
+
+        expect(diagnostic).toHaveBeenCalledWith("Failed to move node book:", error)
+        expect(alert).toHaveBeenCalledWith(m.folder_rename_failed())
+        expect(alert).not.toHaveBeenCalledWith(error.message)
+
+        moveNode.mockRestore()
+        diagnostic.mockRestore()
+        vi.unstubAllGlobals()
+    })
+
     it("allows a card entity move while bulk selection mode is off", async () => {
         const parent = new CommandScope()
         parent.register(libraryCommands["library.node.move"])
