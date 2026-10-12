@@ -25,6 +25,7 @@ import type {
     RenderedPage,
 } from "$lib/document-model"
 import pLimit from "p-limit"
+import { getLibraryErrorDiagnostic } from "./libraryDiagnostics"
 
 /** The host-owned document capability shared with the viewer. */
 export interface VfsDocumentService {
@@ -575,7 +576,7 @@ export class VFSStore {
                     this.resourceCleanupFailures.set(id, error)
                     console.error(
                         `[VFSStore] Failed to persist pending cleanup marker for ${id}:`,
-                        error,
+                        getLibraryErrorDiagnostic(error),
                     )
                 } else {
                     await new Promise<void>((resolve) =>
@@ -623,7 +624,10 @@ export class VFSStore {
             )
             return true
         } catch (error) {
-            console.error(`[VFSStore] Failed to clean up resource-limited file ${id}:`, error)
+            console.error(
+                `[VFSStore] Failed to clean up resource-limited file ${id}:`,
+                getLibraryErrorDiagnostic(error),
+            )
             return false
         }
     }
@@ -683,7 +687,7 @@ export class VFSStore {
             } catch (error) {
                 this.initialized = false
                 if (error instanceof VFSDisposedError) return
-                console.error("VFS initialization failed:", error)
+                console.error("VFS initialization failed:", getLibraryErrorDiagnostic(error))
                 throw error
             }
         }).catch((error: unknown) => {
@@ -801,7 +805,10 @@ export class VFSStore {
             )
         } catch (error) {
             if (!signal.aborted) {
-                console.warn(`[VFSStore] Failed to enrich metadata for node ${id}:`, error)
+                console.warn(
+                    `[VFSStore] Failed to enrich metadata for node ${id}:`,
+                    getLibraryErrorDiagnostic(error),
+                )
             }
         } finally {
             if (this.activeMetadataDocument === doc) this.activeMetadataDocument = null
@@ -1004,7 +1011,7 @@ export class VFSStore {
                 } catch (err) {
                     console.warn(
                         `[VFSStore] Failed to dynamically generate preview for node ${id}:`,
-                        err,
+                        getLibraryErrorDiagnostic(err),
                     )
                 } finally {
                     await this.awaitUnlessDisposed(closeDocument(doc)).catch(() => undefined)
@@ -1012,7 +1019,7 @@ export class VFSStore {
                 }
             }
         } catch (e) {
-            console.error(`Failed to load preview for node ${id}:`, e)
+            console.error(`Failed to load preview for node ${id}:`, getLibraryErrorDiagnostic(e))
         }
         return ""
     }
@@ -1205,7 +1212,7 @@ export class VFSStore {
             } catch (error) {
                 console.error(
                     `[VFSStore] Resource-limited import rollback attempt failed for ${id}:`,
-                    error,
+                    getLibraryErrorDiagnostic(error),
                 )
                 await new Promise<void>((resolve) => setTimeout(resolve, 0))
                 continue
@@ -1354,7 +1361,10 @@ export class VFSStore {
             try {
                 listener(id)
             } catch (error) {
-                console.error("VFS node invalidation listener failed:", error)
+                console.error(
+                    "VFS node invalidation listener failed:",
+                    getLibraryErrorDiagnostic(error),
+                )
             }
         }
     }
@@ -1366,7 +1376,10 @@ export class VFSStore {
             try {
                 listener(id)
             } catch (error) {
-                console.error("VFS content restored listener failed:", error)
+                console.error(
+                    "VFS content restored listener failed:",
+                    getLibraryErrorDiagnostic(error),
+                )
             }
         }
     }
@@ -1643,7 +1656,7 @@ export class VFSStore {
                 }
             }
         } catch (e) {
-            console.error(`Failed to create file URL for node ${id}:`, e)
+            console.error(`Failed to create file URL for node ${id}:`, getLibraryErrorDiagnostic(e))
         }
 
         if (
@@ -1675,7 +1688,10 @@ export class VFSStore {
                 this.isLockedMap[id] = true
             })
         } catch (error) {
-            console.error(`Failed to persist locked state for node ${id}:`, error)
+            console.error(
+                `Failed to persist locked state for node ${id}:`,
+                getLibraryErrorDiagnostic(error),
+            )
         }
         return ""
     }
@@ -1729,7 +1745,10 @@ export class VFSStore {
             })
         } catch (error) {
             if (!(error instanceof VFSDisposedError))
-                console.error(`Failed to persist unlocked state for node ${id}:`, error)
+                console.error(
+                    `Failed to persist unlocked state for node ${id}:`,
+                    getLibraryErrorDiagnostic(error),
+                )
         }
     }
 
@@ -2105,7 +2124,10 @@ export class VFSStore {
                 )
                 return { rejected: true }
             }
-            console.error(`[VFSStore] Failed to persist import ${job.name}:`, error)
+            console.error(
+                `[VFSStore] Failed to persist import ${job.name}:`,
+                getLibraryErrorDiagnostic(error),
+            )
             this.updateImportJob(job.id, { stage: "failed", failure: "persistence" })
             if (!this.disposed) {
                 callbacks.onFailure?.(
@@ -2260,7 +2282,10 @@ export class VFSStore {
                 await rollbackTask.catch(() => "pending" as ResourceRollbackOutcome)
             }
             if (!(error instanceof VFSDisposedError) && !this.disposed) {
-                console.error(`[VFSStore] Failed to enrich import ${job.name}:`, error)
+                console.error(
+                    `[VFSStore] Failed to enrich import ${job.name}:`,
+                    getLibraryErrorDiagnostic(error),
+                )
                 if (!resourceLimitFailure) {
                     callbacks.onFailure?.(
                         { id: job.id, name: job.name, status: "imported" },
@@ -2665,7 +2690,10 @@ export class VFSStore {
                 try {
                     listener(fileIds)
                 } catch (error) {
-                    console.error("VFS node deletion listener failed:", error)
+                    console.error(
+                        "VFS node deletion listener failed:",
+                        getLibraryErrorDiagnostic(error),
+                    )
                 }
             }
         }
@@ -2739,7 +2767,10 @@ export class VFSStore {
                 try {
                     listener(deletedIds)
                 } catch (error) {
-                    console.error("VFS node deleted listener failed:", error)
+                    console.error(
+                        "VFS node deleted listener failed:",
+                        getLibraryErrorDiagnostic(error),
+                    )
                 }
             }
         }
@@ -2848,7 +2879,7 @@ export class VFSStore {
                 blob = await this.awaitUnlessDisposed(response.blob())
                 if (this.disposed) return
             } catch (e) {
-                console.error("Failed to fetch blob for preview", e)
+                console.error("Failed to fetch blob for preview", getLibraryErrorDiagnostic(e))
                 return
             }
         } else {
@@ -3006,7 +3037,10 @@ export class VFSStore {
                     ? (fileSource as File)
                     : await this.awaitUnlessDisposed((fileSource as FileSystemFileHandle).getFile())
             } catch (e) {
-                console.error("Failed to retrieve file object during VFS relinking:", e)
+                console.error(
+                    "Failed to retrieve file object during VFS relinking:",
+                    getLibraryErrorDiagnostic(e),
+                )
                 throw new Error("Failed to retrieve file object during VFS relinking", { cause: e })
             }
 
@@ -3223,7 +3257,10 @@ export class VFSStore {
                     try {
                         listener(id)
                     } catch (error) {
-                        console.error("VFS node relinked listener failed:", error)
+                        console.error(
+                            "VFS node relinked listener failed:",
+                            getLibraryErrorDiagnostic(error),
+                        )
                     }
                 }
             }

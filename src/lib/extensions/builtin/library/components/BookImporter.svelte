@@ -4,6 +4,7 @@
     import Input from "$lib/shared/ui/Input.svelte"
     import * as m from "$lib/paraglide/messages"
     import { vfsStore } from "../state/libraryStore.svelte"
+    import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
     import { useCommands } from "../commands/commandsStore.svelte"
     import { defineCommands } from "../commands/commandsStore.svelte"
     import { publishNotification } from "../state/libraryNotifications"
@@ -45,7 +46,7 @@
                 },
             })
         } catch (error) {
-            console.error("Failed to complete import batch:", error)
+            console.error("Failed to complete import batch:", getLibraryErrorDiagnostic(error))
         } finally {
             isSubmitting = false
         }
@@ -83,7 +84,10 @@
                 )
             } catch (err: unknown) {
                 if (!(err instanceof DOMException && err.name === "AbortError")) {
-                    console.error("showOpenFilePicker failed, falling back to standard input", err)
+                    console.error(
+                        "showOpenFilePicker failed, falling back to standard input",
+                        getLibraryErrorDiagnostic(err, "File picker unavailable"),
+                    )
                     fileInput?.click()
                 }
             } finally {

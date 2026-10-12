@@ -10,6 +10,7 @@
     import { commandsStore } from "../commands/commandsStore.svelte"
     import { defineCommands } from "../commands/commandsStore.svelte"
     import { useModalCommands } from "../commands/commandsStore.svelte"
+    import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
 
     let fileInput = $state<HTMLInputElement | null>(null)
     let locateButton = $state<HTMLButtonElement | null>(null)
@@ -42,7 +43,10 @@
                 }
             } catch (err: any) {
                 if (err.name !== "AbortError") {
-                    console.error("showOpenFilePicker failed, falling back to input", err)
+                    console.error(
+                        "showOpenFilePicker failed, falling back to input",
+                        getLibraryErrorDiagnostic(err, "File picker unavailable"),
+                    )
                     fileInput?.click()
                 }
             }

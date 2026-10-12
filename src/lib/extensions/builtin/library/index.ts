@@ -9,7 +9,7 @@ import {
     LibraryUIController,
 } from "./state/libraryUI.svelte"
 import { configurePromptStorage } from "./commands/promptStore.svelte"
-import type { PromptService } from "$lib/extension-api"
+import type { Disposable, PromptService } from "$lib/extension-api"
 import { configureLibraryStore, installDocumentService } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 import { configureLibraryHostBridge } from "./state/libraryHostBridge"
@@ -53,8 +53,11 @@ export async function activateLibrary(
         prompt: prompt ?? hostPrompt,
         execute: (commandId, payload) => context.commands.execute(commandId, payload),
     })
+    const notificationHandles = new Set<Disposable>()
     configureLibraryNotifications((message, level = "info") => {
-        context.notifications[level](message)
+        const handle = context.notifications[level](message)
+        notificationHandles.add(handle)
+        return handle
     })
 
     const libraryUI = new LibraryUIController()
@@ -89,6 +92,8 @@ export async function activateLibrary(
     })
     context.lifecycle.onDispose(async () => {
         for (const registration of registrations) registration.dispose()
+        for (const handle of notificationHandles) handle.dispose()
+        notificationHandles.clear()
         configureLibraryUIController(undefined)
         configureLibraryHostBridge(undefined)
         configurePromptStorage(undefined)

@@ -178,7 +178,11 @@ describe("library commands", () => {
             targetFolderId: null,
         })
 
-        expect(diagnostic).toHaveBeenCalledWith("Failed to move node book:", error)
+        expect(diagnostic).toHaveBeenCalledWith("Failed to move node book:", {
+            code: "LibraryError",
+            message: "The library operation failed",
+        })
+        expect(diagnostic).not.toHaveBeenCalledWith("Failed to move node book:", error)
         expect(alert).toHaveBeenCalledWith(m.folder_rename_failed())
         expect(alert).not.toHaveBeenCalledWith(error.message)
 

@@ -19,12 +19,12 @@ describe("built-in contributions", () => {
                 component: expect.anything(),
             }),
             expect.objectContaining({
-                id: "viewer.reader",
+                id: "settings.panel",
                 kind: "native",
                 component: expect.anything(),
             }),
             expect.objectContaining({
-                id: "settings.panel",
+                id: "viewer.reader",
                 kind: "native",
                 component: expect.anything(),
             }),
@@ -50,7 +50,6 @@ describe("built-in contributions", () => {
             "library.node.relink",
             "prompt.open",
             "prompt.close",
-            "viewer.open",
             "settings.theme",
             "settings.layout",
             "settings.language",
@@ -60,6 +59,7 @@ describe("built-in contributions", () => {
             "settings.quality.out",
             "settings.animations.toggle",
             "settings.pdf-title.toggle",
+            "viewer.open",
         ])
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
 

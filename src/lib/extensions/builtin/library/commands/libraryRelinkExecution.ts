@@ -1,5 +1,6 @@
 import { vfsStore } from "../state/libraryStore.svelte"
 import { relinkRequest } from "../state/relinkRequest.svelte"
+import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
 import * as m from "$lib/paraglide/messages"
 
 export async function relinkLibraryNode(
@@ -25,7 +26,7 @@ export async function relinkLibraryNode(
         await relinkRequest.complete()
         return true
     } catch (error) {
-        console.error("Failed to relink file:", error)
+        console.error("Failed to relink file:", getLibraryErrorDiagnostic(error))
         alert(m.relink_failed())
         return false
     }

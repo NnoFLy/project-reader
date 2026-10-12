@@ -1,4 +1,5 @@
-import type { CommandContribution, ExtensionContext } from "$lib/extension-api"
+import type { Component } from "svelte"
+import type { CommandContribution, Disposable, ExtensionContext } from "$lib/extension-api"
 import ViewerPage from "./ViewerPage.svelte"
 import { createViewerOpenCommand } from "./commands/viewerOpenCommand"
 import { isViewerOpenPayload } from "./commands/viewerCommandPayloads"
@@ -14,6 +15,7 @@ import { bookmarksStore } from "./stores/bookmarksStore.svelte"
 import { notesStore } from "./stores/notesStore.svelte"
 import { searchStore } from "./stores/searchStore.svelte"
 import { getViewerDocumentErrorDiagnostic } from "./viewerDocument"
+import { installViewerRelinkHost } from "./viewerRelinkHost"
 
 export { ViewerPage }
 export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
@@ -38,8 +40,10 @@ export async function activateViewer(
     libraryCapability?: ViewerLibraryCapability,
     libraryMutationCapability?: ViewerLibraryMutationCapability,
     promptCapability?: ViewerPromptCapability,
+    relinkHost?: Component,
 ): Promise<void> {
     const viewerStorage = context.storage.namespace("viewer")
+    installViewerRelinkHost(relinkHost)
     installViewerHostCapabilities({
         files: fileCapability,
         library: libraryCapability,
@@ -59,16 +63,19 @@ export async function activateViewer(
         bookmarksStore.dispose()
         viewerStore.dispose()
         installViewerHostCapabilities({})
+        installViewerRelinkHost(undefined)
     })
     await viewerStore.configureStorage(viewerStorage)
     await viewerStore.syncWithBooks()
+    const notificationHandles = new Set<Disposable>()
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {
             console.error("[Viewer] Unable to open document", {
                 bookId,
                 error: getViewerDocumentErrorDiagnostic(error),
             })
-            context.notifications.error("Unable to open document")
+            const notification = context.notifications.error("Unable to open document")
+            notificationHandles.add(notification)
         },
     })
     const openContribution: CommandContribution = {
@@ -78,7 +85,11 @@ export async function activateViewer(
         validatePayload: isViewerOpenPayload,
     }
     const openRegistration = context.commands.register(openContribution)
-    context.lifecycle.onDispose(() => openRegistration.dispose())
+    context.lifecycle.onDispose(() => {
+        openRegistration.dispose()
+        for (const handle of notificationHandles) handle.dispose()
+        notificationHandles.clear()
+    })
     context.views.registerNative({
         id: VIEWER_VIEW_ID,
         slot: "viewer.toolbar",

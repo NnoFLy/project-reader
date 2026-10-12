@@ -5,6 +5,7 @@ import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
 import { localizedPath } from "../state/librarySettings"
 import { vfsStore } from "../state/libraryStore.svelte"
+import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
 import type { FolderNode } from "../state/libraryStore.svelte"
 import { defineCommands } from "./commands.types"
 import { commandsStore } from "./commandsStore.svelte"
@@ -140,7 +141,7 @@ async function moveNodes(
         try {
             await vfsStore.moveNode(id, targetFolderId)
         } catch (error) {
-            console.error(`Failed to move node ${id}:`, error)
+            console.error(`Failed to move node ${id}:`, getLibraryErrorDiagnostic(error))
             alert(m.folder_rename_failed())
         }
     }
@@ -226,7 +227,10 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                     try {
                         total = (await vfsStore.getFilePageCount(node.id)) ?? undefined
                     } catch (error) {
-                        console.error("Failed to read the document page count:", error)
+                        console.error(
+                            "Failed to read the document page count:",
+                            getLibraryErrorDiagnostic(error),
+                        )
                     }
                 }
                 if (!vfsStore.isCurrentContent(node.id, expectedGeneration)) return

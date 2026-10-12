@@ -10,6 +10,7 @@
     const STORAGE_KEY = "pending_app_update_version"
     const SKIP_WAITING_MESSAGE = "SKIP_WAITING"
     const CONTROLLER_CHANGE_TIMEOUT = 10_000
+    const NOTIFICATION_TIMEOUT = 5_000
 
     function safeStorageSet(key: string, value: string): boolean {
         try {
@@ -161,19 +162,30 @@
         if (updated.current) appUpdate.markAvailable()
 
         const notificationService = hostContext.application.host.notifications
-        notifications = [...notificationService.list()]
-        const subscription = notificationService.subscribe(
-            (notification) => {
-                notifications = [
-                    ...notifications.filter((current) => current.id !== notification.id),
-                    notification,
-                ]
-            },
-            (notification) => {
-                notifications = notifications.filter((current) => current.id !== notification.id)
-            },
-        )
-        return () => subscription.dispose()
+        const notificationTimers = new Map<string, number>()
+        const dismiss = (id: string) => {
+            const timer = notificationTimers.get(id)
+            if (timer !== undefined) window.clearTimeout(timer)
+            notificationTimers.delete(id)
+            notifications = notifications.filter((current) => current.id !== id)
+        }
+        const show = (notification: Notification) => {
+            dismiss(notification.id)
+            notifications = [...notifications, notification]
+            notificationTimers.set(
+                notification.id,
+                window.setTimeout(() => dismiss(notification.id), NOTIFICATION_TIMEOUT),
+            )
+        }
+        for (const notification of notificationService.list()) show(notification)
+        const subscription = notificationService.subscribe(show, (notification) => {
+            dismiss(notification.id)
+        })
+        return () => {
+            subscription.dispose()
+            for (const timer of notificationTimers.values()) window.clearTimeout(timer)
+            notificationTimers.clear()
+        }
     })
 </script>
 
