@@ -11,6 +11,7 @@ import {
     type ExtensionContext,
     type ExtensionManifest,
     type ExtensionStorage,
+    type LegacyMigrationCapability,
     type PermissionSet,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
@@ -25,6 +26,7 @@ export interface ExtensionHostOptions {
     readonly storage?: StorageBackend
     readonly notifications?: NotificationServiceImpl
     readonly documentService?: DocumentService
+    readonly migration?: LegacyMigrationCapability
 }
 
 interface ExtensionRuntime {
@@ -44,10 +46,12 @@ export class ExtensionHost {
     readonly documentService: DocumentService
     private readonly runtimes = new Map<string, ExtensionRuntime>()
     private readonly storage: StorageBackend
+    private readonly migration?: LegacyMigrationCapability
     private disposing = false
     private disposal?: Promise<void>
     constructor(options: ExtensionHostOptions) {
         this.storage = options.storage ?? new MemoryStorageBackend()
+        this.migration = options.migration
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
@@ -235,6 +239,7 @@ export class ExtensionHost {
                 settings: registries.settings,
                 documents: registries.documents,
                 storage: guardExtensionCapability(runtime.storage, runtime.permissions, "storage"),
+                migration: this.migration,
                 notifications: guardExtensionCapability(
                     this.notifications,
                     runtime.permissions,

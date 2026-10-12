@@ -92,6 +92,11 @@ export interface AppExtension {
     activate(context: ExtensionContext): void | Promise<void>
 }
 
+export interface LegacyMigrationCapability {
+    /** Run the host-owned, read-only import from the pre-extension document store. */
+    readonly migrateLibrary: (storage: import("./storage").StorageNamespace) => Promise<void>
+}
+
 export interface ExtensionContext {
     readonly extension: ExtensionInfo
     /** Permissions are supplied by the host; manually created contexts may omit them. */
@@ -101,6 +106,7 @@ export interface ExtensionContext {
     readonly settings: import("./settings").SettingsRegistry
     readonly documents: import("./documents").DocumentAdapterRegistry
     readonly storage: import("./storage").ExtensionStorage
+    readonly migration?: LegacyMigrationCapability
     readonly notifications: import("./notifications").NotificationService
     readonly lifecycle: Lifecycle
 }

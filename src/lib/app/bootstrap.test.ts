@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { IndexedDBStorageBackend, MemoryStorageBackend, type StorageBackend } from "../core/storage"
+import type { StorageNamespace } from "../extension-api"
 import { getBuiltinDocumentLoader } from "../extensions/builtin"
 import { createBuiltinApplication } from "./bootstrap"
 
@@ -13,6 +14,26 @@ describe("built-in application bootstrap", () => {
         const application = createBuiltinApplication({ storage })
 
         expect(hostStorage(application)).toBe(storage)
+        await application.stop()
+    })
+
+    it("injects the host migration without constructing the legacy VFS", async () => {
+        const storage = new MemoryStorageBackend()
+        const migrateLibrary = vi.fn(async (libraryStorage: StorageNamespace) => {
+            await libraryStorage.set("books.legacy", { id: "legacy", name: "Legacy book" })
+        })
+        const application = createBuiltinApplication({
+            storage,
+            migration: { migrateLibrary },
+        })
+
+        await application.start()
+
+        expect(migrateLibrary).toHaveBeenCalledOnce()
+        expect(await storage.get("extension:builtin.library:library:books.legacy")).toEqual({
+            id: "legacy",
+            name: "Legacy book",
+        })
         await application.stop()
     })
 

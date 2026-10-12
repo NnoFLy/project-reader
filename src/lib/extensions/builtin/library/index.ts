@@ -12,7 +12,6 @@ import type { PromptService } from "./commands/prompt.types"
 import { configureLibraryStore, installDocumentService } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 import { configureLibraryHostBridge } from "./state/libraryHostBridge"
-import { migrateLegacyDatabaseToLibrary } from "$lib/modules/documents"
 
 export { LibraryPage }
 export { default as LibraryRelinkHost } from "./components/LibraryRelinkHost.svelte"
@@ -29,7 +28,7 @@ export async function activateLibrary(
     onDispose?: () => void,
 ): Promise<void> {
     const libraryStorage = context.storage.namespace("library")
-    await migrateLegacyDatabaseToLibrary(libraryStorage)
+    await context.migration?.migrateLibrary(libraryStorage)
     const store = configureLibraryStore(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
