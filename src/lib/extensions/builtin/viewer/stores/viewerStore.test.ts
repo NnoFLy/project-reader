@@ -40,6 +40,7 @@ beforeEach(() => {
     ;(viewerStore as any).disposalEpoch = 0
     ;(viewerStore as any).bookSwitchGeneration = 0
     ;(viewerStore as any).syncPromise = null
+    ;(viewerStore as any).book = null
     ;(viewerStore as any).pendingBookSwitches.clear()
     ;(viewerStore as any).deferredStaleUrls.clear()
 })
@@ -116,6 +117,48 @@ describe("ViewerStore URL synchronization", () => {
 
         expect(getContentGeneration).not.toHaveBeenCalled()
         expect(updateFile).not.toHaveBeenCalled()
+    })
+
+    it("restores persisted state before synchronizing the host-owned file URL", async () => {
+        const savedBook = {
+            id: "book",
+            name: "book.pdf",
+            url: "",
+            pageNumber: 7,
+            scrollPosition: 0.35,
+            totalPages: 12,
+            previewDataUrl: "",
+            updatedAt: 1,
+        }
+        const storage = {
+            get: vi.fn(async () => savedBook),
+            set: vi.fn(),
+            delete: vi.fn(),
+        }
+        vi.spyOn(vfsStore, "getFileUrl").mockResolvedValue("blob:persisted")
+        vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
+        vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
+        vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
+        ;(vfsStore as any).nodes = { book: bookNode }
+        ;(vfsStore as any).isLockedMap = {}
+
+        await viewerStore.configureStorage(storage as never)
+        expect(viewerStore.getCurrentBook()).toMatchObject({
+            id: "book",
+            pageNumber: 7,
+            scrollPosition: 0.35,
+            url: "",
+        })
+
+        await viewerStore.syncWithBooks()
+
+        expect(viewerStore.getCurrentBook()).toMatchObject({
+            id: "book",
+            pageNumber: 7,
+            scrollPosition: 0.35,
+            url: "blob:persisted",
+        })
+        expect(vfsStore.getFileUrl).toHaveBeenCalledWith("book")
     })
 
     it("arbitrates concurrent syncs through the real ViewerStore", async () => {

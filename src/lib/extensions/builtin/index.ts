@@ -151,9 +151,13 @@ export const BUILTIN_MANIFESTS = [
     manifest("builtin.prompt", "Prompt", [{ type: "startup" }], {
         views: [{ id: "prompt.palette", slot: "prompt.result", title: "Command palette" }],
     }),
-    manifest("builtin.viewer", "Viewer", [{ type: "startup" }], {
-        views: [{ id: "viewer.reader", slot: "viewer.toolbar", title: "Viewer" }],
-    }),
+    manifest(
+        "builtin.viewer",
+        "Viewer",
+        [{ type: "startup" }],
+        { views: [{ id: "viewer.reader", slot: "viewer.toolbar", title: "Viewer" }] },
+        { "builtin.library": "*" },
+    ),
     manifest("builtin.settings", "Settings", [{ type: "startup" }], {
         views: [{ id: "settings.panel", slot: "workbench.sidebar", title: "Settings" }],
         settings: [

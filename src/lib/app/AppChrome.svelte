@@ -162,12 +162,17 @@
 
         const notificationService = hostContext.application.host.notifications
         notifications = [...notificationService.list()]
-        const subscription = notificationService.subscribe((notification) => {
-            notifications = [
-                ...notifications.filter((current) => current.id !== notification.id),
-                notification,
-            ]
-        })
+        const subscription = notificationService.subscribe(
+            (notification) => {
+                notifications = [
+                    ...notifications.filter((current) => current.id !== notification.id),
+                    notification,
+                ]
+            },
+            (notification) => {
+                notifications = notifications.filter((current) => current.id !== notification.id)
+            },
+        )
         return () => subscription.dispose()
     })
 </script>

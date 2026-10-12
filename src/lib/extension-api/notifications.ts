@@ -17,5 +17,8 @@ export interface NotificationService {
     warning(message: string): Disposable
     error(message: string): Disposable
     list(): readonly Notification[]
-    subscribe(listener: (notification: Notification) => void): Disposable
+    subscribe(
+        listener: (notification: Notification) => void,
+        onRemove?: (notification: Notification) => void,
+    ): Disposable
 }

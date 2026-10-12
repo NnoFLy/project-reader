@@ -32,13 +32,13 @@ export type {
 
 export const VIEWER_VIEW_ID = "viewer.reader"
 
-export function activateViewer(
+export async function activateViewer(
     context: ExtensionContext,
     fileCapability?: ViewerFileCapability,
     libraryCapability?: ViewerLibraryCapability,
     libraryMutationCapability?: ViewerLibraryMutationCapability,
     promptCapability?: ViewerPromptCapability,
-): void {
+): Promise<void> {
     const viewerStorage = context.storage.namespace("viewer")
     installViewerHostCapabilities({
         files: fileCapability,
@@ -53,7 +53,15 @@ export function activateViewer(
     bookmarksStore.reset()
     notesStore.reset()
     searchStore.resetLifecycle()
-    void viewerStore.configureStorage(viewerStorage)
+    context.lifecycle.onDispose(() => {
+        searchStore.dispose()
+        notesStore.dispose()
+        bookmarksStore.dispose()
+        viewerStore.dispose()
+        installViewerHostCapabilities({})
+    })
+    await viewerStore.configureStorage(viewerStorage)
+    await viewerStore.syncWithBooks()
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {
             console.error("[Viewer] Unable to open document", {
@@ -70,14 +78,7 @@ export function activateViewer(
         validatePayload: isViewerOpenPayload,
     }
     const openRegistration = context.commands.register(openContribution)
-    context.lifecycle.onDispose(() => {
-        openRegistration.dispose()
-        searchStore.dispose()
-        notesStore.dispose()
-        bookmarksStore.dispose()
-        viewerStore.dispose()
-        installViewerHostCapabilities({})
-    })
+    context.lifecycle.onDispose(() => openRegistration.dispose())
     context.views.registerNative({
         id: VIEWER_VIEW_ID,
         slot: "viewer.toolbar",
