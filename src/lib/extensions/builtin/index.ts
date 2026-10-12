@@ -2,10 +2,7 @@ import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../ext
 import { DocumentService } from "../../core/documents"
 import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
-import {
-    getViewerDocumentLoader,
-    installViewerDocumentService,
-} from "./viewer/viewerDocument"
+import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
 import { activateLibrary } from "./library"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
