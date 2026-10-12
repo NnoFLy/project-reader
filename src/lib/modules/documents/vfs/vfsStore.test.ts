@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { DOCUMENT_SOURCE_LIMITS, DocumentSourceLimitError } from "$lib/core/files"
+import { DOCUMENT_SOURCE_LIMITS, DocumentSourceLimitError } from "../../../core/files"
 
 const {
     documentConstructed,
