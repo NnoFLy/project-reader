@@ -1,5 +1,5 @@
-import { commandsStore } from "$lib/modules/commands"
-import type { CommandExecutionResult } from "$lib/modules/commands"
+import { commandsStore } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import type { CommandExecutionResult } from "$lib/extensions/builtin/library/commands/commands.types"
 import type {
     ViewerBookmarkAddPayload,
     ViewerBookmarkDeletePayload,

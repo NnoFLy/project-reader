@@ -1,8 +1,11 @@
 import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
-import { commandsStore, defineCommands } from "$lib/modules/commands"
+import {
+    commandsStore,
+    defineCommands,
+} from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 import { viewerFileCapability, type ViewerFileNode } from "../viewerHost"
-import { localizedPath } from "$lib/modules/settings"
+import { localizedPath } from "$lib/extensions/builtin/settings"
 import { viewerStore } from "../stores/viewerStore.svelte"
 import type { ViewerPayload } from "./viewerCommandPayloads"
 import { fileNodeToBook } from "../stores/viewerStore.types"

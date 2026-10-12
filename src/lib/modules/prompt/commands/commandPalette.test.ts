@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { openCommandPalette } from "./commandPalette"
-import { CommandScope, defineCommands } from "$lib/modules/commands"
+import {
+    CommandScope,
+    defineCommands,
+} from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 import { promptStore } from "../stores/promptStore.svelte"
 import type { CommandRegistry } from "$lib/extension-api"
 

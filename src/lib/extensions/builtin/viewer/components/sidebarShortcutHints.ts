@@ -1,4 +1,4 @@
-import { KeyboardHandler } from "$lib/modules/commands"
+import { KeyboardHandler } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 
 export type SidebarShortcutPair = { display: string }
 

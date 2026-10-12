@@ -1,4 +1,4 @@
-import { defineCommands } from "$lib/modules/commands"
+import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 
 export interface PromptCommandActions {
     close: () => void

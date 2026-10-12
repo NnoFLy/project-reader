@@ -1,4 +1,4 @@
-import { defineCommands } from "$lib/modules/commands"
+import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 import * as m from "$lib/paraglide/messages"
 
 export interface ViewerDisplayPort {

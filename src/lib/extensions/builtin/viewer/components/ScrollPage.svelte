@@ -7,7 +7,7 @@
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import * as m from "$lib/paraglide/messages"
     import { untrack } from "svelte"
-    import { settingsStore } from "$lib/modules/settings"
+    import { settingsStore } from "$lib/extensions/builtin/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { searchStore } from "../stores/searchStore.svelte"
     import {

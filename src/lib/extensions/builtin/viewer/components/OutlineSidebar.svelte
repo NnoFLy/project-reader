@@ -4,7 +4,11 @@
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
     import type { DocumentOutlineEntry } from "$lib/document-model"
-    import { KeyboardHandler, commandsStore, useCommands } from "$lib/modules/commands"
+    import {
+        KeyboardHandler,
+        commandsStore,
+        useCommands,
+    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
     import { createViewerOutlineCommands } from "../commands/viewerOutlineCommands"
     import { MediaQuery } from "svelte/reactivity"
     import Button from "$lib/shared/ui/Button.svelte"

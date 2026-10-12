@@ -9,7 +9,7 @@
         type CommandScope,
         getShortcutHint,
         commandsStore,
-    } from "$lib/modules/commands"
+    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 
     const commandsNode = getContext<CommandScope>(COMMANDS_CONTEXT_KEY)
 

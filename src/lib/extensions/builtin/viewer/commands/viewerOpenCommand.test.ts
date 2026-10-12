@@ -38,15 +38,18 @@ const {
 vi.mock("$app/navigation", () => ({ goto }))
 vi.mock("$app/paths", () => ({ resolve: (path: string) => path }))
 vi.mock("../viewerHost", () => ({ viewerFileCapability }))
-vi.mock("$lib/modules/settings", () => ({ localizedPath: (path: string) => path }))
+vi.mock("$lib/extensions/builtin/settings", () => ({ localizedPath: (path: string) => path }))
 vi.mock("../stores/viewerStore.svelte", () => ({
     viewerStore: { setCurrentBook, getCurrentBook },
 }))
 vi.mock("../stores/viewerStore.types", () => ({
     fileNodeToBook: (node: any) => ({ id: node.id, name: node.name, url: node.url }),
 }))
-vi.mock("$lib/modules/commands", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("$lib/modules/commands")>()
+vi.mock("$lib/extensions/builtin/library/commands/commandsStore.svelte", async (importOriginal) => {
+    const actual =
+        await importOriginal<
+            typeof import("$lib/extensions/builtin/library/commands/commandsStore.svelte")
+        >()
     return {
         ...actual,
         commandsStore: { execute: onLibraryBookOpen },

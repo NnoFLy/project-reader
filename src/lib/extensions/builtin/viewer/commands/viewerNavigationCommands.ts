@@ -1,6 +1,9 @@
-import { defineCommands, KeyboardHandler } from "$lib/modules/commands"
-import type { CommandScope } from "$lib/modules/commands"
-import type { PromptService } from "$lib/modules/prompt"
+import {
+    defineCommands,
+    KeyboardHandler,
+} from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import type { CommandScope } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import type { PromptService } from "$lib/extensions/builtin/prompt"
 import { buildGotoPageItems, parsePage } from "./viewerPromptItems"
 import type { ViewerPageGoToPayload, ViewerScrollPayload } from "./viewerCommandPayloads"
 import * as m from "$lib/paraglide/messages"

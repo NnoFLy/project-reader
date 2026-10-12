@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
-import { CommandsStore } from "$lib/modules/commands"
-import { defineCommands } from "$lib/modules/commands"
+import { CommandsStore } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
 import { createPromptCommands, type PromptCommandActions } from "./promptCommands"
 
 type EventModifiers = Pick<KeyboardEvent, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">

@@ -1,6 +1,6 @@
 import type { CommandRegistry, StorageNamespace } from "$lib/extension-api"
-import type { CommandScope } from "$lib/modules/commands"
-import type { PromptService } from "$lib/modules/prompt"
+import type { CommandScope } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import type { PromptService } from "$lib/extensions/builtin/prompt"
 
 export interface ViewerPromptCapability {
     promptStore: PromptService

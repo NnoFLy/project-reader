@@ -1,5 +1,5 @@
 import type { Bookmark } from "$lib/modules/documents"
-import type { PromptItem } from "$lib/modules/prompt"
+import type { PromptItem } from "$lib/extensions/builtin/prompt"
 import type { SearchMatch } from "../stores/searchStore.svelte"
 import * as m from "$lib/paraglide/messages"
 
