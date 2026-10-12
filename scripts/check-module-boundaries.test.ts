@@ -252,6 +252,18 @@ describe("target architecture boundaries", () => {
         expect(result.status, result.stderr).toBe(0)
     })
 
+    it("accepts builtin plugins importing core-safe shared code", () => {
+        const root = fixture({
+            "src/lib/extensions/builtin/viewer/main.ts": [
+                'import "$lib/shared/ui/Button.svelte"',
+                'import "$lib/shared/styles/global.css"',
+                'import "$lib/shared/icons/SearchIcon.svelte"',
+            ].join("\n"),
+        })
+        const result = cli(root)
+        expect(result.status, result.stderr).toBe(0)
+    })
+
     it.each([
         [
             "app host importing a legacy feature",
@@ -344,10 +356,16 @@ describe("target architecture boundaries", () => {
             "extensions may not import another extension",
         ],
         [
-            "plugin importing shared code",
+            "plugin importing non-core-safe shared code",
             "src/lib/extensions/builtin/viewer/main.ts",
-            'import "$lib/shared/state/safeStorage"',
+            'import "$lib/shared/private/feature"',
             "plugin may not import shared",
+        ],
+        [
+            "adapter importing shared code",
+            "src/lib/extensions/builtin/pdf/adapter/main.ts",
+            'import "$lib/shared/ui/Button.svelte"',
+            "adapter may not import shared",
         ],
         [
             "adapter importing routes",

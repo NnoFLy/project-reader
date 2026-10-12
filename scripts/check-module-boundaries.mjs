@@ -28,6 +28,8 @@ const TARGET_LAYERS = new Set([
     "shared",
     "routes",
 ])
+// Keep the plugin-facing shared surface explicit; other shared paths remain host-owned.
+const CORE_SAFE_SHARED_PATHS = ["actions", "icons", "state", "styles", "ui"]
 const CONTRIBUTION_METHODS = new Map([
     ["commands", "command"],
     ["command", "command"],
@@ -181,8 +183,11 @@ function targetArea(sourceRoot, file) {
     if (relative === "lib/app" || relative.startsWith("lib/app/")) {
         return { kind: "app-host" }
     }
-    if (relative === "lib/shared" || relative.startsWith("lib/shared/")) {
-        return { kind: "shared" }
+    if (relative === "lib/shared") {
+        return { kind: "shared", path: "" }
+    }
+    if (relative.startsWith("lib/shared/")) {
+        return { kind: "shared", path: relative.slice("lib/shared/".length) }
     }
     if (relative === "routes" || relative.startsWith("routes/")) return { kind: "routes" }
 
@@ -202,6 +207,13 @@ function targetArea(sourceRoot, file) {
     const pluginMatch = relative.match(/^lib\/extensions\/builtin\/([^/]+)(?:\/|$)/)
     if (pluginMatch) return { kind: "plugin", name: pluginMatch[1] }
     return null
+}
+
+function isCoreSafeSharedTarget(target) {
+    if (target.kind !== "shared" || !target.path) return false
+    return CORE_SAFE_SHARED_PATHS.some(
+        (prefix) => target.path === prefix || target.path.startsWith(`${prefix}/`),
+    )
 }
 
 function targetBoundaryViolation(from, to) {
@@ -253,6 +265,7 @@ function targetBoundaryViolation(from, to) {
     ) {
         return "routes may only import host-owned code"
     }
+    if (from.kind === "plugin" && isCoreSafeSharedTarget(to)) return null
     if (["plugin", "adapter"].includes(from.kind)) {
         if (["core", "extension-api", "document-model"].includes(to.kind)) return null
         if (
