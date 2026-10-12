@@ -59,9 +59,56 @@ describe("viewer document loading", () => {
             expect.objectContaining({ name: "book.pdf" }),
             undefined,
         )
-        expect(await loaded.getText(1)).toEqual([{ text: "test" }])
+        expect(await loaded.getText?.(1)).toEqual([{ text: "test" }])
 
         await loaded.close()
         expect(service.close).toHaveBeenCalledWith(document)
+    })
+
+    it("keeps optional text extraction absent without rejecting the document", async () => {
+        const renderOnly = {
+            kind: "paged" as const,
+            metadata: { title: "Render only", author: null, pageCount: 1 },
+            capabilities: new Set(),
+            pageCount: 1,
+            getPage: vi.fn(async () => ({ pageNumber: 1, width: 1, height: 1 })),
+            renderPage: vi.fn(),
+            close: vi.fn(async () => undefined),
+        } satisfies OpenedDocument
+        vi.mocked(service.open).mockResolvedValueOnce(renderOnly)
+
+        const loaded = await getViewerDocumentLoader().open({
+            id: "render-only",
+            name: "render-only.bin",
+            url: "blob:render-only",
+        })
+
+        expect(loaded.getText).toBeUndefined()
+        await loaded.close()
+        expect(service.close).toHaveBeenCalledWith(renderOnly)
+    })
+
+    it("preserves reflow sections instead of treating them as paged data", async () => {
+        const reflowable = {
+            kind: "reflowable" as const,
+            metadata: { title: "Reflow", author: null },
+            capabilities: new Set(),
+            getSections: vi.fn(async () => [{ id: "intro", title: "Intro", content: "Hello" }]),
+            close: vi.fn(async () => undefined),
+        } satisfies OpenedDocument
+        vi.mocked(service.open).mockResolvedValueOnce(reflowable)
+
+        const loaded = await getViewerDocumentLoader().open({
+            id: "reflow",
+            name: "reflow.book",
+            url: "blob:reflow",
+        })
+
+        expect(loaded.kind).toBe("reflowable")
+        await expect(loaded.getSections?.()).resolves.toEqual([
+            { id: "intro", title: "Intro", content: "Hello" },
+        ])
+        await loaded.close()
+        expect(service.close).toHaveBeenCalledWith(reflowable)
     })
 })

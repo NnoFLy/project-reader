@@ -9,7 +9,7 @@ import {
 } from "./state/libraryUI.svelte"
 import { configurePromptStorage } from "./commands/promptStore.svelte"
 import type { PromptService } from "./commands/prompt.types"
-import { installDocumentService, libraryStore } from "./state/libraryStore.svelte"
+import { configureLibraryStore, installDocumentService } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 import { configureLibraryHostBridge } from "./state/libraryHostBridge"
 import { migrateLegacyDatabaseToLibrary } from "$lib/modules/documents"
@@ -26,10 +26,11 @@ export const LIBRARY_VIEW_ID = "library.page"
 export async function activateLibrary(
     context: ExtensionContext,
     prompt?: PromptService,
+    onDispose?: () => void,
 ): Promise<void> {
     const libraryStorage = context.storage.namespace("library")
     await migrateLegacyDatabaseToLibrary(libraryStorage)
-    libraryStore.configureStorage(libraryStorage)
+    const store = configureLibraryStore(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
     configureLibraryHostBridge({
@@ -67,14 +68,15 @@ export async function activateLibrary(
         }
         return context.commands.register(contribution)
     })
-    context.lifecycle.onDispose(() => {
+    context.lifecycle.onDispose(async () => {
         for (const registration of registrations) registration.dispose()
         configureLibraryUIController(undefined)
         configureLibraryHostBridge(undefined)
         configurePromptStorage(undefined)
         configureLibraryNotifications(undefined)
         installDocumentService(undefined)
-        void libraryStore.dispose()
+        onDispose?.()
+        await store.dispose()
     })
 
     context.views.registerNative({

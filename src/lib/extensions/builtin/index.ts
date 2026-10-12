@@ -167,7 +167,8 @@ export const BUILTIN_MANIFESTS = [
 const builtinExtensions: readonly AppExtension[] = [
     {
         manifest: BUILTIN_MANIFESTS[0],
-        activate: (context) => activateLibrary(context, promptStore),
+        activate: (context) =>
+            activateLibrary(context, promptStore, () => installViewerDocumentService(undefined)),
     },
     {
         manifest: BUILTIN_MANIFESTS[1],

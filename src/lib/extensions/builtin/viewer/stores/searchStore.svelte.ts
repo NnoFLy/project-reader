@@ -194,6 +194,13 @@ export class SearchStore {
                 return
             }
 
+            const getText = pdf.getText
+            if (!getText) {
+                this.indexingAbortController = null
+                this.isIndexing = false
+                return
+            }
+
             // 2. Extract through a bounded queue instead of allocating one promise per page.
             const documentGeneration = this.documentGeneration
             let nextPage = 1
@@ -223,7 +230,7 @@ export class SearchStore {
                 for (let attempt = 0; attempt < 2; attempt += 1) {
                     if (!isCurrent()) return null
                     try {
-                        return await pdf.getText(pageNumber)
+                        return await getText(pageNumber)
                     } catch (error) {
                         if (attempt === 1) {
                             console.warn(

@@ -34,6 +34,20 @@ describe("built-in application bootstrap", () => {
         vi.unstubAllGlobals()
     })
 
+    it("recreates builtin host capabilities across application stop and start", async () => {
+        const first = createBuiltinApplication({ storage: new MemoryStorageBackend() })
+        await first.start()
+        await first.stop()
+        expect(() => getBuiltinDocumentLoader()).toThrow(
+            "The application document service has not been installed",
+        )
+
+        const second = createBuiltinApplication({ storage: new MemoryStorageBackend() })
+        await expect(second.start()).resolves.toBeUndefined()
+        expect(second.state).toBe("running")
+        await second.stop()
+    })
+
     it("wires viewer loading to the host service and activates PDF through the host", async () => {
         const application = createBuiltinApplication()
         const open = vi

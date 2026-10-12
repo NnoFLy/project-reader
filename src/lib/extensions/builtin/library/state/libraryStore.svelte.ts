@@ -3538,8 +3538,19 @@ class PrefixedLibraryStorageNamespace implements ExtensionStorage {
     }
 }
 
-export const vfsStore = new VFSStore()
-export const libraryStore = vfsStore
+export let vfsStore = new VFSStore()
+export let libraryStore = vfsStore
+
+/** Reuses the initial store for the first activation and creates a fresh host store after disposal. */
+export function configureLibraryStore(storage: StorageNamespace): VFSStore {
+    if (vfsStore.isDisposed) {
+        vfsStore = new VFSStore({}, storage)
+        libraryStore = vfsStore
+    } else {
+        vfsStore.configureStorage(storage)
+    }
+    return vfsStore
+}
 
 if (import.meta.hot) {
     import.meta.hot.dispose(() => vfsStore.dispose())

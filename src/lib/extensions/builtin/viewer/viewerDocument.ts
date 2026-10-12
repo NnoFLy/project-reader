@@ -3,6 +3,7 @@ import type {
     OpenedDocument,
     PagedDocument,
     ReaderPage,
+    ReaderSection,
     DocumentSource,
 } from "$lib/document-model"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
@@ -21,7 +22,10 @@ export interface ViewerPageLayerTarget {
  * parsing and rendering; the viewer only relies on format-neutral page data.
  */
 export interface ViewerDocument extends PagedDocument {
-    getText(pageNumber: number): Promise<readonly ViewerTextItem[]>
+    /** Text extraction is optional; rendering must not depend on it. */
+    getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
+    /** Reflow adapters retain their format-neutral sections for a non-paged surface. */
+    getSections?: () => Promise<readonly ReaderSection[]>
     getOutline?(): Promise<readonly DocumentOutlineEntry[] | null>
     getAllPageDimensions?(
         signal?: AbortSignal,
@@ -63,7 +67,20 @@ function requireDocumentService(): ViewerDocumentService {
     return installedDocumentService
 }
 
-function asViewerDocument(service: ViewerDocumentService, document: PagedDocument): ViewerDocument {
+function asViewerDocument(
+    service: ViewerDocumentService,
+    document: OpenedDocument,
+): ViewerDocument {
+    if (document.kind === "reflowable") {
+        return {
+            kind: document.kind,
+            metadata: document.metadata,
+            capabilities: document.capabilities,
+            getSections: () => document.getSections(),
+            close: () => service.close(document),
+        } as unknown as ViewerDocument
+    }
+
     const candidate = document as PagedDocument & {
         getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
         getOutline?: () => Promise<readonly DocumentOutlineEntry[] | null>
@@ -72,8 +89,6 @@ function asViewerDocument(service: ViewerDocumentService, document: PagedDocumen
         ) => Promise<readonly { width: number; height: number }[]>
         validateRenderBounds?: (quality?: number, signal?: AbortSignal) => Promise<void>
     }
-    if (!candidate.getText)
-        throw new Error("The selected document does not support text extraction")
     return {
         get kind() {
             return document.kind
@@ -87,7 +102,8 @@ function asViewerDocument(service: ViewerDocumentService, document: PagedDocumen
         get pageCount() {
             return document.pageCount
         },
-        getText: (pageNumber) => candidate.getText!(pageNumber),
+        getText: candidate.getText ? (pageNumber) => candidate.getText!(pageNumber) : undefined,
+        getSections: undefined,
         getPage: (pageNumber) => document.getPage(pageNumber),
         renderPage: (pageNumber, options) => document.renderPage(pageNumber, options),
         getOutline: candidate.getOutline ? () => candidate.getOutline!() : undefined,
@@ -114,10 +130,6 @@ function createServiceLoader(service: ViewerDocumentService): ViewerDocumentLoad
                 mimeType: blob.type || undefined,
             })
             const document = await service.open(source, signal)
-            if (document.kind !== "paged") {
-                await service.close(document)
-                throw new Error(`Document adapter returned a non-paged document for ${input.name}`)
-            }
             return asViewerDocument(service, document)
         },
     }
@@ -166,6 +178,13 @@ export async function renderViewerPageLayers(
     }
 
     target.textContainer.replaceChildren()
+    if (document.getSections) {
+        const sections = await document.getSections()
+        const section = sections[pageNumber - 1]
+        if (section) target.textContainer.textContent = section.content
+        return
+    }
+    if (!document.getText) return
     const items = await document.getText(pageNumber)
     for (const item of items) {
         if (target.signal?.aborted) return
