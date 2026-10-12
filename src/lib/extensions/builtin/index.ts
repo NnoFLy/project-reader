@@ -1,5 +1,11 @@
 import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../extension-api"
+import { DocumentService } from "../../core/documents"
+import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
+import {
+    getViewerDocumentLoader,
+    installViewerDocumentService,
+} from "./viewer/viewerDocument"
 import { activateLibrary } from "./library"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
@@ -92,4 +98,21 @@ export function createBuiltinHost(
     return new ExtensionHost({ ...options, extensions: builtinExtensions })
 }
 
+/** Install the host-owned document capability used by the built-in viewer. */
+export function installBuiltinDocumentService(
+    documentService: DocumentService,
+    activateForDocumentType: (extension: string) => Promise<void>,
+): void {
+    const documentCapability = {
+        async open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument> {
+            const extension = getDocumentExtension(source.name)
+            if (extension) await activateForDocumentType(extension)
+            return documentService.open(source, signal)
+        },
+        close: (document: OpenedDocument) => documentService.close(document),
+    }
+    installViewerDocumentService(documentCapability)
+}
+
+export { getViewerDocumentLoader as getBuiltinDocumentLoader }
 export { ExtensionHost }

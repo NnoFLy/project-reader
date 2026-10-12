@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { IndexedDBStorageBackend, MemoryStorageBackend, type StorageBackend } from "../core/storage"
-import { getViewerDocumentLoader } from "../extensions/builtin/viewer/viewerDocument"
+import { getBuiltinDocumentLoader } from "../extensions/builtin"
 import { createBuiltinApplication } from "./bootstrap"
 
 function hostStorage(application: ReturnType<typeof createBuiltinApplication>): StorageBackend {
@@ -45,7 +45,7 @@ describe("built-in application bootstrap", () => {
         )
 
         await expect(
-            getViewerDocumentLoader().open({ id: "book", name: "book.pdf", url: "blob:book" }),
+            getBuiltinDocumentLoader().open({ id: "book", name: "book.pdf", url: "blob:book" }),
         ).rejects.toThrow("stop after wiring")
         expect(application.host.documentService.adapters.get("builtin.pdf.document")).toBeDefined()
         expect(open).toHaveBeenCalledOnce()
