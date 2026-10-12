@@ -4,12 +4,15 @@ import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
 import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
 import { activateLibrary, libraryStore } from "./library"
-import { activatePrompt } from "./prompt"
+import { installDocumentService } from "./library/state/libraryStore.svelte"
+import { activatePrompt, getPromptCommandRegistry, openCommandPalette, promptStore } from "./prompt"
 import { activateSettings } from "./settings"
-import { activateViewer, type ViewerFileCapability } from "./viewer"
+import { activateViewer, type ViewerFileCapability, type ViewerLibraryCapability } from "./viewer"
 
 // The built-in library owns file handles, object URLs, and relink state. Expose that
 // singleton through the viewer's narrow host capability instead of creating another store.
+const builtinViewerLibraryCapability = libraryStore as unknown as ViewerLibraryCapability
+
 const builtinViewerFileCapability: ViewerFileCapability = {
     get nodes() {
         return libraryStore.nodes as ViewerFileCapability["nodes"]
@@ -91,7 +94,7 @@ export const BUILTIN_MANIFESTS = [
 const builtinExtensions: readonly AppExtension[] = [
     {
         manifest: BUILTIN_MANIFESTS[0],
-        activate: activateLibrary,
+        activate: (context) => activateLibrary(context, promptStore),
     },
     {
         manifest: BUILTIN_MANIFESTS[1],
@@ -99,7 +102,12 @@ const builtinExtensions: readonly AppExtension[] = [
     },
     {
         manifest: BUILTIN_MANIFESTS[2],
-        activate: (context) => activateViewer(context, builtinViewerFileCapability),
+        activate: (context) =>
+            activateViewer(context, builtinViewerFileCapability, builtinViewerLibraryCapability, {
+                promptStore,
+                getPromptCommandRegistry,
+                openCommandPalette,
+            }),
     },
     {
         manifest: BUILTIN_MANIFESTS[3],
@@ -131,6 +139,7 @@ export function installBuiltinDocumentService(
         close: (document: OpenedDocument) => documentService.close(document),
     }
     installViewerDocumentService(documentCapability)
+    installDocumentService(documentCapability)
 }
 
 export { getViewerDocumentLoader as getBuiltinDocumentLoader }

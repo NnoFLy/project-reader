@@ -2,8 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("$app/environment", () => ({ browser: false }))
 
-import { vfsStore } from "$lib/modules/documents"
+import { viewerLibraryCapability as vfsStore } from "../viewerHost"
 import { viewerStore } from "./viewerStore.svelte"
+
+vi.mock("../viewerHost", async () => {
+    const actual = await vi.importActual<typeof import("../viewerHost")>("../viewerHost")
+    const { vfsStore } = await import("$lib/modules/documents")
+    return {
+        ...actual,
+        viewerLibraryCapability: vfsStore,
+        isViewerLibraryCapabilityInstalled: () => true,
+    }
+})
 
 const bookNode = {
     id: "book",

@@ -42,8 +42,8 @@ const {
     }
 })
 
-vi.mock("$lib/modules/documents", () => ({
-    vfsStore: {
+vi.mock("../viewerHost", () => ({
+    viewerLibraryCapability: {
         nodes,
         get initialized() {
             return initialized.value
@@ -68,6 +68,8 @@ vi.mock("$lib/modules/documents", () => ({
             },
         },
     },
+    isViewerLibraryCapabilityInstalled: () => true,
+    getViewerLibraryCapability: () => undefined,
 }))
 
 import { bookmarksStore } from "./bookmarksStore.svelte"

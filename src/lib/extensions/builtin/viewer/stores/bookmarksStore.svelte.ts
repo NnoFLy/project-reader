@@ -1,8 +1,13 @@
 import { browser } from "$app/environment"
-import { vfsStore } from "$lib/modules/documents"
-import type { Bookmark } from "$lib/modules/documents"
+import {
+    isViewerLibraryCapabilityInstalled,
+    getViewerLibraryCapability,
+    viewerLibraryCapability as vfsStore,
+    type Bookmark,
+} from "../viewerHost"
 
 class BookmarksStore {
+    private files = getViewerLibraryCapability() ?? vfsStore
     bookmarks = $state<Bookmark[]>([])
     private loadGeneration = 0
     private lifecycleEpoch = 0
@@ -14,8 +19,13 @@ class BookmarksStore {
     private readonly vfsUnsubscribers: (() => void)[] = []
 
     constructor() {
+        this.attachLibraryListeners()
+    }
+
+    private attachLibraryListeners() {
+        if (!isViewerLibraryCapabilityInstalled()) return
         this.vfsUnsubscribers.push(
-            vfsStore.onNodesDeleting?.((bookIds) => {
+            this.files.onNodesDeleting?.((bookIds) => {
                 this.loadGeneration++
                 for (const bookId of bookIds) {
                     this.pendingDeletionBookIds.add(bookId)
@@ -27,9 +37,18 @@ class BookmarksStore {
             }) ?? (() => undefined),
         )
         this.vfsUnsubscribers.push(
-            vfsStore.onNodesDeleted?.((bookIds) => this.removeByBookIds(bookIds)) ??
+            this.files.onNodesDeleted?.((bookIds) => this.removeByBookIds(bookIds)) ??
                 (() => undefined),
         )
+    }
+
+    reset() {
+        this.dispose()
+        this.files = getViewerLibraryCapability() ?? vfsStore
+        this.disposed = false
+        this.pendingDeletionBookIds.clear()
+        this.pendingDeletionBookmarkIds.clear()
+        this.attachLibraryListeners()
     }
 
     dispose() {
@@ -41,30 +60,31 @@ class BookmarksStore {
     }
 
     async loadAllBookmarks() {
-        if (!browser || this.disposed || vfsStore.isDisposed || !vfsStore.initialized) return
+        if (!browser || this.disposed || this.files.isDisposed || !this.files.initialized) return
         const generation = ++this.loadGeneration
         const lifecycleEpoch = this.lifecycleEpoch
         try {
-            const loaded = await vfsStore.db.bookmarks.getAll()
+            const loaded = (await this.files.db.bookmarks.getAll()) as Bookmark[]
             if (
-                vfsStore.isDisposed ||
+                this.files.isDisposed ||
                 lifecycleEpoch !== this.lifecycleEpoch ||
                 generation !== this.loadGeneration ||
-                !vfsStore.initialized
+                !this.files.initialized
             )
                 return
-            const validBookIds = new Set(vfsStore.allFiles.map((file) => file.id))
+            const validBookIds = new Set(this.files.allFiles.map((file) => file.id))
             const stale = loaded.filter((bookmark) => !validBookIds.has(bookmark.bookId))
             if (stale.length > 0) {
-                if (vfsStore.isDisposed || lifecycleEpoch !== this.lifecycleEpoch) return
-                const cleaned = await vfsStore.serializeMetadataMutation(async () => {
-                    if (vfsStore.isDisposed || lifecycleEpoch !== this.lifecycleEpoch) return false
-                    await vfsStore.db.bookmarks.bulkDelete(stale.map((bookmark) => bookmark.id))
+                if (this.files.isDisposed || lifecycleEpoch !== this.lifecycleEpoch) return
+                const cleaned = await this.files.serializeMetadataMutation(async () => {
+                    if (this.files.isDisposed || lifecycleEpoch !== this.lifecycleEpoch)
+                        return false
+                    await this.files.db.bookmarks.bulkDelete(stale.map((bookmark) => bookmark.id))
                     return true
                 })
                 if (
                     !cleaned ||
-                    vfsStore.isDisposed ||
+                    this.files.isDisposed ||
                     lifecycleEpoch !== this.lifecycleEpoch ||
                     generation !== this.loadGeneration
                 )
@@ -97,9 +117,9 @@ class BookmarksStore {
                 !this.isWriteAllowed(bookId)
             )
                 return null
-            const written = await vfsStore.serializeBookMutation(bookId, async () => {
+            const written = await this.files.serializeBookMutation(bookId, async () => {
                 if (!this.isWriteAllowed(bookId, bookmark.id)) return false
-                await vfsStore.db.bookmarks.put(bookmark)
+                await this.files.db.bookmarks.put(bookmark)
                 return true
             })
             if (
@@ -110,8 +130,8 @@ class BookmarksStore {
                 this.pendingDeletionBookmarkIds.has(bookmark.id) ||
                 (this.bookWriteGenerations.get(bookId) ?? 0) !== generation ||
                 !this.bookExists(bookId) ||
-                vfsStore.isNodeDeleting(bookId) ||
-                vfsStore.isDisposed
+                this.files.isNodeDeleting(bookId) ||
+                this.files.isDisposed
             ) {
                 // Store disposal/lifecycle invalidation only suppresses publication. A
                 // persisted bookmark remains owned by the database until actual deletion;
@@ -143,9 +163,9 @@ class BookmarksStore {
                     !this.isWriteAllowed(updated.bookId, id)
                 )
                     return
-                const written = await vfsStore.serializeBookMutation(updated.bookId, async () => {
+                const written = await this.files.serializeBookMutation(updated.bookId, async () => {
                     if (!this.isWriteAllowed(updated.bookId, id)) return false
-                    await vfsStore.db.bookmarks.put(updated)
+                    await this.files.db.bookmarks.put(updated)
                     return true
                 })
                 if (
@@ -157,8 +177,8 @@ class BookmarksStore {
                     (this.bookWriteGenerations.get(updated.bookId) ?? 0) !== generation ||
                     (this.bookmarkWriteGenerations.get(id) ?? 0) !== bookmarkGeneration ||
                     !this.bookExists(updated.bookId) ||
-                    vfsStore.isNodeDeleting(updated.bookId) ||
-                    vfsStore.isDisposed
+                    this.files.isNodeDeleting(updated.bookId) ||
+                    this.files.isDisposed
                 ) {
                     // An active deletion tombstone is serialized after this write and owns
                     // cleanup. Store disposal must not delete an existing bookmark.
@@ -179,12 +199,14 @@ class BookmarksStore {
     private bookExists(bookId: string): boolean {
         if (
             this.pendingDeletionBookIds.has(bookId) &&
-            !vfsStore.isNodeDeleting(bookId) &&
-            vfsStore.nodes?.[bookId]?.type === "file"
+            !this.files.isNodeDeleting(bookId) &&
+            this.files.nodes?.[bookId]?.type === "file"
         ) {
             this.pendingDeletionBookIds.delete(bookId)
         }
-        return !this.pendingDeletionBookIds.has(bookId) && vfsStore.nodes?.[bookId]?.type === "file"
+        return (
+            !this.pendingDeletionBookIds.has(bookId) && this.files.nodes?.[bookId]?.type === "file"
+        )
     }
 
     private isWriteAllowed(bookId: string, bookmarkId?: string): boolean {
@@ -193,8 +215,8 @@ class BookmarksStore {
             (bookmarkId === undefined || !this.pendingDeletionBookmarkIds.has(bookmarkId)) &&
             this.bookExists(bookId) &&
             !this.pendingDeletionBookIds.has(bookId) &&
-            !vfsStore.isNodeDeleting(bookId) &&
-            !vfsStore.isDisposed
+            !this.files.isNodeDeleting(bookId) &&
+            !this.files.isDisposed
         )
     }
 
@@ -210,16 +232,16 @@ class BookmarksStore {
     }
 
     private async deleteUnknownBookmark(id: string): Promise<boolean> {
-        const deleted = await vfsStore.serializeMetadataMutation(async () => {
-            if (this.disposed || vfsStore.isDisposed) return false
-            await vfsStore.db.bookmarks.delete(id)
+        const deleted = await this.files.serializeMetadataMutation(async () => {
+            if (this.disposed || this.files.isDisposed) return false
+            await this.files.db.bookmarks.delete(id)
             return true
         })
         return deleted === true
     }
 
     async deleteBookmark(id: string) {
-        if (this.disposed || vfsStore.isDisposed) return
+        if (this.disposed || this.files.isDisposed) return
         const bookmark = this.bookmarks.find((candidate) => candidate.id === id)
         this.pendingDeletionBookmarkIds.add(id)
         const lifecycleEpoch = this.lifecycleEpoch
@@ -229,15 +251,15 @@ class BookmarksStore {
         let deleted = false
         try {
             deleted = !!(bookmark
-                ? await vfsStore.serializeBookMutation(bookmark.bookId, async () => {
-                      if (this.disposed || vfsStore.isDisposed) return false
-                      await vfsStore.db.bookmarks.delete(id)
+                ? await this.files.serializeBookMutation(bookmark.bookId, async () => {
+                      if (this.disposed || this.files.isDisposed) return false
+                      await this.files.db.bookmarks.delete(id)
                       return true
                   })
                 : await this.deleteUnknownBookmark(id))
             if (
                 !deleted ||
-                vfsStore.isDisposed ||
+                this.files.isDisposed ||
                 this.disposed ||
                 lifecycleEpoch !== this.lifecycleEpoch ||
                 (bookmark && this.pendingDeletionBookIds.has(bookmark.bookId))

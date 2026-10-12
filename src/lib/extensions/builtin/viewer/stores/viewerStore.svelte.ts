@@ -2,11 +2,16 @@ import { SvelteSet } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import { pushState } from "$app/navigation"
 import type { DocumentOutlineEntry } from "$lib/document-model"
-import { vfsStore } from "$lib/modules/documents"
+import {
+    isViewerLibraryCapabilityInstalled,
+    getViewerLibraryCapability,
+    viewerLibraryCapability as vfsStore,
+} from "../viewerHost"
 import { type Book, fileNodeToBook } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
 
 class ViewerStore {
+    private files = getViewerLibraryCapability() ?? vfsStore
     private storage: StorageNamespace | undefined
     private storageGeneration = 0
     private persistenceQueue: Promise<void> = Promise.resolve()
@@ -62,20 +67,25 @@ class ViewerStore {
     }
 
     constructor() {
+        this.attachLibraryListeners()
+    }
+
+    private attachLibraryListeners() {
+        if (!isViewerLibraryCapabilityInstalled()) return
         this.vfsUnsubscribers.push(
-            vfsStore.onNodesDeleted?.((ids) => {
+            this.files.onNodesDeleted?.((ids) => {
                 if (this.book && ids.includes(this.book.id))
                     void this.clearDeletedBook(this.book.id)
             }) ?? (() => undefined),
         )
         this.vfsUnsubscribers.push(
-            vfsStore.onNodeRelinked?.((id) => {
-                const node = vfsStore.nodes[id]
+            this.files.onNodeRelinked?.((id) => {
+                const node = this.files.nodes[id]
                 if (!node || node.type !== "file" || this.book?.id !== id) return
                 void this.setCurrentBook({
                     ...fileNodeToBook(node),
                     url: "",
-                    isLocked: vfsStore.isLockedMap[id],
+                    isLocked: this.files.isLockedMap[id],
                 })
             }) ?? (() => undefined),
         )
@@ -85,6 +95,18 @@ class ViewerStore {
             window.addEventListener("beforeunload", this.flush)
             this.listening = true
         }
+    }
+
+    reset() {
+        this.dispose()
+        this.files = getViewerLibraryCapability() ?? vfsStore
+        this.disposed = false
+        this.book = null
+        this.outlineList = null
+        this.totalPages = 0
+        this.currentPage = 1
+        this.scrollPosition = 0
+        this.attachLibraryListeners()
     }
 
     dispose() {
@@ -102,7 +124,7 @@ class ViewerStore {
             window.removeEventListener("beforeunload", this.flush)
             this.listening = false
         }
-        if (this.book?.url) vfsStore.revokeFileUrl(this.book.id, this.book.url)
+        if (this.book?.url) this.files.revokeFileUrl(this.book.id, this.book.url)
         for (const id of this.deferredStaleUrls.keys()) this.flushDeferredStaleUrls(id)
         this.pendingBookSwitches.clear()
     }
@@ -205,11 +227,11 @@ class ViewerStore {
     }
 
     private async clearDeletedBook(id: string) {
-        if (this.book?.id !== id || vfsStore.nodes[id]?.type === "file") return
+        if (this.book?.id !== id || this.files.nodes[id]?.type === "file") return
         const oldBook = this.book
         if (oldBook.url) this.releaseStaleUrl(oldBook.id, oldBook.url)
         this.book = null
-        vfsStore.activeFileId = null
+        this.files.activeFileId = null
         this.persistViewerState(true)
     }
 
@@ -235,24 +257,24 @@ class ViewerStore {
         const operationDisposalEpoch = this.disposalEpoch
         const operationBookSwitchGeneration = this.bookSwitchGeneration
         const bookId = this.book.id
-        vfsStore.activeFileId = bookId
-        const matchingNode = vfsStore.nodes[bookId]
+        this.files.activeFileId = bookId
+        const matchingNode = this.files.nodes[bookId]
         if (!matchingNode || matchingNode.type !== "file") {
             await this.clearDeletedBook(bookId)
             return
         }
 
-        const contentGeneration = vfsStore.getContentGeneration(bookId)
+        const contentGeneration = this.files.getContentGeneration(bookId)
         let currentUrl = this.book.url
         let acquiredUrl = false
-        if (currentUrl && !vfsStore.isCurrentFileUrl(bookId, currentUrl, contentGeneration)) {
+        if (currentUrl && !this.files.isCurrentFileUrl(bookId, currentUrl, contentGeneration)) {
             // The active lease belongs to this exact URL, not to whichever URL the
             // node happens to expose after a relink.
             this.releaseStaleUrl(bookId, currentUrl)
             currentUrl = ""
         }
         if (!currentUrl) {
-            currentUrl = await vfsStore.getFileUrl(bookId)
+            currentUrl = await this.files.getFileUrl(bookId)
             acquiredUrl = !!currentUrl
         }
 
@@ -261,13 +283,13 @@ class ViewerStore {
             operationDisposalEpoch !== this.disposalEpoch ||
             operationBookSwitchGeneration !== this.bookSwitchGeneration ||
             this.book?.id !== bookId ||
-            !vfsStore.isCurrentContent(bookId, contentGeneration)
+            !this.files.isCurrentContent(bookId, contentGeneration)
         ) {
             // This operation may have acquired a new lease; release only this exact URL.
             if (acquiredUrl && currentUrl) this.releaseStaleUrl(bookId, currentUrl)
             return
         }
-        const currentNode = vfsStore.nodes[bookId]
+        const currentNode = this.files.nodes[bookId]
         if (!currentNode || currentNode.type !== "file") {
             if (acquiredUrl && currentUrl) this.releaseStaleUrl(bookId, currentUrl)
             await this.clearDeletedBook(bookId)
@@ -283,7 +305,7 @@ class ViewerStore {
             scrollPosition: localScrollPosition,
             url: currentUrl,
             previewDataUrl: "",
-            isLocked: vfsStore.isLockedMap[currentNode.id],
+            isLocked: this.files.isLockedMap[currentNode.id],
         }
     }
 
@@ -325,7 +347,7 @@ class ViewerStore {
     private releaseStaleUrl(id: string, url: string) {
         // Each switch owns the lease returned by getFileUrl. Release stale switches
         // immediately even when another switch for the same book is still pending.
-        if (!vfsStore.revokeFileUrl(id, url) && vfsStore.fileUrls[id] === url)
+        if (!this.files.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
             URL.revokeObjectURL(url)
     }
 
@@ -335,7 +357,7 @@ class ViewerStore {
         this.deferredStaleUrls.delete(id)
         for (const { url } of deferred) {
             if (!this.disposed && this.book?.id === id && this.book.url === url) continue
-            if (!vfsStore.revokeFileUrl(id, url) && vfsStore.fileUrls[id] === url)
+            if (!this.files.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
                 URL.revokeObjectURL(url)
         }
     }
@@ -372,10 +394,10 @@ class ViewerStore {
             !this.disposed &&
             disposalEpoch === this.disposalEpoch &&
             generation === this.bookSwitchGeneration
-        const contentGeneration = newBook ? vfsStore.getContentGeneration(newBook.id) : undefined
+        const contentGeneration = newBook ? this.files.getContentGeneration(newBook.id) : undefined
 
         if (newBook) {
-            const currentNode = vfsStore.nodes[newBook.id]
+            const currentNode = this.files.nodes[newBook.id]
             if (!currentNode || currentNode.type !== "file") {
                 if (newBook.url) this.releaseStaleUrl(newBook.id, newBook.url)
                 await this.clearDeletedBook(newBook.id)
@@ -383,7 +405,7 @@ class ViewerStore {
             }
             if (
                 newBook.url &&
-                !vfsStore.isCurrentFileUrl(newBook.id, newBook.url, contentGeneration)
+                !this.files.isCurrentFileUrl(newBook.id, newBook.url, contentGeneration)
             ) {
                 this.releaseStaleUrl(newBook.id, newBook.url)
                 return false
@@ -395,18 +417,18 @@ class ViewerStore {
             // Resolve a missing URL before publishing the replacement book. This keeps an
             // access failure from replacing a usable active book with a URL-less one.
             if (!newBook.url) {
-                const loadedUrl = await vfsStore.getFileUrl(newBook.id)
+                const loadedUrl = await this.files.getFileUrl(newBook.id)
                 if (!isCurrentSwitch()) {
                     if (loadedUrl) this.releaseStaleUrl(newBook.id, loadedUrl)
                     return false
                 }
-                const currentNode = vfsStore.nodes[newBook.id]
+                const currentNode = this.files.nodes[newBook.id]
                 if (
                     !currentNode ||
                     currentNode.type !== "file" ||
                     !loadedUrl ||
-                    !vfsStore.isCurrentContent(newBook.id, contentGeneration!) ||
-                    !vfsStore.isCurrentFileUrl(newBook.id, loadedUrl, contentGeneration)
+                    !this.files.isCurrentContent(newBook.id, contentGeneration!) ||
+                    !this.files.isCurrentFileUrl(newBook.id, loadedUrl, contentGeneration)
                 ) {
                     if (loadedUrl) this.releaseStaleUrl(newBook.id, loadedUrl)
                     if (!currentNode || currentNode.type !== "file") {
@@ -418,7 +440,7 @@ class ViewerStore {
                         this.book = {
                             ...oldBook,
                             url: "",
-                            isLocked: vfsStore.isLockedMap[newBook.id] ?? true,
+                            isLocked: this.files.isLockedMap[newBook.id] ?? true,
                         }
                         this.persistViewerState(true)
                     }
@@ -437,14 +459,14 @@ class ViewerStore {
 
         // Set the active book state only after a missing URL has been resolved.
         this.book = newBook
-        vfsStore.activeFileId = newBookId ?? null
+        this.files.activeFileId = newBookId ?? null
         this.persistViewerState(true)
 
         if (newBook) {
             this.currentPage = newBook.pageNumber || 1
             this.scrollPosition = newBook.scrollPosition || 0
             this.totalPages = newBook.totalPages || 0
-            const isLocked = vfsStore.isLockedMap[newBook.id]
+            const isLocked = this.files.isLockedMap[newBook.id]
             if (newBook.isLocked !== isLocked) {
                 newBook.isLocked = isLocked
                 hasChanges = true
@@ -476,10 +498,10 @@ class ViewerStore {
     ) {
         // Check disposal before evaluating default arguments or touching the VFS. HMR can
         // leave a late metadata callback holding an otherwise valid Book value.
-        if (this.disposed || vfsStore.isDisposed) return
+        if (this.disposed || this.files.isDisposed) return
         const operationDisposalEpoch = this.disposalEpoch
         const resolvedExpectedGeneration =
-            expectedGeneration ?? vfsStore.getContentGeneration(book.id)
+            expectedGeneration ?? this.files.getContentGeneration(book.id)
         const resolvedExpectedBookSwitchGeneration =
             expectedBookSwitchGeneration ?? this.bookSwitchGeneration
         if (
@@ -488,7 +510,7 @@ class ViewerStore {
         )
             return
 
-        await vfsStore.updateFile(
+        await this.files.updateFile(
             book.id,
             {
                 name: book.name,
@@ -507,10 +529,10 @@ class ViewerStore {
 
         if (
             this.disposed ||
-            vfsStore.isDisposed ||
+            this.files.isDisposed ||
             operationDisposalEpoch !== this.disposalEpoch ||
             resolvedExpectedBookSwitchGeneration !== this.bookSwitchGeneration ||
-            !vfsStore.isCurrentContent(book.id, resolvedExpectedGeneration)
+            !this.files.isCurrentContent(book.id, resolvedExpectedGeneration)
         )
             return
         if (this.book && this.book.id === book.id) {

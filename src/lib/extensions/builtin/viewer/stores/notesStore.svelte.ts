@@ -1,8 +1,12 @@
 import { SvelteMap } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import { untrack } from "svelte"
-import { vfsStore } from "$lib/modules/documents"
-import type { UserNote } from "$lib/modules/documents"
+import {
+    isViewerLibraryCapabilityInstalled,
+    getViewerLibraryCapability,
+    viewerLibraryCapability as vfsStore,
+    type UserNote,
+} from "../viewerHost"
 
 export interface SelectionState {
     bookId: string
@@ -22,6 +26,7 @@ export interface PopupState {
 }
 
 class NotesStore {
+    private files = getViewerLibraryCapability() ?? vfsStore
     notes = $state<UserNote[]>([])
     activePopup = $state<PopupState | null>(null)
     activeSelection = $state<SelectionState | null>(null)
@@ -56,8 +61,13 @@ class NotesStore {
     private readonly vfsUnsubscribers: (() => void)[] = []
 
     constructor() {
+        this.attachLibraryListeners()
+    }
+
+    private attachLibraryListeners() {
+        if (!isViewerLibraryCapabilityInstalled()) return
         this.vfsUnsubscribers.push(
-            vfsStore.onNodesDeleting?.((bookIds) => {
+            this.files.onNodesDeleting?.((bookIds) => {
                 for (const bookId of bookIds) {
                     this.pendingDeletionBookIds.add(bookId)
                     this.invalidateBookWrites(bookId)
@@ -66,10 +76,19 @@ class NotesStore {
             }) ?? (() => undefined),
         )
         this.vfsUnsubscribers.push(
-            vfsStore.onNodesDeleted?.((bookIds) => {
+            this.files.onNodesDeleted?.((bookIds) => {
                 for (const bookId of bookIds) this.removeByBookId(bookId)
             }) ?? (() => undefined),
         )
+    }
+
+    reset() {
+        this.dispose()
+        this.files = getViewerLibraryCapability() ?? vfsStore
+        this.disposed = false
+        this.pendingDeletionBookIds.clear()
+        this.pendingDeletionNoteIds.clear()
+        this.attachLibraryListeners()
     }
 
     dispose() {
@@ -142,7 +161,7 @@ class NotesStore {
     }
 
     async loadNotesForBook(bookId: string) {
-        if (!browser || this.disposed || vfsStore.isDisposed) return
+        if (!browser || this.disposed || this.files.isDisposed) return
         // Remove the previous book's notes and highlights before waiting on storage. A
         // reload of the same book keeps its in-flight editing target available.
         const generation = ++this.loadGeneration
@@ -150,9 +169,9 @@ class NotesStore {
         const lifecycleEpoch = this.lifecycleEpoch
         const bookGeneration = this.bookLoadGenerations.get(bookId) ?? 0
         try {
-            const loaded = await vfsStore.db.userNotes.getByBookId(bookId)
+            const loaded = (await this.files.db.userNotes.getByBookId(bookId)) as UserNote[]
             if (
-                vfsStore.isDisposed ||
+                this.files.isDisposed ||
                 lifecycleEpoch !== this.lifecycleEpoch ||
                 generation !== this.loadGeneration ||
                 bookGeneration !== (this.bookLoadGenerations.get(bookId) ?? 0)
@@ -173,13 +192,15 @@ class NotesStore {
     private bookExists(bookId: string): boolean {
         if (
             this.pendingDeletionBookIds.has(bookId) &&
-            !vfsStore.isNodeDeleting(bookId) &&
-            vfsStore.nodes?.[bookId]?.type === "file"
+            !this.files.isNodeDeleting(bookId) &&
+            this.files.nodes?.[bookId]?.type === "file"
         ) {
             // A fresh file with a reused id is no longer covered by the old tombstone.
             this.pendingDeletionBookIds.delete(bookId)
         }
-        return !this.pendingDeletionBookIds.has(bookId) && vfsStore.nodes?.[bookId]?.type === "file"
+        return (
+            !this.pendingDeletionBookIds.has(bookId) && this.files.nodes?.[bookId]?.type === "file"
+        )
     }
 
     private isWriteAllowed(bookId: string, noteId?: string): boolean {
@@ -188,8 +209,8 @@ class NotesStore {
             (noteId === undefined || !this.pendingDeletionNoteIds.has(noteId)) &&
             this.bookExists(bookId) &&
             !this.pendingDeletionBookIds.has(bookId) &&
-            !vfsStore.isNodeDeleting(bookId) &&
-            !vfsStore.isDisposed
+            !this.files.isNodeDeleting(bookId) &&
+            !this.files.isDisposed
         )
     }
 
@@ -224,9 +245,9 @@ class NotesStore {
                 !this.isWriteAllowed(bookId)
             )
                 return null
-            const written = await vfsStore.serializeBookMutation(bookId, async () => {
+            const written = await this.files.serializeBookMutation(bookId, async () => {
                 if (!this.isWriteAllowed(bookId, note.id)) return false
-                await vfsStore.db.userNotes.put(note)
+                await this.files.db.userNotes.put(note)
                 return true
             })
             if (
@@ -237,8 +258,8 @@ class NotesStore {
                 this.pendingDeletionNoteIds.has(note.id) ||
                 (this.bookWriteGenerations.get(bookId) ?? 0) !== generation ||
                 !this.bookExists(bookId) ||
-                vfsStore.isNodeDeleting(bookId) ||
-                vfsStore.isDisposed
+                this.files.isNodeDeleting(bookId) ||
+                this.files.isDisposed
             ) {
                 // Store disposal/lifecycle invalidation only suppresses publication. A
                 // persisted note belongs to the database until an actual deletion owns its
@@ -267,7 +288,7 @@ class NotesStore {
         noteContent: string,
         color: "yellow" | "green" | "blue" | "pink" | "purple",
     ): void {
-        if (this.disposed || vfsStore.isDisposed) return
+        if (this.disposed || this.files.isDisposed) return
         const idx = this.notes.findIndex((note) => note.id === id)
         if (idx === -1 || this.pendingDeletionNoteIds.has(id)) return
 
@@ -315,9 +336,9 @@ class NotesStore {
                 !this.isWriteAllowed(note.bookId, id)
             )
                 return
-            const written = await vfsStore.serializeBookMutation(note.bookId, async () => {
+            const written = await this.files.serializeBookMutation(note.bookId, async () => {
                 if (!this.isWriteAllowed(note.bookId, id)) return false
-                await vfsStore.db.userNotes.put($state.snapshot(note))
+                await this.files.db.userNotes.put($state.snapshot(note))
                 return true
             })
             if (
@@ -329,8 +350,8 @@ class NotesStore {
                 (this.noteWriteGenerations.get(id) ?? 0) !== noteGeneration ||
                 (this.bookWriteGenerations.get(note.bookId) ?? 0) !== generation ||
                 !this.bookExists(note.bookId) ||
-                vfsStore.isNodeDeleting(note.bookId) ||
-                vfsStore.isDisposed
+                this.files.isNodeDeleting(note.bookId) ||
+                this.files.isDisposed
             ) {
                 // An active deletion tombstone is serialized after this write and owns cleanup.
                 // Store disposal likewise must not delete an already persisted note.
@@ -371,16 +392,16 @@ class NotesStore {
     }
 
     private async deleteUnknownNote(id: string): Promise<boolean> {
-        const deleted = await vfsStore.serializeMetadataMutation(async () => {
-            if (this.disposed || vfsStore.isDisposed) return false
-            await vfsStore.db.userNotes.delete(id)
+        const deleted = await this.files.serializeMetadataMutation(async () => {
+            if (this.disposed || this.files.isDisposed) return false
+            await this.files.db.userNotes.delete(id)
             return true
         })
         return deleted === true
     }
 
     async deleteNote(id: string) {
-        if (this.disposed || vfsStore.isDisposed) return
+        if (this.disposed || this.files.isDisposed) return
         const note = this.notes.find((candidate) => candidate.id === id)
         this.pendingDeletionNoteIds.add(id)
         const generation = (this.noteWriteGenerations.get(id) ?? 0) + 1
@@ -395,9 +416,9 @@ class NotesStore {
         let deleted = false
         try {
             if (note) {
-                deleted = !!(await vfsStore.serializeBookMutation(note.bookId, async () => {
-                    if (this.disposed || vfsStore.isDisposed) return false
-                    await vfsStore.db.userNotes.delete(id)
+                deleted = !!(await this.files.serializeBookMutation(note.bookId, async () => {
+                    if (this.disposed || this.files.isDisposed) return false
+                    await this.files.db.userNotes.delete(id)
                     return true
                 }))
                 if (!deleted) return
@@ -406,7 +427,7 @@ class NotesStore {
                 deleted = await this.deleteUnknownNote(id)
                 if (!deleted) return
             }
-            if (vfsStore.isDisposed || this.disposed || lifecycleEpoch !== this.lifecycleEpoch)
+            if (this.files.isDisposed || this.disposed || lifecycleEpoch !== this.lifecycleEpoch)
                 return
             const noteToDelete = this.notes.find((n) => n.id === id)
             this.notes = this.notes.filter((n) => n.id !== id)

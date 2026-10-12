@@ -42,8 +42,8 @@ const {
     }
 })
 
-vi.mock("$lib/modules/documents", () => ({
-    vfsStore: {
+vi.mock("../viewerHost", () => ({
+    viewerLibraryCapability: {
         nodes,
         get allFiles() {
             return Object.entries(nodes).map(([id]) => ({ id, type: "file" as const }))
@@ -58,6 +58,8 @@ vi.mock("$lib/modules/documents", () => ({
         serializeMetadataMutation,
         db: { userNotes: { put, delete: deleteRecord, get, getByBookId } },
     },
+    isViewerLibraryCapabilityInstalled: () => true,
+    getViewerLibraryCapability: () => undefined,
 }))
 
 import { notesStore } from "./notesStore.svelte"

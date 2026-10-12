@@ -12,7 +12,7 @@
     import { untrack, onMount, onDestroy } from "svelte"
     import { on } from "svelte/events"
     import { viewerStore } from "../stores/viewerStore.svelte"
-    import { vfsStore } from "$lib/modules/documents"
+    import { viewerLibraryCapability as vfsStore } from "../viewerHost"
     import { searchStore } from "../stores/searchStore.svelte"
     import { goto, replaceState } from "$app/navigation"
     import { page } from "$app/state"
@@ -52,7 +52,8 @@
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
-    import { getPromptCommandRegistry, openCommandPalette, promptStore } from "$lib/modules/prompt"
+    import { viewerPromptCapability } from "../viewerHost"
+    const { getPromptCommandRegistry, openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
     import { createViewerBookmarkCommands } from "../commands/viewerBookmarkCommandFactory"

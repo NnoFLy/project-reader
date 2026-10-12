@@ -3,7 +3,9 @@ let notify:
     | undefined
 
 export function configureLibraryNotifications(
-    handler: (message: string, level?: "info" | "success" | "warning" | "error") => void,
+    handler:
+        | ((message: string, level?: "info" | "success" | "warning" | "error") => void)
+        | undefined,
 ): void {
     notify = handler
 }

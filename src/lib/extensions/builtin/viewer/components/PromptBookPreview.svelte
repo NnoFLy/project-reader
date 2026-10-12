@@ -1,6 +1,6 @@
 <script lang="ts">
     import BookItemIcon from "$lib/shared/icons/BookItemIcon.svelte"
-    import { usePreviewUrl } from "$lib/modules/documents"
+    import { useViewerPreviewUrl as usePreviewUrl } from "../stores/viewerPreview.svelte"
     import * as m from "$lib/paraglide/messages"
 
     let { bookId }: { bookId: string } = $props()

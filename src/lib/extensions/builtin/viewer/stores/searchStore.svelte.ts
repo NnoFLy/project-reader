@@ -1,6 +1,10 @@
 import { SvelteMap } from "svelte/reactivity"
 import { viewerStore } from "./viewerStore.svelte"
-import { vfsStore } from "$lib/modules/documents"
+import {
+    isViewerLibraryCapabilityInstalled,
+    getViewerLibraryCapability,
+    viewerLibraryCapability as vfsStore,
+} from "../viewerHost"
 import type { ViewerDocument } from "../viewerDocument"
 import { getSafeStorage } from "$lib/shared/state/safeStorage"
 import { untrack } from "svelte"
@@ -16,6 +20,7 @@ export interface SearchMatch {
 }
 
 export class SearchStore {
+    private files = getViewerLibraryCapability() ?? vfsStore
     query = $state("")
     matches = $state.raw<SearchMatch[]>([])
     private _currentMatchIndex = $state(-1)
@@ -45,10 +50,12 @@ export class SearchStore {
         ),
     ) {
         this.historyRepository = historyRepository
-        this.vfsUnsubscribe = vfsStore.onContentRestored((bookId) => {
-            if (this.currentBookId !== bookId || !this.currentPdf) return
-            this.restartIndexing()
-        })
+        this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
+            ? this.files.onContentRestored((bookId) => {
+                  if (this.currentBookId !== bookId || !this.currentPdf) return
+                  this.restartIndexing()
+              })
+            : () => undefined
     }
 
     private restartIndexing() {
@@ -97,7 +104,7 @@ export class SearchStore {
     private searchTimeoutId: any = null
     private currentSearchAbortController: AbortController | null = null
     private indexingAbortController: AbortController | null = null
-    private readonly vfsUnsubscribe: () => void
+    private vfsUnsubscribe: () => void
     private searchRequestId = 0
     private documentGeneration = 0
     private matchesChangedListeners = new Set<() => void>()
@@ -155,17 +162,17 @@ export class SearchStore {
         this.indexingAbortController = controller
         const { signal } = controller
         const totalPages = pdf.pageCount
-        const generation = vfsStore.getContentGeneration(bookId)
+        const generation = this.files.getContentGeneration(bookId)
 
         try {
             // 1. Try to load from IndexedDB first
-            const cachedTexts = await vfsStore.db.indexedTexts.getByBookId(bookId)
+            const cachedTexts = await this.files.db.indexedTexts.getByBookId(bookId)
             if (
                 cachedTexts &&
                 cachedTexts.length === totalPages &&
                 this.currentPdf === pdf &&
                 this.currentBookId === bookId &&
-                vfsStore.isCurrentContent(bookId, generation)
+                this.files.isCurrentContent(bookId, generation)
             ) {
                 const tempMap = new Map<number, { original: string }>()
                 for (const record of cachedTexts) {
@@ -176,7 +183,7 @@ export class SearchStore {
                     if (
                         this.currentPdf !== pdf ||
                         this.currentBookId !== bookId ||
-                        !vfsStore.isCurrentContent(bookId, generation)
+                        !this.files.isCurrentContent(bookId, generation)
                     )
                         return
                     this.pageTexts.set(pageNum, text)
@@ -193,12 +200,12 @@ export class SearchStore {
                 this.documentGeneration === documentGeneration &&
                 this.currentPdf === pdf &&
                 this.currentBookId === bookId &&
-                vfsStore.isCurrentContent(bookId, generation)
+                this.files.isCurrentContent(bookId, generation)
             const flushRecords = async () => {
                 if (!recordsToSave.length || !isCurrent()) return
                 const batch = recordsToSave
                 recordsToSave = []
-                await vfsStore.saveIndexedTexts(
+                await this.files.saveIndexedTexts(
                     bookId,
                     batch.map((record) => ({
                         id: `${bookId}_${record.pageNumber}`,
@@ -256,7 +263,7 @@ export class SearchStore {
                 this.indexingAbortController = null
                 if (this.currentPdf === pdf && this.currentBookId === bookId) {
                     this.isIndexing = false
-                    if (this.query.trim() && vfsStore.isCurrentContent(bookId, generation)) {
+                    if (this.query.trim() && this.files.isCurrentContent(bookId, generation)) {
                         this.setQuery(this.query)
                     }
                 }
@@ -503,6 +510,17 @@ export class SearchStore {
                 console.error("[SearchStore] Failed to update CSS Highlights:", e)
             }
         })
+    }
+
+    resetLifecycle() {
+        this.dispose()
+        this.files = getViewerLibraryCapability() ?? vfsStore
+        this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
+            ? this.files.onContentRestored((bookId) => {
+                  if (this.currentBookId !== bookId || !this.currentPdf) return
+                  this.restartIndexing()
+              })
+            : () => undefined
     }
 
     dispose() {

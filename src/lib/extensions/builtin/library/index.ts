@@ -8,8 +8,10 @@ import {
     LibraryUIController,
 } from "./state/libraryUI.svelte"
 import { configurePromptStorage } from "./commands/promptStore.svelte"
-import { libraryStore } from "./state/libraryStore.svelte"
+import type { PromptService } from "./commands/prompt.types"
+import { installDocumentService, libraryStore } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
+import { configureLibraryHostBridge } from "./state/libraryHostBridge"
 import { migrateLegacyDatabaseToLibrary } from "$lib/modules/documents"
 
 export { LibraryPage }
@@ -21,12 +23,28 @@ export type * from "./state/libraryStore.types"
 
 export const LIBRARY_VIEW_ID = "library.page"
 
-export async function activateLibrary(context: ExtensionContext): Promise<void> {
+export async function activateLibrary(
+    context: ExtensionContext,
+    prompt?: PromptService,
+): Promise<void> {
     const libraryStorage = context.storage.namespace("library")
     await migrateLegacyDatabaseToLibrary(libraryStorage)
     libraryStore.configureStorage(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
+    configureLibraryHostBridge({
+        prompt: prompt ?? {
+            choose: async () => undefined,
+            open: async () => undefined,
+            close: () => undefined,
+            setQuery: () => undefined,
+            refresh: () => undefined,
+            snapshot: null,
+            isOpen: false,
+            query: "",
+        },
+        execute: (commandId, payload) => context.commands.execute(commandId, payload),
+    })
     configureLibraryNotifications((message, level = "info") => {
         context.notifications[level](message)
     })
@@ -52,7 +70,11 @@ export async function activateLibrary(context: ExtensionContext): Promise<void> 
     context.lifecycle.onDispose(() => {
         for (const registration of registrations) registration.dispose()
         configureLibraryUIController(undefined)
+        configureLibraryHostBridge(undefined)
         configurePromptStorage(undefined)
+        configureLibraryNotifications(undefined)
+        installDocumentService(undefined)
+        void libraryStore.dispose()
     })
 
     context.views.registerNative({

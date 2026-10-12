@@ -3,7 +3,15 @@ import ViewerPage from "./ViewerPage.svelte"
 import { createViewerOpenCommand } from "./commands/viewerOpenCommand"
 import { isViewerOpenPayload } from "./commands/viewerCommandPayloads"
 import { viewerStore } from "./stores/viewerStore.svelte"
-import { installViewerHostCapabilities, type ViewerFileCapability } from "./viewerHost"
+import {
+    installViewerHostCapabilities,
+    type ViewerFileCapability,
+    type ViewerLibraryCapability,
+    type ViewerPromptCapability,
+} from "./viewerHost"
+import { bookmarksStore } from "./stores/bookmarksStore.svelte"
+import { notesStore } from "./stores/notesStore.svelte"
+import { searchStore } from "./stores/searchStore.svelte"
 
 export { ViewerPage }
 export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
@@ -12,16 +20,31 @@ export { bookmarksStore } from "./stores/bookmarksStore.svelte"
 export { searchStore } from "./stores/searchStore.svelte"
 export { viewerStore } from "./stores/viewerStore.svelte"
 export { installViewerHostCapabilities } from "./viewerHost"
-export type { ViewerFileCapability } from "./viewerHost"
+export type {
+    ViewerFileCapability,
+    ViewerLibraryCapability,
+    ViewerPromptCapability,
+} from "./viewerHost"
 
 export const VIEWER_VIEW_ID = "viewer.reader"
 
 export function activateViewer(
     context: ExtensionContext,
     fileCapability?: ViewerFileCapability,
+    libraryCapability?: ViewerLibraryCapability,
+    promptCapability?: ViewerPromptCapability,
 ): void {
     const viewerStorage = context.storage.namespace("viewer")
-    installViewerHostCapabilities({ files: fileCapability, storage: viewerStorage })
+    installViewerHostCapabilities({
+        files: fileCapability,
+        library: libraryCapability,
+        storage: viewerStorage,
+        prompt: promptCapability,
+    })
+    viewerStore.reset()
+    bookmarksStore.reset()
+    notesStore.reset()
+    searchStore.resetLifecycle()
     void viewerStore.configureStorage(viewerStorage)
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {
@@ -35,7 +58,14 @@ export function activateViewer(
         validatePayload: isViewerOpenPayload,
     }
     const openRegistration = context.commands.register(openContribution)
-    context.lifecycle.onDispose(() => openRegistration.dispose())
+    context.lifecycle.onDispose(() => {
+        openRegistration.dispose()
+        searchStore.dispose()
+        notesStore.dispose()
+        bookmarksStore.dispose()
+        viewerStore.dispose()
+        installViewerHostCapabilities({})
+    })
     context.views.registerNative({
         id: VIEWER_VIEW_ID,
         slot: "viewer.toolbar",
