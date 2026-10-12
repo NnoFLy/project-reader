@@ -103,12 +103,20 @@ export class DocumentService {
     }
 
     async closeAll(): Promise<void> {
-        const documents = [...this.opened]
-        const results = await Promise.allSettled(documents.map((document) => this.close(document)))
-        const rejected = results.find(
-            (result): result is PromiseRejectedResult => result.status === "rejected",
-        )
-        if (rejected) throw rejected.reason
+        const errors: unknown[] = []
+        // Closing can synchronously trigger another close/open callback. Drain the set
+        // until no tracked document remains, while still attempting every cleanup.
+        while (this.opened.size > 0) {
+            const documents = [...this.opened]
+            const results = await Promise.allSettled(
+                documents.map((document) => this.close(document)),
+            )
+            for (const result of results) {
+                if (result.status === "rejected") errors.push(result.reason)
+            }
+        }
+        if (errors.length === 1) throw errors[0]
+        if (errors.length > 1) throw new AggregateError(errors, "Failed to close documents")
     }
 
     get openDocumentCount(): number {

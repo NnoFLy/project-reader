@@ -97,6 +97,34 @@ describe("DocumentService", () => {
         expect(service.openDocumentCount).toBe(0)
     })
 
+    it("closes every tracked document when one cleanup fails", async () => {
+        const registry = new DocumentAdapterRegistry()
+        const firstClose = vi.fn(async () => {
+            throw new Error("first close failed")
+        })
+        const secondClose = vi.fn()
+        const documents: OpenedDocument[] = [
+            { ...closedDocument(firstClose), close: firstClose },
+            { ...closedDocument(secondClose), close: secondClose },
+        ]
+        const adapter: DocumentAdapter = {
+            id: "test.close-all",
+            extensions: ["fake"],
+            mimeTypes: [],
+            probe: vi.fn(async () => ({ supported: true })),
+            open: vi.fn(async () => documents.shift()!),
+        }
+        registry.register(adapter)
+        const service = new DocumentService(registry)
+        await service.open(source())
+        await service.open(source("second.fake"))
+
+        await expect(service.closeAll()).rejects.toThrow("first close failed")
+        expect(firstClose).toHaveBeenCalledOnce()
+        expect(secondClose).toHaveBeenCalledOnce()
+        expect(service.openDocumentCount).toBe(0)
+    })
+
     it("uses the safe fake adapter and rejects unsupported sources", async () => {
         const service = new DocumentService()
         service.adapters.register(createFakeDocumentAdapter())
