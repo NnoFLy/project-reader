@@ -16,8 +16,6 @@ import type {
 } from "./vfsStore.types"
 import { FolderNameError } from "./vfsStore.types"
 import { Database } from "../db/db"
-import type { DocumentService } from "../../../core/documents"
-import { DocumentService as DocumentServiceImpl } from "../../../core/documents"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
 import type {
     DocumentSource,
@@ -27,16 +25,19 @@ import type {
 } from "$lib/document-model"
 import pLimit from "p-limit"
 
-/**
- * PDF remains a lazy adapter capability. VFS only consumes the core document
- * contracts, so importing this module never imports PDF.js.
- */
-declare global {
-    var __documentService: DocumentService | undefined
+/** The host-owned document capability shared with the viewer. */
+export interface VfsDocumentService {
+    open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument>
+    close(document: OpenedDocument): Promise<void>
 }
 
-let defaultDocumentService: Promise<DocumentService> | undefined
-const documentServices = new WeakMap<object, DocumentService>()
+let installedDocumentService: VfsDocumentService | undefined
+const documentServices = new WeakMap<object, VfsDocumentService>()
+
+/** Install the canonical host capability before VFS documents are opened. */
+export function installDocumentService(service: VfsDocumentService | undefined): void {
+    installedDocumentService = service
+}
 
 function isDocumentResourceLimitError(error: unknown): boolean {
     return (
@@ -45,18 +46,11 @@ function isDocumentResourceLimitError(error: unknown): boolean {
     )
 }
 
-async function getDocumentService(): Promise<DocumentService> {
-    if (globalThis.__documentService) return globalThis.__documentService
-    if (!defaultDocumentService) {
-        defaultDocumentService = (async () => {
-            const service = new DocumentServiceImpl()
-            const { pdfDocumentAdapter } = await import("$lib/extensions/builtin/pdf")
-            if (!service.adapters.get(pdfDocumentAdapter.id))
-                service.adapters.register(pdfDocumentAdapter)
-            return service
-        })()
+function getDocumentService(): VfsDocumentService {
+    if (!installedDocumentService) {
+        throw new Error("The application document service has not been installed")
     }
-    return defaultDocumentService
+    return installedDocumentService
 }
 
 async function openDocument(source: DocumentSource): Promise<PagedDocument> {

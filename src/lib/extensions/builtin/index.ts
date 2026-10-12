@@ -1,6 +1,5 @@
 import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../extension-api"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
-import { pdfDocumentAdapter } from "./pdf"
 import { activateLibrary } from "./library"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
@@ -22,12 +21,20 @@ const manifest = (
     contributes,
 })
 
+// Keep the contribution itself format-neutral so importing the host does not import PDF.js.
+// The adapter implementation is loaded only after the PDF extension is activated and opened.
 const builtinPdfAdapter: DocumentAdapter = {
     id: "builtin.pdf.document",
-    extensions: pdfDocumentAdapter.extensions,
-    mimeTypes: pdfDocumentAdapter.mimeTypes,
-    probe: (source, signal) => pdfDocumentAdapter.probe(source, signal),
-    open: (source, signal) => pdfDocumentAdapter.open(source, signal),
+    extensions: ["pdf"],
+    mimeTypes: ["application/pdf"],
+    async probe(source, signal) {
+        const { pdfDocumentAdapter } = await import("./pdf")
+        return pdfDocumentAdapter.probe(source, signal)
+    },
+    async open(source, signal) {
+        const { pdfDocumentAdapter } = await import("./pdf")
+        return pdfDocumentAdapter.open(source, signal)
+    },
 }
 
 const activatePdf = (context: Parameters<AppExtension["activate"]>[0]): void => {

@@ -85,7 +85,7 @@ documentConstructed.mockName("documentConstructed")
 
 vi.mock("$app/environment", () => ({ browser: true }))
 
-import { VFSStore } from "./vfsStore.svelte"
+import { installDocumentService, type VfsDocumentService, VFSStore } from "./vfsStore.svelte"
 import type { ImportInput, VFSNodes } from "./vfsStore.types"
 
 function handle(name: string): FileSystemFileHandle {
@@ -109,10 +109,11 @@ beforeEach(() => {
     documentClose.mockReset().mockResolvedValue(undefined)
     documentService.open.mockClear()
     documentService.close.mockClear()
-    vi.stubGlobal("__documentService", documentService)
+    installDocumentService(documentService as unknown as VfsDocumentService)
 })
 
 afterEach(() => {
+    installDocumentService(undefined)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
 })

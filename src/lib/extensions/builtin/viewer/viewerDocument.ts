@@ -1,12 +1,11 @@
 import type {
     DocumentOutlineEntry,
+    OpenedDocument,
     PagedDocument,
     ReaderPage,
     DocumentSource,
 } from "$lib/document-model"
-import type { DocumentService } from "../../../core/documents"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
-import { DocumentService as DocumentServiceImpl } from "../../../core/documents"
 
 export type ViewerTextItem = { readonly text: string }
 
@@ -42,37 +41,29 @@ export interface ViewerDocumentLoader {
     ): Promise<ViewerDocument>
 }
 
-declare global {
-    // The host may install its canonical service while wiring document adapters.
-    // Keeping the seam here avoids importing an adapter implementation into Viewer.
-    var __documentService: DocumentService | undefined
-    var __viewerDocumentLoader: ViewerDocumentLoader | undefined
+/** The host-owned document capability consumed by the viewer. */
+export interface ViewerDocumentService {
+    open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument>
+    close(document: OpenedDocument): Promise<void>
 }
 
+let installedDocumentService: ViewerDocumentService | undefined
 let defaultLoader: ViewerDocumentLoader | undefined
-let defaultService: Promise<DocumentService> | undefined
 
-async function getDefaultDocumentService(): Promise<DocumentService> {
-    if (!defaultService) {
-        defaultService = (async () => {
-            const service = new DocumentServiceImpl()
-            // The built-in adapter is a capability, so do not load its PDF.js
-            // implementation until a document is actually opened.
-            const { pdfDocumentAdapter } = await import("$lib/extensions/builtin/pdf")
-            service.adapters.register(pdfDocumentAdapter)
-            return service
-        })()
+/** Install the canonical host capability before viewer documents are opened. */
+export function installViewerDocumentService(service: ViewerDocumentService | undefined): void {
+    installedDocumentService = service
+    defaultLoader = undefined
+}
+
+function requireDocumentService(): ViewerDocumentService {
+    if (!installedDocumentService) {
+        throw new Error("The application document service has not been installed")
     }
-    return defaultService
+    return installedDocumentService
 }
 
-function getDocumentService(): Promise<DocumentService> {
-    return globalThis.__documentService
-        ? Promise.resolve(globalThis.__documentService)
-        : getDefaultDocumentService()
-}
-
-function asViewerDocument(service: DocumentService, document: PagedDocument): ViewerDocument {
+function asViewerDocument(service: ViewerDocumentService, document: PagedDocument): ViewerDocument {
     const candidate = document as PagedDocument & {
         getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
         getOutline?: () => Promise<readonly DocumentOutlineEntry[] | null>
@@ -110,7 +101,7 @@ function asViewerDocument(service: DocumentService, document: PagedDocument): Vi
     }
 }
 
-function createServiceLoader(): ViewerDocumentLoader {
+function createServiceLoader(service: ViewerDocumentService): ViewerDocumentLoader {
     return {
         async open(input, signal) {
             const response = await fetch(input.url, { signal })
@@ -122,7 +113,6 @@ function createServiceLoader(): ViewerDocumentLoader {
                 blob,
                 mimeType: blob.type || undefined,
             })
-            const service = await getDocumentService()
             const document = await service.open(source, signal)
             if (document.kind !== "paged") {
                 await service.close(document)
@@ -134,9 +124,7 @@ function createServiceLoader(): ViewerDocumentLoader {
 }
 
 export function getViewerDocumentLoader(): ViewerDocumentLoader {
-    const loader = globalThis.__viewerDocumentLoader
-    if (loader) return loader
-    if (!defaultLoader) defaultLoader = createServiceLoader()
+    if (!defaultLoader) defaultLoader = createServiceLoader(requireDocumentService())
     return defaultLoader
 }
 
