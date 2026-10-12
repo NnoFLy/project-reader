@@ -1,6 +1,7 @@
 import {
     assertNamespacedId,
     belongsToExtension,
+    canonicalBuiltinId,
     InvalidCommandPayloadError,
     UnknownCommandError,
     type CommandContribution,
@@ -15,7 +16,10 @@ export class CommandRegistryImpl implements CommandRegistry {
     private readonly keybindings = new Map<string, KeybindingContribution[]>()
     private disposed = false
 
-    constructor(private readonly extensionId: string) {}
+    constructor(
+        private readonly extensionId: string,
+        private readonly assertCommandAvailable?: (commandId: string) => void,
+    ) {}
 
     register(command: CommandContribution): Disposable {
         this.assertUsable()
@@ -27,6 +31,14 @@ export class CommandRegistryImpl implements CommandRegistry {
         }
         if (this.commands.has(command.id))
             throw new Error(`Command is already registered: ${command.id}`)
+        if (
+            [...this.commands.keys()].some((registeredId) =>
+                commandIdsShadow(command.id, registeredId),
+            )
+        ) {
+            throw new Error(`Command shadows an existing command: ${command.id}`)
+        }
+        this.assertCommandAvailable?.(command.id)
         const registered = { ...command, extensionId: this.extensionId }
         this.commands.set(command.id, registered)
         let active = true
@@ -92,4 +104,14 @@ export class CommandRegistryImpl implements CommandRegistry {
     private assertUsable(): void {
         if (this.disposed) throw new Error(`Command registry for ${this.extensionId} is disposed`)
     }
+}
+
+function commandIdsShadow(left: string, right: string): boolean {
+    const canonicalLeft = canonicalBuiltinId(left)
+    const canonicalRight = canonicalBuiltinId(right)
+    return (
+        canonicalLeft === canonicalRight ||
+        canonicalLeft.startsWith(`${canonicalRight}.`) ||
+        canonicalRight.startsWith(`${canonicalLeft}.`)
+    )
 }

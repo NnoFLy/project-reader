@@ -8,9 +8,12 @@ describe("namespaced extension IDs", () => {
         expect(isNamespacedId("viewer.")).toBe(false)
     })
 
-    it("accepts an extension namespace or its vendor namespace", () => {
+    it("accepts only host-owned builtin short namespaces", () => {
         expect(belongsToExtension("builtin.viewer.next-page", "builtin.viewer")).toBe(true)
         expect(belongsToExtension("viewer.next-page", "builtin.viewer")).toBe(true)
+        expect(belongsToExtension("viewer.next-page", "runtime.viewer")).toBe(false)
+        expect(belongsToExtension("other.next-page", "builtin.other")).toBe(false)
+        expect(belongsToExtension("runtime.viewer.next-page", "runtime.viewer")).toBe(true)
         expect(belongsToExtension("library.open", "builtin.viewer")).toBe(false)
     })
 })

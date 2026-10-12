@@ -71,6 +71,8 @@ describe("contribution registries", () => {
         expect(() => registries.views.list()).toThrow("permission: views")
         expect(() => registries.documents.list()).toThrow("permission: documents")
         expect(() => registries.settings.list()).toThrow("permission: settings")
+        expect("listForHost" in registries.views).toBe(false)
+        expect("listForHost" in registries.documents).toBe(false)
     })
 
     it("discovers and executes prompt commands through the host registry", async () => {
@@ -128,6 +130,33 @@ describe("contribution registries", () => {
         expect(registries.views.list()).toHaveLength(1)
         expect(registries.documents.list()).toHaveLength(1)
         expect(registries.settings.list()).toHaveLength(1)
+    })
+
+    it("rejects nested command shadowing", () => {
+        const registries = new ContributionRegistry().forExtension(
+            "builtin.viewer",
+            createPermissionSet(["commands"]),
+        )
+
+        registries.commands.register({
+            id: "viewer.menu",
+            label: "Menu",
+            execute: () => undefined,
+        })
+        expect(() =>
+            registries.commands.register({
+                id: "viewer.menu.open",
+                label: "Open",
+                execute: () => undefined,
+            }),
+        ).toThrow("shadows")
+        expect(() =>
+            registries.commands.register({
+                id: "builtin.viewer.menu",
+                label: "Alias",
+                execute: () => undefined,
+            }),
+        ).toThrow("shadows")
     })
 
     it("uses the extension-scoped durable store for settings", async () => {

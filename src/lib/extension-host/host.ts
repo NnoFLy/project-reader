@@ -2,8 +2,10 @@ import {
     ExtensionLifecycle,
     assertNamespacedId,
     belongsToExtension,
+    canonicalBuiltinId,
     createPermissionSet,
     extensionInfo,
+    extensionNamespace,
     guardExtensionCapability,
     type AppExtension,
     type ExtensionContext,
@@ -53,6 +55,7 @@ export class ExtensionHost {
             extension,
             permissions: validateManifest(extension.manifest),
         }))
+        assertUniqueExtensionNamespaces(validated.map(({ extension }) => extension.manifest))
         const { order } = resolveDependencies(validated.map(({ extension }) => extension.manifest))
         const byId = new Map(validated.map((value) => [value.extension.manifest.id, value]))
         for (const manifest of order) {
@@ -286,6 +289,19 @@ function validateManifest(manifest: ExtensionManifest): PermissionSet {
         }
     }
     const contributions = manifest.contributes
+    const commandIds = new Set<string>()
+    for (const command of contributions?.commands ?? []) {
+        assertNamespacedId(command.id, "command")
+        if (!belongsToExtension(command.id, manifest.id)) {
+            throw new Error(
+                `Contribution ${command.id} is outside extension namespace ${manifest.id}`,
+            )
+        }
+        if ([...commandIds].some((id) => commandIdsShadow(id, command.id))) {
+            throw new Error(`Command shadows an existing command: ${command.id}`)
+        }
+        commandIds.add(command.id)
+    }
     const ids = new Set<string>()
     for (const contribution of [
         ...(contributions?.commands ?? []),
@@ -328,4 +344,28 @@ function assertValidKeybinding(keybinding: readonly string[], commandId: string)
 
 function keybindingKey(keybinding: readonly string[]): string {
     return keybinding.map((part) => part.trim().toLowerCase()).join("+")
+}
+
+function assertUniqueExtensionNamespaces(manifests: readonly ExtensionManifest[]): void {
+    const owners = new Map<string, string>()
+    for (const manifest of manifests) {
+        const namespace = extensionNamespace(manifest.id)
+        const owner = owners.get(namespace)
+        if (owner) {
+            throw new Error(
+                `Extension namespace is already registered: ${namespace} (${owner} and ${manifest.id})`,
+            )
+        }
+        owners.set(namespace, manifest.id)
+    }
+}
+
+function commandIdsShadow(left: string, right: string): boolean {
+    const canonicalLeft = canonicalBuiltinId(left)
+    const canonicalRight = canonicalBuiltinId(right)
+    return (
+        canonicalLeft === canonicalRight ||
+        canonicalLeft.startsWith(`${canonicalRight}.`) ||
+        canonicalRight.startsWith(`${canonicalLeft}.`)
+    )
 }

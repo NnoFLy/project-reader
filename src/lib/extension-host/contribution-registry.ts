@@ -1,6 +1,7 @@
 import {
     assertNamespacedId,
     belongsToExtension,
+    canonicalBuiltinId,
     UnknownCommandError,
     type CommandRegistry,
     type Disposable,
@@ -89,6 +90,33 @@ class ViewRegistryImpl implements ViewRegistry {
     }
 }
 
+class PermissionedViewRegistry implements ViewRegistry {
+    constructor(
+        private readonly delegate: ViewRegistryImpl,
+        private readonly permissions: PermissionSet,
+    ) {}
+
+    register(view: ViewContribution): Disposable {
+        this.permissions.require("views")
+        return this.delegate.register(view)
+    }
+
+    registerNative(view: import("../extension-api").NativeViewContribution): Disposable {
+        this.permissions.require("views")
+        return this.delegate.registerNative(view)
+    }
+
+    get(viewId: string): RegisteredView | undefined {
+        this.permissions.require("views")
+        return this.delegate.get(viewId)
+    }
+
+    list(slot?: ViewSlot): readonly RegisteredView[] {
+        this.permissions.require("views")
+        return this.delegate.listForHost(slot)
+    }
+}
+
 class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
     private readonly adapters = new Map<string, RegisteredDocumentAdapter>()
     private disposed = false
@@ -159,6 +187,33 @@ class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
         this.disposed = true
         for (const adapter of this.adapters.values()) this.coreRegistry.unregister(adapter.id)
         this.adapters.clear()
+    }
+}
+
+class PermissionedDocumentAdapterRegistry implements DocumentAdapterRegistry {
+    constructor(
+        private readonly delegate: DocumentAdapterRegistryImpl,
+        private readonly permissions: PermissionSet,
+    ) {}
+
+    register(adapter: DocumentAdapter): Disposable {
+        this.permissions.require("documents")
+        return this.delegate.register(adapter)
+    }
+
+    get(adapterId: string): RegisteredDocumentAdapter | undefined {
+        this.permissions.require("documents")
+        return this.delegate.get(adapterId)
+    }
+
+    findForExtension(extension: string): readonly RegisteredDocumentAdapter[] {
+        this.permissions.require("documents")
+        return this.delegate.findForExtension(extension)
+    }
+
+    list(): readonly RegisteredDocumentAdapter[] {
+        this.permissions.require("documents")
+        return this.delegate.listForHost()
     }
 }
 
@@ -282,14 +337,18 @@ export class ContributionRegistry {
     ): ExtensionRegistries {
         const existing = this.registries.get(extensionId)
         if (existing) return existing
-        const hostCommands = new CommandRegistryImpl(extensionId)
+        const hostCommands = new CommandRegistryImpl(extensionId, (commandId) =>
+            this.assertCommandAvailable(commandId),
+        )
         const hostViews = new ViewRegistryImpl(extensionId, permissions)
+        const views = new PermissionedViewRegistry(hostViews, permissions)
         const hostSettings = new SettingsRegistryImpl(extensionId, settingsStore)
         const hostDocuments = new DocumentAdapterRegistryImpl(
             extensionId,
             this.coreDocumentAdapters,
             permissions,
         )
+        const documents = new PermissionedDocumentAdapterRegistry(hostDocuments, permissions)
         const commands = new PermissionedCommandRegistry(
             hostCommands,
             permissions,
@@ -298,9 +357,9 @@ export class ContributionRegistry {
         const settings = new PermissionedSettingsRegistry(hostSettings, permissions)
         const registries: InternalExtensionRegistries = {
             commands,
-            views: hostViews,
+            views,
             settings,
-            documents: hostDocuments,
+            documents,
             hostCommands,
             hostViews,
             hostDocuments,
@@ -331,6 +390,13 @@ export class ContributionRegistry {
         return registry.hostCommands.execute(commandId, payload, context)
     }
 
+    private assertCommandAvailable(commandId: string): void {
+        const shadowed = [...this.registries.values()]
+            .flatMap((value) => value.hostCommands.list())
+            .find((command) => commandIdsShadow(command.id, commandId))
+        if (shadowed) throw new Error(`Command shadows an existing command: ${commandId}`)
+    }
+
     private findCommand(commandId: string): RegisteredCommand | undefined {
         return [...this.registries.values()]
             .map((value) => value.hostCommands.get(commandId))
@@ -352,4 +418,14 @@ export class ContributionRegistry {
     dispose(): void {
         for (const registry of this.registries.values()) registry.dispose()
     }
+}
+
+function commandIdsShadow(left: string, right: string): boolean {
+    const canonicalLeft = canonicalBuiltinId(left)
+    const canonicalRight = canonicalBuiltinId(right)
+    return (
+        canonicalLeft === canonicalRight ||
+        canonicalLeft.startsWith(`${canonicalRight}.`) ||
+        canonicalRight.startsWith(`${canonicalLeft}.`)
+    )
 }

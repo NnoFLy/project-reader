@@ -109,25 +109,29 @@ describe("extension host lifecycle", () => {
 
     it("shares concurrent activation and isolates failures", async () => {
         let activations = 0
-        const good = extension("builtin.good", async ({ commands }) => {
+        const good = extension("runtime.good", async ({ commands }) => {
             activations += 1
             await Promise.resolve()
-            commands.register({ id: "good.run", label: "Run", execute: () => "ok" })
+            commands.register({ id: "runtime.good.run", label: "Run", execute: () => "ok" })
         })
-        const bad = extension("builtin.bad", ({ commands }) => {
-            commands.register({ id: "bad.partial", label: "Partial", execute: () => undefined })
+        const bad = extension("runtime.bad", ({ commands }) => {
+            commands.register({
+                id: "runtime.bad.partial",
+                label: "Partial",
+                execute: () => undefined,
+            })
             throw new Error("boom")
         })
         const host = new ExtensionHost({ extensions: [good, bad] })
-        await Promise.all([host.activate("builtin.good"), host.activate("builtin.good")])
+        await Promise.all([host.activate("runtime.good"), host.activate("runtime.good")])
         expect(activations).toBe(1)
-        await expect(host.activate("builtin.bad")).rejects.toThrow("builtin.bad")
-        expect(host.record("builtin.bad")?.state).toBe("failed")
+        await expect(host.activate("runtime.bad")).rejects.toThrow("runtime.bad")
+        expect(host.record("runtime.bad")?.state).toBe("failed")
         expect(host.contributions.listCommands()).toEqual([
-            expect.objectContaining({ id: "good.run" }),
+            expect.objectContaining({ id: "runtime.good.run" }),
         ])
         await host.dispose()
-        expect(host.record("builtin.good")?.state).toBe("disposed")
+        expect(host.record("runtime.good")?.state).toBe("disposed")
     })
 
     it("does not resurrect an extension when disable races activation", async () => {
@@ -191,6 +195,18 @@ describe("extension host lifecycle", () => {
         expect(closeAll).toHaveBeenCalledTimes(1)
         expect(events).toEqual(["documents", "extension"])
         expect(documentService.openDocumentCount).toBe(0)
+    })
+
+    it("rejects runtime extension short namespace collisions", () => {
+        expect(
+            () =>
+                new ExtensionHost({
+                    extensions: [
+                        extension("builtin.viewer", () => undefined),
+                        extension("runtime.viewer", () => undefined),
+                    ],
+                }),
+        ).toThrow("Extension namespace is already registered")
     })
 
     it("rejects duplicate manifest keybindings and unknown permissions", () => {

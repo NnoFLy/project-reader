@@ -5,6 +5,14 @@ export interface Disposable {
 export type Unsubscribe = Disposable
 
 const NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/
+export const HOST_OWNED_BUILTIN_IDS = Object.freeze([
+    "builtin.library",
+    "builtin.prompt",
+    "builtin.viewer",
+    "builtin.settings",
+    "builtin.pdf",
+] as const)
+const hostOwnedBuiltinIds = new Set<string>(HOST_OWNED_BUILTIN_IDS)
 
 export function isNamespacedId(id: string): boolean {
     const separator = id.indexOf(".")
@@ -22,8 +30,19 @@ export function extensionNamespace(extensionId: string): string {
 
 export function belongsToExtension(id: string, extensionId: string): boolean {
     if (!isNamespacedId(id)) return false
-    const namespace = extensionNamespace(extensionId)
-    return id.startsWith(`${extensionId}.`) || id.startsWith(`${namespace}.`)
+    if (id.startsWith(`${extensionId}.`)) return true
+    return (
+        hostOwnedBuiltinIds.has(extensionId) && id.startsWith(`${extensionNamespace(extensionId)}.`)
+    )
+}
+
+export function canonicalBuiltinId(id: string): string {
+    for (const extensionId of HOST_OWNED_BUILTIN_IDS) {
+        const namespace = extensionNamespace(extensionId)
+        if (id.startsWith(`${extensionId}.`))
+            return `${namespace}.${id.slice(extensionId.length + 1)}`
+    }
+    return id
 }
 
 export type ActivationEvent =
