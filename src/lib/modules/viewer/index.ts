@@ -1,6 +1,0 @@
-export { default as ViewerPage } from "./ViewerPage.svelte"
-export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
-export { createViewerOpenCommand } from "./commands/viewerOpenCommand"
-export { bookmarksStore } from "./stores/bookmarksStore.svelte"
-export { searchStore } from "./stores/searchStore.svelte"
-export { viewerStore } from "./stores/viewerStore.svelte"

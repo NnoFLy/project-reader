@@ -10,12 +10,13 @@ function sourceFiles(directory: string): string[] {
     })
 }
 
-describe("viewer module boundary", () => {
-    it("does not import PDF.js or the PDF adapter implementation", () => {
-        const forbiddenImport = /(?:from|import\s*\()\s*["'](?:pdfjs-dist|\$lib\/modules\/pdf)/
-        const offenders = sourceFiles(join(process.cwd(), "src/lib/modules/viewer")).filter(
-            (path) => forbiddenImport.test(readFileSync(path, "utf8")),
-        )
+describe("built-in viewer boundary", () => {
+    it("does not import PDF.js or legacy viewer/PDF implementations", () => {
+        const forbiddenImport =
+            /(?:from|import\s*\()\s*["'](?:pdfjs-dist|\$lib\/modules\/(?:pdf|viewer))/
+        const offenders = sourceFiles(
+            join(process.cwd(), "src/lib/extensions/builtin/viewer"),
+        ).filter((path) => forbiddenImport.test(readFileSync(path, "utf8")))
 
         expect(offenders).toEqual([])
     })

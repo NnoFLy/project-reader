@@ -4,9 +4,9 @@ import type {
     ReaderPage,
     DocumentSource,
 } from "$lib/document-model"
-import type { DocumentService } from "../../core/documents"
-import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../core/files"
-import { DocumentService as DocumentServiceImpl } from "../../core/documents"
+import type { DocumentService } from "../../../core/documents"
+import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
+import { DocumentService as DocumentServiceImpl } from "../../../core/documents"
 
 export type ViewerTextItem = { readonly text: string }
 
