@@ -44,6 +44,7 @@ describe("command palette adapter", () => {
             list: () => [
                 {
                     id: "library.open",
+                    extensionId: "builtin.library",
                     label: "Open library",
                     keybinding: ["ctrl+o"],
                     execute,
