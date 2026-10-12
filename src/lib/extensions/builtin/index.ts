@@ -3,10 +3,32 @@ import { DocumentService } from "../../core/documents"
 import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
 import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
-import { activateLibrary } from "./library"
+import { activateLibrary, libraryStore } from "./library"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
-import { activateViewer } from "./viewer"
+import { activateViewer, type ViewerFileCapability } from "./viewer"
+
+// The built-in library owns file handles, object URLs, and relink state. Expose that
+// singleton through the viewer's narrow host capability instead of creating another store.
+const builtinViewerFileCapability: ViewerFileCapability = {
+    get nodes() {
+        return libraryStore.nodes as ViewerFileCapability["nodes"]
+    },
+    get fileUrls() {
+        return libraryStore.fileUrls
+    },
+    get isLockedMap() {
+        return libraryStore.isLockedMap
+    },
+    getFileUrl: (id) => libraryStore.getFileUrl(id),
+    restoreFileAccess: (id) => libraryStore.restoreFileAccess(id),
+    waitForRelink: (id) => libraryStore.waitForRelink(id),
+    revokeFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
+    getContentGeneration: (id) => libraryStore.getContentGeneration(id),
+    isCurrentContent: (id, generation) => libraryStore.isCurrentContent(id, generation),
+    isCurrentFileUrl: (id, url, generation) => libraryStore.isCurrentFileUrl(id, url, generation),
+    clearForwardHistory: () => libraryStore.clearForwardHistory(),
+}
 
 const manifest = (
     id: string,
@@ -77,7 +99,7 @@ const builtinExtensions: readonly AppExtension[] = [
     },
     {
         manifest: BUILTIN_MANIFESTS[2],
-        activate: activateViewer,
+        activate: (context) => activateViewer(context, builtinViewerFileCapability),
     },
     {
         manifest: BUILTIN_MANIFESTS[3],

@@ -3,7 +3,7 @@ import ViewerPage from "./ViewerPage.svelte"
 import { createViewerOpenCommand } from "./commands/viewerOpenCommand"
 import { isViewerOpenPayload } from "./commands/viewerCommandPayloads"
 import { viewerStore } from "./stores/viewerStore.svelte"
-import { installViewerHostCapabilities } from "./viewerHost"
+import { installViewerHostCapabilities, type ViewerFileCapability } from "./viewerHost"
 
 export { ViewerPage }
 export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
@@ -16,9 +16,12 @@ export type { ViewerFileCapability } from "./viewerHost"
 
 export const VIEWER_VIEW_ID = "viewer.reader"
 
-export function activateViewer(context: ExtensionContext): void {
+export function activateViewer(
+    context: ExtensionContext,
+    fileCapability?: ViewerFileCapability,
+): void {
     const viewerStorage = context.storage.namespace("viewer")
-    installViewerHostCapabilities({ storage: viewerStorage })
+    installViewerHostCapabilities({ files: fileCapability, storage: viewerStorage })
     void viewerStore.configureStorage(viewerStorage)
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {

@@ -52,7 +52,7 @@
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
-    import { promptStore } from "$lib/modules/prompt"
+    import { getPromptCommandRegistry, openCommandPalette, promptStore } from "$lib/modules/prompt"
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
     import { createViewerBookmarkCommands } from "../commands/viewerBookmarkCommandFactory"
@@ -1431,7 +1431,7 @@
                                             class="viewer-fab-btn fab-prompt"
                                             onclick={(event) => {
                                                 event.stopPropagation()
-                                                void commandsStore.execute("prompt.open")
+                                                void openCommandPalette(getPromptCommandRegistry())
                                             }}
                                             aria-label={m.keymap_prompt()}
                                             tooltip={`${m.keymap_prompt()}${getShortcutHint(commandsNode, "prompt.open")}`}
