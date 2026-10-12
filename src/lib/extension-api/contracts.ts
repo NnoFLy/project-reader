@@ -75,6 +75,8 @@ export interface AppExtension {
 
 export interface ExtensionContext {
     readonly extension: ExtensionInfo
+    /** Permissions are supplied by the host; manually created contexts may omit them. */
+    readonly permissions?: import("./permissions").PermissionSet
     readonly commands: import("./commands").CommandRegistry
     readonly views: import("./views").ViewRegistry
     readonly settings: import("./settings").SettingsRegistry
