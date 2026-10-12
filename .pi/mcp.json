@@ -1,0 +1,14 @@
+{
+    "mcpServers": {
+        "svelte": {
+            "command": "pnpm",
+            "args": ["exec", "svelte-mcp"],
+            "description": "Svelte and SvelteKit documentation and code analysis"
+        },
+        "chrome-devtools": {
+            "command": "npx",
+            "args": ["-y", "chrome-devtools-mcp@latest"],
+            "description": "Inspect and debug the app with Chrome DevTools"
+        }
+    }
+}
