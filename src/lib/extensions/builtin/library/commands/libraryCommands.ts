@@ -10,7 +10,11 @@ import { defineCommands } from "./commands.types"
 import { commandsStore } from "./commandsStore.svelte"
 import type { PromptItem } from "./promptStore.svelte"
 import { promptStore } from "./promptStore.svelte"
-import { executeLibraryHostCommand, getLibraryPrompt } from "../state/libraryHostBridge"
+import {
+    executeLibraryHostCommand,
+    getLibraryHostBridge,
+    getLibraryPrompt,
+} from "../state/libraryHostBridge"
 import PromptBookPreview from "../components/PromptBookPreview.svelte"
 import * as m from "$lib/paraglide/messages"
 
@@ -19,7 +23,7 @@ function libraryPrompt() {
 }
 
 function executeHostCommand(commandId: string, payload?: unknown) {
-    return getLibraryPrompt()
+    return getLibraryHostBridge()
         ? executeLibraryHostCommand(commandId, payload)
         : commandsStore.execute(commandId as never, payload as never)
 }

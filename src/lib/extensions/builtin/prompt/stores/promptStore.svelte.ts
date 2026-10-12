@@ -166,6 +166,22 @@ class PromptStore implements PromptService {
         this.cancelFlow()
     }
 
+    /** Clear active prompt work so a disposed extension cannot retain providers or sessions. */
+    reset(): void {
+        this.requestVersion += 1
+        const session = this.session
+        this.session = null
+        this.snapshot = null
+        session?.resolve(undefined)
+        for (const frame of this.suspendedFrames.splice(0)) frame.session.resolve(undefined)
+        this.selectingSessions.clear()
+        this.manualSelectedIndex = null
+        this.currentHistoryIndex = null
+        this.retainedQueriesLocal = []
+        this.query = ""
+        this.draftQuery = ""
+    }
+
     private resolveActive(value?: unknown) {
         this.requestVersion += 1
         const session = this.session

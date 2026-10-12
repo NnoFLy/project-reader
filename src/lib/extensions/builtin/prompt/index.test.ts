@@ -63,7 +63,13 @@ describe("builtin.prompt activation", () => {
         promptStore.close()
         await palette
 
+        const pending = promptStore.open({ id: "active-prompt", items: () => [] })
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(promptStore.snapshot).not.toBeNull()
         await dispose()
+        await pending
+        expect(promptStore.snapshot).toBeNull()
+        expect(promptStore.query).toBe("")
         expect(context.commands.list()).toEqual([])
     })
 })

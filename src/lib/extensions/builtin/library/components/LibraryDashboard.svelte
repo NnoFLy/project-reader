@@ -168,7 +168,7 @@
         if (node.type === "folder") {
             await libraryCommandScope.execute("library.folder.open", { folderId: node.id })
         } else {
-            await libraryCommandScope.execute("viewer.open", { bookId: node.id })
+            await executeLibraryHostCommand("viewer.open", { bookId: node.id })
         }
     }
 

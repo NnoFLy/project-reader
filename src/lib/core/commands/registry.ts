@@ -11,6 +11,20 @@ import {
     type RegisteredCommand,
 } from "../../extension-api"
 
+export interface HostKeybinding {
+    readonly commandId: string
+    readonly keybinding: string
+    readonly when?: (context?: unknown) => boolean
+    readonly extensionId: string
+}
+
+export interface HostCommandFacade {
+    get(commandId: string): RegisteredCommand | undefined
+    list(): readonly RegisteredCommand[]
+    listKeybindings(): readonly HostKeybinding[]
+    execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown>
+}
+
 export class CommandRegistryImpl implements CommandRegistry {
     private readonly commands = new Map<string, RegisteredCommand>()
     private readonly keybindings = new Map<string, KeybindingContribution[]>()
@@ -83,6 +97,24 @@ export class CommandRegistryImpl implements CommandRegistry {
 
     list(): readonly RegisteredCommand[] {
         return [...this.commands.values()]
+    }
+
+    listKeybindings(): readonly HostKeybinding[] {
+        const registered = [...this.keybindings.entries()].flatMap(([, bindings]) =>
+            bindings.map((binding) => ({
+                ...binding,
+                keybinding: binding.keybinding.join("+"),
+                extensionId: this.extensionId,
+            })),
+        )
+        const contributed = [...this.commands.values()].flatMap((command) =>
+            (command.keybinding ?? []).map((keybinding) => ({
+                commandId: command.id,
+                keybinding,
+                extensionId: this.extensionId,
+            })),
+        )
+        return [...registered, ...contributed]
     }
 
     async execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown> {

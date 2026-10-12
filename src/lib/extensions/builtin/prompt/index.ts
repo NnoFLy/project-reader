@@ -43,7 +43,10 @@ function isPromptOpenPayload(payload: unknown): payload is PromptOpenPayload | u
 
 export function activatePrompt(context: ExtensionContext): void {
     setPromptCommandRegistry(context.commands)
-    context.lifecycle.onDispose(() => setPromptCommandRegistry(undefined))
+    context.lifecycle.onDispose(() => {
+        promptStore.reset()
+        setPromptCommandRegistry(undefined)
+    })
 
     context.commands.register({
         id: "prompt.open",

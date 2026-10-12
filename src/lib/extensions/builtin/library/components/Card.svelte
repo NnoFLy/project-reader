@@ -26,6 +26,7 @@
     import { settingsStore } from "../state/librarySettings"
     import { resolveBookTitle } from "../utils/bookTitle"
     import { formatBookProgress } from "../utils/bookProgress"
+    import { executeLibraryHostCommand } from "../state/libraryHostBridge"
 
     const libraryUI = useLibraryUI()
 
@@ -85,7 +86,7 @@
                     folderId: nodeId,
                 })
             } else {
-                await commandsNode.parent?.execute("viewer.open", { bookId: nodeId })
+                await executeLibraryHostCommand("viewer.open", { bookId: nodeId })
             }
         },
         toggleSelection: async (payload) => {

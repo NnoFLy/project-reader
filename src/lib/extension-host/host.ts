@@ -15,6 +15,7 @@ import {
     type PermissionSet,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
+import type { HostCommandFacade } from "../core/commands"
 import { NotificationServiceImpl } from "../core/notifications"
 import { createExtensionStorage, MemoryStorageBackend, type StorageBackend } from "../core/storage"
 import { ContributionRegistry } from "./contribution-registry"
@@ -42,6 +43,8 @@ interface ExtensionRuntime {
 
 export class ExtensionHost {
     readonly contributions: ContributionRegistry
+    /** Shared host-owned command discovery and execution facade. */
+    readonly commands: HostCommandFacade
     readonly notifications: NotificationServiceImpl
     readonly documentService: DocumentService
     private readonly runtimes = new Map<string, ExtensionRuntime>()
@@ -55,6 +58,7 @@ export class ExtensionHost {
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
+        this.commands = this.contributions.globalCommands
         const validated = options.extensions.map((extension) => ({
             extension,
             permissions: validateManifest(extension.manifest),

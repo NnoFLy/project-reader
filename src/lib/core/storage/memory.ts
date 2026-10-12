@@ -221,11 +221,13 @@ export class NamespacedStorage implements ExtensionStorage {
 
     async get<T>(key: string): Promise<T | undefined> {
         assertStorageKey(key)
+        await this.loadVersion()
         return (await this.backend.get(this.key(key))) as T | undefined
     }
 
     async set<T>(key: string, value: T): Promise<void> {
         assertStorageKey(key)
+        await this.loadVersion()
         try {
             await this.backend.set(this.key(key), value)
         } catch (error) {
@@ -239,6 +241,7 @@ export class NamespacedStorage implements ExtensionStorage {
 
     async delete(key: string): Promise<void> {
         assertStorageKey(key)
+        await this.loadVersion()
         await this.backend.delete(this.key(key))
         for (const listener of this.listeners) listener(key)
     }
@@ -248,12 +251,14 @@ export class NamespacedStorage implements ExtensionStorage {
     }
 
     async keys(): Promise<readonly string[]> {
+        await this.loadVersion()
         const prefix = `${this.prefix}:`
         const keys = await this.backend.keys(prefix)
         return keys.map((key) => key.slice(prefix.length)).filter((key) => !key.includes(":"))
     }
 
     async clear(): Promise<void> {
+        await this.loadVersion()
         for (const key of await this.backend.keys(`${this.prefix}:`)) {
             if (key !== this.versionKey() && key !== this.journalKey())
                 await this.backend.delete(key)

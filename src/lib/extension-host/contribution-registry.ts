@@ -20,7 +20,7 @@ import {
     type PermissionSet,
 } from "../extension-api"
 import { DocumentAdapterRegistry as CoreDocumentAdapterRegistry } from "../core/documents"
-import { CommandRegistryImpl } from "../core/commands"
+import { CommandRegistryImpl, type HostCommandFacade, type HostKeybinding } from "../core/commands"
 import { SettingsRegistryImpl, type SettingsStore } from "../core/settings"
 import type { DocumentAdapter as CoreDocumentAdapter } from "../document-model"
 
@@ -217,17 +217,14 @@ class PermissionedDocumentAdapterRegistry implements DocumentAdapterRegistry {
     }
 }
 
-export interface HostCommandRegistry {
-    get(commandId: string): RegisteredCommand | undefined
-    list(): readonly RegisteredCommand[]
-    execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown>
-}
+export type HostCommandRegistry = HostCommandFacade
 
 class PermissionedCommandRegistry implements CommandRegistry {
     constructor(
         private readonly delegate: CommandRegistry & Disposable,
         private readonly permissions: PermissionSet,
         private readonly hostCommands?: HostCommandRegistry,
+        private readonly hostExecutor?: HostCommandFacade,
     ) {}
 
     register(command: import("../extension-api").CommandContribution): Disposable {
@@ -253,6 +250,7 @@ class PermissionedCommandRegistry implements CommandRegistry {
     execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown> {
         this.permissions.require("commands")
         return (
+            this.hostExecutor?.execute(commandId, payload, context) ??
             this.hostCommands?.execute(commandId, payload, context) ??
             this.delegate.execute(commandId, payload, context)
         )
@@ -308,7 +306,7 @@ export interface ExtensionRegistries {
 }
 
 interface InternalExtensionRegistries extends ExtensionRegistries {
-    readonly hostCommands: CommandRegistry
+    readonly hostCommands: CommandRegistryImpl
     readonly hostViews: ViewRegistryImpl
     readonly hostDocuments: DocumentAdapterRegistryImpl
 }
@@ -323,6 +321,7 @@ export class ContributionRegistry {
     readonly globalCommands: HostCommandRegistry = {
         get: (commandId) => this.findCommand(commandId),
         list: () => this.listCommands(),
+        listKeybindings: () => this.listKeybindings(),
         execute: (commandId, payload, context) => this.executeCommand(commandId, payload, context),
     }
 
@@ -353,6 +352,7 @@ export class ContributionRegistry {
             hostCommands,
             permissions,
             extensionId === "builtin.prompt" ? this.globalCommands : undefined,
+            this.globalCommands,
         )
         const settings = new PermissionedSettingsRegistry(hostSettings, permissions)
         const registries: InternalExtensionRegistries = {
@@ -377,6 +377,12 @@ export class ContributionRegistry {
 
     listCommands(): readonly import("../extension-api").RegisteredCommand[] {
         return [...this.registries.values()].flatMap((value) => value.hostCommands.list())
+    }
+
+    listKeybindings(): readonly HostKeybinding[] {
+        return [...this.registries.values()].flatMap((value) =>
+            value.hostCommands.listKeybindings(),
+        )
     }
 
     executeCommand(commandId: string, payload?: unknown, context?: unknown): Promise<unknown> {

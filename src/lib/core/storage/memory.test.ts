@@ -54,6 +54,9 @@ describe("extension storage", () => {
         await backend.set(`${prefix}:__storage_meta:migration-version`, 1)
 
         const storage = createExtensionStorage(backend, "builtin.viewer")
+        expect(await storage.get("old")).toBe("before")
+        expect(await storage.get("partial")).toBeUndefined()
+
         await storage.migrate(2, async (namespace) => namespace.set("ready", true))
 
         expect(storage.version).toBe(2)

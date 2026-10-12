@@ -107,8 +107,31 @@ describe("contribution registries", () => {
         await expect(
             prompt.commands.execute("viewer.run", "valid", "disabled"),
         ).resolves.toBeUndefined()
-        expect(execute).toHaveBeenCalledOnce()
+        const library = contributions.forExtension(
+            "builtin.library",
+            createPermissionSet(["commands"]),
+        )
+        await expect(library.commands.execute("viewer.run", "valid", "enabled")).resolves.toBe("ok")
+        expect(execute).toHaveBeenCalledTimes(2)
         expect(viewer.commands.list().map(({ id }) => id)).toEqual(["viewer.run"])
+    })
+
+    it("discovers command keybindings through the shared host facade", () => {
+        const contributions = new ContributionRegistry()
+        const viewer = contributions.forExtension(
+            "builtin.viewer",
+            createPermissionSet(["commands"]),
+        )
+        viewer.commands.register({
+            id: "viewer.open",
+            label: "Open",
+            keybinding: ["ctrl+o", "meta+o"],
+            execute: () => undefined,
+        })
+        expect(contributions.globalCommands.listKeybindings()).toEqual([
+            { commandId: "viewer.open", keybinding: "ctrl+o", extensionId: "builtin.viewer" },
+            { commandId: "viewer.open", keybinding: "meta+o", extensionId: "builtin.viewer" },
+        ])
     })
 
     it("allows each declared registry capability", () => {
