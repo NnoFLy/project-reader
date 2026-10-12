@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { DocumentAdapter } from "../extension-api"
 import { createPermissionSet } from "../extension-api"
 import { MemoryStorageBackend, createExtensionStorage } from "../core/storage"
@@ -71,6 +71,42 @@ describe("contribution registries", () => {
         expect(() => registries.views.list()).toThrow("permission: views")
         expect(() => registries.documents.list()).toThrow("permission: documents")
         expect(() => registries.settings.list()).toThrow("permission: settings")
+    })
+
+    it("discovers and executes prompt commands through the host registry", async () => {
+        const contributions = new ContributionRegistry()
+        const viewer = contributions.forExtension(
+            "builtin.viewer",
+            createPermissionSet(["commands"]),
+        )
+        const prompt = contributions.forExtension(
+            "builtin.prompt",
+            createPermissionSet(["commands"]),
+        )
+        const execute = vi.fn(() => "ok")
+        viewer.commands.register({
+            id: "viewer.run",
+            label: "Run",
+            validatePayload: (payload) => payload === "valid",
+            isEnabled: (context) => context === "enabled",
+            execute,
+        })
+        prompt.commands.register({
+            id: "prompt.open",
+            label: "Open",
+            execute: () => undefined,
+        })
+
+        expect(prompt.commands.list().map(({ id }) => id)).toEqual(["viewer.run", "prompt.open"])
+        await expect(prompt.commands.execute("viewer.run", "valid", "enabled")).resolves.toBe("ok")
+        await expect(prompt.commands.execute("viewer.run", "invalid", "enabled")).rejects.toThrow(
+            "Invalid payload",
+        )
+        await expect(
+            prompt.commands.execute("viewer.run", "valid", "disabled"),
+        ).resolves.toBeUndefined()
+        expect(execute).toHaveBeenCalledOnce()
+        expect(viewer.commands.list().map(({ id }) => id)).toEqual(["viewer.run"])
     })
 
     it("allows each declared registry capability", () => {

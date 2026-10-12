@@ -159,6 +159,7 @@ export class ExtensionHost {
         return this.enqueue(runtime, async () => {
             if (runtime.state === "disposed" || runtime.state === "disabled") return
             runtime.state = "disabled"
+            runtime.lifecycle.setState("disabled")
             await runtime.lifecycle.dispose()
             this.contributions.disposeExtension(extensionId)
         })
@@ -217,6 +218,7 @@ export class ExtensionHost {
             for (const dependency of Object.keys(manifest.dependencies ?? {}))
                 await this.activate(dependency)
             runtime.state = "activating"
+            runtime.lifecycle.setState("activating")
             const registries = this.contributions.forExtension(
                 manifest.id,
                 runtime.permissions,
@@ -239,9 +241,11 @@ export class ExtensionHost {
             }
             await runtime.extension.activate(context)
             runtime.state = "active"
+            runtime.lifecycle.setState("active")
         } catch (cause) {
             runtime.error = new ExtensionActivationError(manifest.id, cause)
             runtime.state = "failed"
+            runtime.lifecycle.setState("failed")
             await runtime.lifecycle.dispose()
             this.contributions.disposeExtension(manifest.id)
             this.notifications.error(`Extension ${manifest.name} failed to activate.`)

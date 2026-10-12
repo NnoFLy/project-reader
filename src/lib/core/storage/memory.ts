@@ -44,6 +44,37 @@ export class MemoryStorageBackend implements StorageBackend {
 }
 
 const MIGRATION_VERSION_KEY = "__storage_meta:migration-version"
+const MIGRATION_JOURNAL_KEY = "__storage_meta:migration-journal"
+
+type MigrationJournal = {
+    readonly version: number
+    readonly previousVersion: number
+    readonly values: readonly { key: string; value: StoredValue }[]
+}
+
+function isMigrationJournal(value: unknown): value is MigrationJournal {
+    if (!value || typeof value !== "object") return false
+    const journal = value as Record<string, unknown>
+    const version = journal.version
+    const previousVersion = journal.previousVersion
+    const values = journal.values
+    return (
+        typeof version === "number" &&
+        Number.isInteger(version) &&
+        version > 0 &&
+        typeof previousVersion === "number" &&
+        Number.isInteger(previousVersion) &&
+        previousVersion >= 0 &&
+        Array.isArray(values) &&
+        values.every(
+            (entry) =>
+                Boolean(entry) &&
+                typeof entry === "object" &&
+                typeof (entry as { key?: unknown }).key === "string" &&
+                "value" in entry,
+        )
+    )
+}
 
 /**
  * A small IndexedDB backend for extension data. IndexedDB is kept behind the
@@ -224,7 +255,8 @@ export class NamespacedStorage implements ExtensionStorage {
 
     async clear(): Promise<void> {
         for (const key of await this.backend.keys(`${this.prefix}:`)) {
-            if (key !== this.versionKey()) await this.backend.delete(key)
+            if (key !== this.versionKey() && key !== this.journalKey())
+                await this.backend.delete(key)
         }
     }
 
@@ -249,11 +281,30 @@ export class NamespacedStorage implements ExtensionStorage {
         const run = this.migrationChain.then(async () => {
             await this.loadVersion()
             if (version <= this.currentVersion) return
+            const journal: MigrationJournal = {
+                version,
+                previousVersion: this.currentVersion,
+                values: await this.snapshotValues(),
+            }
             try {
+                await this.backend.set(this.journalKey(), journal)
                 await migration(this)
                 await this.backend.set(this.versionKey(), version)
                 this.currentVersion = version
+                await this.backend.delete(this.journalKey())
             } catch (error) {
+                try {
+                    await this.restoreValues(journal.values)
+                    await this.backend.set(this.versionKey(), journal.previousVersion)
+                    this.currentVersion = journal.previousVersion
+                    await this.backend.delete(this.journalKey())
+                } catch (repairError) {
+                    throw new StorageError(
+                        "storage.migration",
+                        `Migration ${version} failed and could not be rolled back`,
+                        { cause: repairError },
+                    )
+                }
                 throw new StorageError("storage.migration", `Migration ${version} failed`, {
                     cause: error,
                 })
@@ -282,11 +333,52 @@ export class NamespacedStorage implements ExtensionStorage {
         return `${this.prefix}:${MIGRATION_VERSION_KEY}`
     }
 
+    private journalKey(): string {
+        return `${this.prefix}:${MIGRATION_JOURNAL_KEY}`
+    }
+
+    private async snapshotValues(): Promise<readonly { key: string; value: StoredValue }[]> {
+        const keys = await this.backend.keys(`${this.prefix}:`)
+        const values: { key: string; value: StoredValue }[] = []
+        for (const key of keys) {
+            if (key === this.versionKey() || key === this.journalKey()) continue
+            const value = await this.backend.get(key)
+            if (value !== undefined) values.push({ key, value })
+        }
+        return values
+    }
+
+    private async restoreValues(
+        values: readonly { key: string; value: StoredValue }[],
+    ): Promise<void> {
+        for (const key of await this.backend.keys(`${this.prefix}:`)) {
+            if (key !== this.versionKey() && key !== this.journalKey())
+                await this.backend.delete(key)
+        }
+        for (const entry of values) await this.backend.set(entry.key, entry.value)
+    }
+
+    private async repairMigration(): Promise<void> {
+        const journal = await this.backend.get(this.journalKey())
+        if (!journal) return
+        if (!isMigrationJournal(journal)) {
+            throw new StorageError("storage.migration", "Invalid migration journal")
+        }
+        const persistedVersion = await this.backend.get(this.versionKey())
+        if (persistedVersion === journal.version) {
+            await this.backend.delete(this.journalKey())
+            return
+        }
+        await this.restoreValues(journal.values)
+        await this.backend.set(this.versionKey(), journal.previousVersion)
+        await this.backend.delete(this.journalKey())
+    }
+
     private async loadVersion(): Promise<void> {
         if (this.versionLoaded) return
         if (!this.versionLoad) {
-            this.versionLoad = this.backend
-                .get(this.versionKey())
+            this.versionLoad = this.repairMigration()
+                .then(() => this.backend.get(this.versionKey()))
                 .then((value) => {
                     this.currentVersion =
                         typeof value === "number" && Number.isInteger(value) && value >= 0
@@ -296,6 +388,7 @@ export class NamespacedStorage implements ExtensionStorage {
                 })
                 .catch((error) => {
                     this.versionLoad = null
+                    if (error instanceof StorageError) throw error
                     throw new StorageError(
                         "storage.migration",
                         "Unable to load migration version",

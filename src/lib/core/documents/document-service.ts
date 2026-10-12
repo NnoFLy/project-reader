@@ -59,30 +59,44 @@ export class DocumentService {
     }
 
     async open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument> {
-        const candidates = await this.probeCandidates(source, signal)
-        const selected = candidates[0]
-        if (!selected) throw new UnsupportedDocumentError(source)
-        throwIfAborted(signal)
-        let document: OpenedDocument | undefined
+        let opened = false
         try {
-            document = await selected.adapter.open(source, signal)
+            const candidates = await this.probeCandidates(source, signal)
+            const selected = candidates[0]
+            if (!selected) throw new UnsupportedDocumentError(source)
             throwIfAborted(signal)
-            this.opened.add(document)
-            return document
-        } catch (error) {
-            // An adapter can finish opening just as cancellation arrives. The
-            // service owns that document now and must release it on every exit.
-            if (document) {
+            let document: OpenedDocument | undefined
+            try {
+                document = await selected.adapter.open(source, signal)
+                throwIfAborted(signal)
+                this.opened.add(document)
+                opened = true
+                return document
+            } catch (error) {
+                // An adapter can finish opening just as cancellation arrives. The
+                // service owns that document now and must release it on every exit.
+                if (document) {
+                    try {
+                        await document.close()
+                    } catch {
+                        // Preserve the original open/cancellation error.
+                    }
+                }
+                if (signal?.aborted)
+                    throw (
+                        signal.reason ?? new DOMException("The operation was aborted", "AbortError")
+                    )
+                if (error instanceof DocumentOpenError) throw error
+                throw new DocumentOpenError(selected.adapter.id, error)
+            }
+        } finally {
+            if (!opened && source.close) {
                 try {
-                    await document.close()
+                    await source.close()
                 } catch {
-                    // Preserve the original open/cancellation error.
+                    // Preserve the probe/open error. The source has no usable document.
                 }
             }
-            if (signal?.aborted)
-                throw signal.reason ?? new DOMException("The operation was aborted", "AbortError")
-            if (error instanceof DocumentOpenError) throw error
-            throw new DocumentOpenError(selected.adapter.id, error)
         }
     }
 

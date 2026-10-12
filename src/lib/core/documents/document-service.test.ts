@@ -4,13 +4,16 @@ import { DocumentAdapterRegistry, DocumentService, UnsupportedDocumentError } fr
 import { createBoundedDocumentSource } from "$lib/core/files"
 import { createFakeDocumentAdapter } from "./fake-document-adapter"
 
-function source(name = "sample.fake"): DocumentSource {
-    return createBoundedDocumentSource({
-        id: "sample",
-        name,
-        size: 3,
-        reader: { read: async () => new Uint8Array([1, 2, 3]).buffer },
-    })
+function source(name = "sample.fake", close?: () => Promise<void>): DocumentSource {
+    return {
+        ...createBoundedDocumentSource({
+            id: "sample",
+            name,
+            size: 3,
+            reader: { read: async () => new Uint8Array([1, 2, 3]).buffer },
+        }),
+        close,
+    }
 }
 
 function closedDocument(onClose: () => void): OpenedDocument {
@@ -136,5 +139,28 @@ describe("DocumentService", () => {
         await expect(service.open(source("sample.unknown"))).rejects.toBeInstanceOf(
             UnsupportedDocumentError,
         )
+    })
+
+    it("closes the source when probing fails or no adapter supports it", async () => {
+        const close = vi.fn(async () => undefined)
+        const registry = new DocumentAdapterRegistry()
+        registry.register({
+            id: "test.probe-failure",
+            extensions: ["fake"],
+            mimeTypes: [],
+            probe: vi.fn(async () => {
+                throw new Error("probe failed")
+            }),
+            open: vi.fn(),
+        })
+        const service = new DocumentService(registry)
+
+        await expect(service.open(source("sample.fake", close))).rejects.toThrow("probe failed")
+        expect(close).toHaveBeenCalledOnce()
+
+        await expect(
+            new DocumentService().open(source("sample.unknown", close)),
+        ).rejects.toBeInstanceOf(UnsupportedDocumentError)
+        expect(close).toHaveBeenCalledTimes(2)
     })
 })

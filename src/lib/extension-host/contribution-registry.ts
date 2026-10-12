@@ -1,6 +1,7 @@
 import {
     assertNamespacedId,
     belongsToExtension,
+    UnknownCommandError,
     type CommandRegistry,
     type Disposable,
     type KeybindingContribution,
@@ -161,10 +162,17 @@ class DocumentAdapterRegistryImpl implements DocumentAdapterRegistry {
     }
 }
 
+export interface HostCommandRegistry {
+    get(commandId: string): RegisteredCommand | undefined
+    list(): readonly RegisteredCommand[]
+    execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown>
+}
+
 class PermissionedCommandRegistry implements CommandRegistry {
     constructor(
         private readonly delegate: CommandRegistry & Disposable,
         private readonly permissions: PermissionSet,
+        private readonly hostCommands?: HostCommandRegistry,
     ) {}
 
     register(command: import("../extension-api").CommandContribution): Disposable {
@@ -179,17 +187,20 @@ class PermissionedCommandRegistry implements CommandRegistry {
 
     get(commandId: string): RegisteredCommand | undefined {
         this.permissions.require("commands")
-        return this.delegate.get(commandId)
+        return this.hostCommands?.get(commandId) ?? this.delegate.get(commandId)
     }
 
     list(): readonly RegisteredCommand[] {
         this.permissions.require("commands")
-        return this.delegate.list()
+        return this.hostCommands?.list() ?? this.delegate.list()
     }
 
     execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown> {
         this.permissions.require("commands")
-        return this.delegate.execute(commandId, payload, context)
+        return (
+            this.hostCommands?.execute(commandId, payload, context) ??
+            this.delegate.execute(commandId, payload, context)
+        )
     }
 
     dispose(): void {
@@ -253,6 +264,12 @@ const defaultPermissions = createPermissionSet([])
 
 export class ContributionRegistry {
     private readonly registries = new Map<string, InternalExtensionRegistries>()
+    /** Read-only command access used by host-owned UI such as the command palette. */
+    readonly globalCommands: HostCommandRegistry = {
+        get: (commandId) => this.findCommand(commandId),
+        list: () => this.listCommands(),
+        execute: (commandId, payload, context) => this.executeCommand(commandId, payload, context),
+    }
 
     constructor(
         private readonly coreDocumentAdapters: CoreDocumentAdapterRegistry = new CoreDocumentAdapterRegistry(),
@@ -273,7 +290,11 @@ export class ContributionRegistry {
             this.coreDocumentAdapters,
             permissions,
         )
-        const commands = new PermissionedCommandRegistry(hostCommands, permissions)
+        const commands = new PermissionedCommandRegistry(
+            hostCommands,
+            permissions,
+            extensionId === "builtin.prompt" ? this.globalCommands : undefined,
+        )
         const settings = new PermissionedSettingsRegistry(hostSettings, permissions)
         const registries: InternalExtensionRegistries = {
             commands,
@@ -297,6 +318,23 @@ export class ContributionRegistry {
 
     listCommands(): readonly import("../extension-api").RegisteredCommand[] {
         return [...this.registries.values()].flatMap((value) => value.hostCommands.list())
+    }
+
+    executeCommand(commandId: string, payload?: unknown, context?: unknown): Promise<unknown> {
+        const command = this.findCommand(commandId)
+        if (!command) return Promise.reject(new UnknownCommandError(commandId))
+        const registry = [...this.registries.values()].find(
+            (value) => value.hostCommands.get(commandId) === command,
+        )
+        if (!registry) return Promise.reject(new UnknownCommandError(commandId))
+        // Execute through the owning registry so payload and enabled checks remain intact.
+        return registry.hostCommands.execute(commandId, payload, context)
+    }
+
+    private findCommand(commandId: string): RegisteredCommand | undefined {
+        return [...this.registries.values()]
+            .map((value) => value.hostCommands.get(commandId))
+            .find((command): command is RegisteredCommand => command !== undefined)
     }
 
     listViews(slot?: ViewSlot): readonly RegisteredView[] {

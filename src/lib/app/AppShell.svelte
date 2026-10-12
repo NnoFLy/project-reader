@@ -10,13 +10,8 @@
     const hostContext: AppHostContext = {
         application,
         services: {
-            executeCommand: async (commandId, payload) => {
-                const command = application.host.contributions
-                    .listCommands()
-                    .find(({ id }) => id === commandId)
-                if (!command) throw new Error(`Command is not registered: ${commandId}`)
-                return command.execute(payload)
-            },
+            executeCommand: (commandId, payload) =>
+                application.host.contributions.executeCommand(commandId, payload),
         },
         get ready() {
             return ready
