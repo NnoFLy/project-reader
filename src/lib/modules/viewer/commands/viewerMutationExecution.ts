@@ -1,35 +1,39 @@
 import { commandsStore } from "$lib/modules/commands"
-import type { AppCommandPayloads } from "$lib/modules/commands"
 import type { CommandExecutionResult } from "$lib/modules/commands"
-
-type Payload<K extends keyof AppCommandPayloads> = NonNullable<AppCommandPayloads[K]>
+import type {
+    ViewerBookmarkAddPayload,
+    ViewerBookmarkDeletePayload,
+    ViewerBookmarkEditPayload,
+    ViewerNoteDeletePayload,
+    ViewerNoteEditPayload,
+} from "./viewerCommandPayloads"
 
 export function executeViewerBookmarkAdd(
-    payload: Payload<"viewer.bookmark.add">,
+    payload: ViewerBookmarkAddPayload,
 ): Promise<CommandExecutionResult> {
     return commandsStore.execute("viewer.bookmark.add", payload)
 }
 
 export function executeViewerBookmarkEdit(
-    payload: Payload<"viewer.bookmark.edit">,
+    payload: ViewerBookmarkEditPayload,
 ): Promise<CommandExecutionResult> {
     return commandsStore.execute("viewer.bookmark.edit", payload)
 }
 
 export function executeViewerBookmarkDelete(
-    payload: Payload<"viewer.bookmark.delete">,
+    payload: ViewerBookmarkDeletePayload,
 ): Promise<CommandExecutionResult> {
     return commandsStore.execute("viewer.bookmark.delete", payload)
 }
 
 export function executeViewerNoteEdit(
-    payload: Payload<"viewer.note.edit">,
+    payload: ViewerNoteEditPayload,
 ): Promise<CommandExecutionResult> {
     return commandsStore.execute("viewer.note.edit", payload)
 }
 
 export function executeViewerNoteDelete(
-    payload: Payload<"viewer.note.delete">,
+    payload: ViewerNoteDeletePayload,
 ): Promise<CommandExecutionResult> {
     return commandsStore.execute("viewer.note.delete", payload)
 }

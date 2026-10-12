@@ -1,15 +1,21 @@
-import type { AppCommandPayloads } from "$lib/modules/commands"
 import { defineCommands } from "$lib/modules/commands"
 import * as m from "$lib/paraglide/messages"
+import type {
+    ViewerBookmarkAddPayload,
+    ViewerBookmarkDeletePayload,
+    ViewerBookmarkEditPayload,
+    ViewerNoteDeletePayload,
+    ViewerNoteEditPayload,
+} from "./viewerCommandPayloads"
 
 type MutationContext = {
-    addBookmark: (payload: AppCommandPayloads["viewer.bookmark.add"]) => void | Promise<void>
-    editBookmark: (payload: AppCommandPayloads["viewer.bookmark.edit"]) => void | Promise<void>
-    deleteBookmark: (payload: AppCommandPayloads["viewer.bookmark.delete"]) => void | Promise<void>
-    addNote: (payload: AppCommandPayloads["viewer.note.add"]) => void | Promise<void>
-    editNote: (payload: AppCommandPayloads["viewer.note.edit"]) => void | Promise<void>
-    saveNote: (payload: AppCommandPayloads["viewer.note.save"]) => void | Promise<void>
-    deleteNote: (payload: AppCommandPayloads["viewer.note.delete"]) => void | Promise<void>
+    addBookmark: (payload: ViewerBookmarkAddPayload | undefined) => void | Promise<void>
+    editBookmark: (payload: ViewerBookmarkEditPayload | undefined) => void | Promise<void>
+    deleteBookmark: (payload: ViewerBookmarkDeletePayload | undefined) => void | Promise<void>
+    addNote: (payload: undefined) => void | Promise<void>
+    editNote: (payload: ViewerNoteEditPayload | undefined) => void | Promise<void>
+    saveNote: (payload: undefined) => void | Promise<void>
+    deleteNote: (payload: ViewerNoteDeletePayload | undefined) => void | Promise<void>
 }
 
 export function createViewerMutationCommands(context: MutationContext) {

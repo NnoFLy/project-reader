@@ -12,7 +12,7 @@
     import Button from "$lib/shared/ui/Button.svelte"
     import DeleteConfirmModal from "./DeleteConfirmModal.svelte"
     import type { CommandScope } from "$lib/modules/commands"
-    import type { AppCommandPayloads } from "$lib/modules/commands"
+    import type { ViewerBookmarkAddPayload } from "../commands/viewerCommandPayloads"
     import {
         executeViewerBookmarkDelete,
         executeViewerNoteDelete,
@@ -26,8 +26,7 @@
     let { currentBookId, currentPage }: Props = $props()
     let bookmarkAddScope = $state.raw<CommandScope>()
 
-    type BookmarkAddPayload = NonNullable<AppCommandPayloads["viewer.bookmark.add"]>
-
+    type BookmarkAddPayload = ViewerBookmarkAddPayload
     function getBookmarkAddPayload(): BookmarkAddPayload {
         return {
             page: currentPage,

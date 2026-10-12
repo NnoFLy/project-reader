@@ -3,11 +3,10 @@
     import { useModalCommands } from "$lib/modules/commands"
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { defineCommands } from "$lib/modules/commands"
-    import type { AppCommandPayloads } from "$lib/modules/commands"
+    import type { ViewerBookmarkAddPayload } from "../commands/viewerCommandPayloads"
     import * as m from "$lib/paraglide/messages"
 
-    type BookmarkAddPayload = NonNullable<AppCommandPayloads["viewer.bookmark.add"]>
-
+    type BookmarkAddPayload = ViewerBookmarkAddPayload
     let {
         onConfirm,
         onCancel,

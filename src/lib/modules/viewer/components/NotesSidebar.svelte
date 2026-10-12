@@ -18,6 +18,10 @@
     import { useViewerUIStore } from "../stores/viewerUIStore.svelte"
     import { createViewerListCommands } from "../commands/viewerListCommands"
     import { withViewerInputShortcut } from "../commands/viewerInputShortcutCommand"
+    import type {
+        ViewerNoteDeletePayload,
+        ViewerNoteEditPayload,
+    } from "../commands/viewerCommandPayloads"
     import { tick, untrack } from "svelte"
     import { buildSidebarNavigationHints, findSidebarShortcut } from "./sidebarShortcutHints"
 
@@ -114,7 +118,7 @@
         editBookmark: () => {},
         deleteBookmark: () => {},
         addNote: () => {},
-        editNote: (payload: { noteId?: string; x?: number; y?: number } | undefined) => {
+        editNote: (payload: ViewerNoteEditPayload | undefined) => {
             const noteId = payload?.noteId ?? filteredNotes[selectedIndex]?.id
             const note = notesStore.notes.find(({ id }) => id === noteId)
             if (!note) return
@@ -125,7 +129,7 @@
             }
         },
         saveNote: () => {},
-        deleteNote: async (payload: { noteId?: string; confirmed?: boolean } | undefined) => {
+        deleteNote: async (payload: ViewerNoteDeletePayload | undefined) => {
             const noteId = payload?.noteId ?? filteredNotes[selectedIndex]?.id
             if (!noteId) return
             if (!payload?.confirmed) {

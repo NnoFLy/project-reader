@@ -13,7 +13,7 @@
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { bookmarksStore } from "../stores/bookmarksStore.svelte"
     import type { Bookmark } from "$lib/modules/documents"
-    import type { AppCommandPayloads } from "$lib/modules/commands"
+    import type { ViewerBookmarkEditPayload } from "../commands/viewerCommandPayloads"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
     import EditIcon from "$lib/shared/icons/EditIcon.svelte"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
@@ -71,7 +71,7 @@
             .sort((a, b) => a.pageNumber - b.pageNumber),
     )
 
-    function getBookmarkEditPayload(): NonNullable<AppCommandPayloads["viewer.bookmark.edit"]> {
+    function getBookmarkEditPayload(): ViewerBookmarkEditPayload {
         return {
             bookmarkId: editingBookmarkId ?? undefined,
             name: editingName.trim(),

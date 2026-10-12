@@ -1,8 +1,8 @@
-import type { AppCommandPayloads } from "$lib/modules/commands"
 import { defineCommands, KeyboardHandler } from "$lib/modules/commands"
 import type { CommandScope } from "$lib/modules/commands"
 import type { PromptService } from "$lib/modules/prompt"
 import { buildGotoPageItems, parsePage } from "./viewerPromptItems"
+import type { ViewerPageGoToPayload, ViewerScrollPayload } from "./viewerCommandPayloads"
 import * as m from "$lib/paraglide/messages"
 
 export interface ViewerNavigationPort {
@@ -12,12 +12,7 @@ export interface ViewerNavigationPort {
     nextPage(): void
     previousPage(): void
     close(): void
-    scroll(
-        payload:
-            | AppCommandPayloads["viewer.scroll.step"]
-            | AppCommandPayloads["viewer.scroll.half-page"],
-        amount: "step" | "half-page",
-    ): void
+    scroll(payload: ViewerScrollPayload | undefined, amount: "step" | "half-page"): void
 }
 
 type PromptChooser = Pick<PromptService, "choose" | "close" | "snapshot">
@@ -54,7 +49,7 @@ export function createViewerNavigationCommands(dependencies: {
             englishLabel: () => m.keymap_goto_page({}, { locale: "en" }),
             category: "menu",
             preventDefault: true,
-            run: async (payload) => {
+            run: async (payload: ViewerPageGoToPayload | undefined) => {
                 let page = payload?.page
                 const totalPages = viewer.getTotalPages()
                 if (page === undefined) {
@@ -101,7 +96,7 @@ export function createViewerNavigationCommands(dependencies: {
                     "down",
                 repeated: event.repeat,
             }),
-            run: (payload) =>
+            run: (payload: ViewerScrollPayload | undefined) =>
                 viewer.scroll(payload ?? { direction: "down", repeated: false }, "step"),
         },
         "viewer.scroll.half-page": {
@@ -116,7 +111,7 @@ export function createViewerNavigationCommands(dependencies: {
                     "down",
                 repeated: event.repeat,
             }),
-            run: (payload) =>
+            run: (payload: ViewerScrollPayload | undefined) =>
                 viewer.scroll(payload ?? { direction: "down", repeated: false }, "half-page"),
         },
     })

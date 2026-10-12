@@ -1,9 +1,10 @@
 import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
-import { commandsStore, defineCommands, type AppCommandPayloads } from "$lib/modules/commands"
+import { commandsStore, defineCommands } from "$lib/modules/commands"
 import { vfsStore, type FileNode } from "$lib/modules/documents"
 import { localizedPath } from "$lib/modules/settings"
 import { viewerStore } from "../stores/viewerStore.svelte"
+import type { ViewerPayload } from "./viewerCommandPayloads"
 import { fileNodeToBook } from "../stores/viewerStore.types"
 import * as m from "$lib/paraglide/messages"
 
@@ -61,7 +62,7 @@ export function createViewerOpenCommand(options: {
             label: () => m.keymap_open_book(),
             englishLabel: () => m.keymap_open_book({}, { locale: "en" }),
             category: "navigation",
-            run: async (payload: AppCommandPayloads["viewer.open"]) => {
+            run: async (payload: ViewerPayload<"viewer.open">) => {
                 if (!payload?.bookId) {
                     await commandsStore.execute("library.book.open")
                     return
