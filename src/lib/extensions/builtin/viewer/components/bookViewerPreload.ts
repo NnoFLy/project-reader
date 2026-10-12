@@ -1,4 +1,4 @@
-import type { ViewerDocument } from "../viewerDocument"
+import type { ViewerPagedDocument } from "../viewerDocument"
 import {
     executePageRenderPlan,
     type PageRenderPlanEntry,
@@ -11,7 +11,7 @@ export interface BookViewerBitmapResult {
     dimension: { width: number; height: number } | null
 }
 
-type BitmapDocument = Pick<ViewerDocument, "renderPage" | "getPage">
+type BitmapDocument = Pick<ViewerPagedDocument, "renderPage" | "getPage">
 
 export async function renderBookViewerBitmaps({
     pdf,

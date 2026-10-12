@@ -37,6 +37,19 @@ describe("built-in PDF adapter boundary", () => {
         })
     })
 
+    it("does not advertise unsupported document capabilities", () => {
+        const document = new PagedPdfDocument(
+            createBoundedDocumentSource({
+                id: "pdf-capabilities",
+                name: "sample.pdf",
+                size: 0,
+                reader: { read: async () => new ArrayBuffer(0) },
+            }),
+        )
+
+        expect(document.capabilities).toEqual(new Set(["text", "search", "outline", "thumbnails"]))
+    })
+
     it("enforces the PDF file boundary", () => {
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes)).not.toThrow()
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes + 1)).toThrow("byte limit")

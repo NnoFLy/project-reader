@@ -2,7 +2,7 @@
     const viewerUI = useViewerUI()
     import { useViewerUI } from "../state/viewerUI.svelte"
     import { viewport } from "$lib/shared/state/viewport.svelte"
-    import type { ViewerDocument } from "../viewerDocument"
+    import type { ViewerPagedDocument } from "../viewerDocument"
     import { renderViewerPageLayers } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import * as m from "$lib/paraglide/messages"
@@ -25,7 +25,7 @@
     )
 
     let { pdf, pageNumber, scale, offsetY, width, height, registerSelectionPage } = $props<{
-        pdf: ViewerDocument
+        pdf: ViewerPagedDocument
         pageNumber: number
         scale: number
         offsetY: number
@@ -47,7 +47,7 @@
         `width: ${width}px; height: ${height}px; --aspect-ratio: ${width} / ${height}; --display-scale: ${scale};`,
     )
 
-    let bitmapPdf: ViewerDocument | null = null
+    let bitmapPdf: ViewerPagedDocument | null = null
     let bitmapPage = -1
 
     $effect(() => {

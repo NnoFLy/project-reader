@@ -1,4 +1,4 @@
-import type { ViewerDocument } from "../viewerDocument"
+import type { ViewerPagedDocument } from "../viewerDocument"
 
 /** Minimal link navigation bridge for viewer-owned document layer capabilities. */
 export class ViewerLinkService {
@@ -7,11 +7,11 @@ export class ViewerLinkService {
     private _externalLinkEnabled = true
 
     constructor(
-        private readonly document: ViewerDocument,
+        private readonly document: ViewerPagedDocument,
         private readonly onNavigate: (pageNumber: number) => void,
     ) {}
 
-    get pagesCount(): number {
+    get pageCount(): number {
         return this.document.pageCount
     }
 
@@ -45,7 +45,7 @@ export class ViewerLinkService {
 
     goToPage(value: number | string): void {
         const pageNumber = typeof value === "string" ? Number.parseInt(value, 10) : value
-        if (Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= this.pagesCount) {
+        if (Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= this.pageCount) {
             this.onNavigate(pageNumber)
         }
     }

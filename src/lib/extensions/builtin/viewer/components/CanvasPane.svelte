@@ -2,8 +2,8 @@
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
-    import type { ViewerDocument } from "../viewerDocument"
-    import { renderViewerPageLayers } from "../viewerDocument"
+    import type { ViewerPagedDocument } from "../viewerDocument"
+    import { getViewerPageDimensions, renderViewerPageLayers } from "../viewerDocument"
     import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "$lib/modules/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { safeStorageGet } from "$lib/shared/state/safeStorage"
@@ -57,7 +57,7 @@
         container?: HTMLElement | null
         layoutMode?: "single" | "split" | "scroll"
         scale?: number
-        pdf: ViewerDocument | null
+        pdf: ViewerPagedDocument | null
         currentPageDim1?: { width: number; height: number } | null
         currentPageDim2?: { width: number; height: number } | null
         renderLayers?: boolean
@@ -79,7 +79,8 @@
             return
         }
 
-        const defaultWidth = pdf.defaultWidth || 612
+        const pageDimension = currentPageDim1 || fallbackPageDim1
+        if (!pageDimension) return
         const horizontalPadding = containerWidth < 900 ? 32 : 80
 
         let targetScale: number
@@ -92,11 +93,11 @@
                 100,
             )
             const cappedAvailableWidth = Math.min(availableWidth, 3400)
-            targetScale = cappedAvailableWidth / (defaultWidth * 2)
+            targetScale = cappedAvailableWidth / (pageDimension.width * 2)
         } else {
             const availableWidth = Math.max(containerWidth - horizontalPadding - 12, 100)
             const cappedAvailableWidth = Math.min(availableWidth, 1700)
-            targetScale = cappedAvailableWidth / defaultWidth
+            targetScale = cappedAvailableWidth / pageDimension.width
         }
 
         settingsStore.scale = Math.max(
@@ -144,15 +145,9 @@
     }
 
     const pageScale1 = $derived.by(() => {
-        const dimension = currentPageDim1 || {
-            width: pdf?.defaultWidth || 612,
-            height: pdf?.defaultHeight || 792,
-        }
-        const otherDimension =
-            currentPageDim2 ||
-            (layoutMode === "split"
-                ? { width: pdf?.defaultWidth || 612, height: pdf?.defaultHeight || 792 }
-                : null)
+        const dimension = currentPageDim1 || fallbackPageDim1
+        if (!dimension) return effectiveScale
+        const otherDimension = currentPageDim2 || (layoutMode === "split" ? dimension : null)
         return getBitmapPageScale({
             containerWidth,
             dimension,
@@ -165,14 +160,9 @@
     })
 
     const pageScale2 = $derived.by(() => {
-        const dimension = currentPageDim2 || {
-            width: pdf?.defaultWidth || 612,
-            height: pdf?.defaultHeight || 792,
-        }
-        const otherDimension = currentPageDim1 || {
-            width: pdf?.defaultWidth || 612,
-            height: pdf?.defaultHeight || 792,
-        }
+        const dimension = currentPageDim2 || fallbackPageDim2 || currentPageDim1 || fallbackPageDim1
+        if (!dimension) return effectiveScale
+        const otherDimension = currentPageDim1 || fallbackPageDim1 || dimension
         return getBitmapPageScale({
             containerWidth,
             dimension,
@@ -189,21 +179,13 @@
     }
 
     const wrapperStyle1 = $derived.by(() => {
-        const dim =
-            currentPageDim1 ||
-            (pdf
-                ? { width: pdf.defaultWidth || 612, height: pdf.defaultHeight || 792 }
-                : { width: 612, height: 792 })
-        return getBitmapWrapperStyle(dim, pageScale1)
+        const dim = currentPageDim1 || fallbackPageDim1
+        return dim ? getBitmapWrapperStyle(dim, pageScale1) : ""
     })
 
     const wrapperStyle2 = $derived.by(() => {
-        const dim =
-            currentPageDim2 ||
-            (pdf
-                ? { width: pdf.defaultWidth || 612, height: pdf.defaultHeight || 792 }
-                : { width: 612, height: 792 })
-        return getBitmapWrapperStyle(dim, pageScale2)
+        const dim = currentPageDim2 || fallbackPageDim2 || currentPageDim1 || fallbackPageDim1
+        return dim ? getBitmapWrapperStyle(dim, pageScale2) : ""
     })
 
     let isAutoScrolling = false
@@ -259,20 +241,20 @@
 
         untrack(() => {
             pdf!
-                .getPageDimension(p1)
-                .then((dim: { width: number; height: number }) => {
-                    fallbackPageDim1 = dim
+                .getPage(p1)
+                .then(({ width, height }: { width: number; height: number }) => {
+                    fallbackPageDim1 = { width, height }
                 })
-                .catch((err: any) => {
+                .catch((err: unknown) => {
                     console.warn("[CanvasPane] Failed to get page dimension for page 1:", err)
                 })
-            if (p2 && p2 <= pdf!.pagesCount) {
+            if (p2 && p2 <= pdf!.pageCount) {
                 pdf!
-                    .getPageDimension(p2)
-                    .then((dim: { width: number; height: number }) => {
-                        fallbackPageDim2 = dim
+                    .getPage(p2)
+                    .then(({ width, height }: { width: number; height: number }) => {
+                        fallbackPageDim2 = { width, height }
                     })
-                    .catch((err: any) => {
+                    .catch((err: unknown) => {
                         console.warn("[CanvasPane] Failed to get page dimension for page 2:", err)
                     })
             } else {
@@ -292,8 +274,8 @@
             const controller = new AbortController()
             const loadDimensions = async () => {
                 try {
-                    const dims = await pdf.getAllPageDimensions(controller.signal)
-                    if (!controller.signal.aborted) pageDimensions = dims
+                    const dims = await getViewerPageDimensions(pdf, controller.signal)
+                    if (!controller.signal.aborted) pageDimensions = [...dims]
                 } catch (err) {
                     if (!controller.signal.aborted) {
                         console.warn("[CanvasPane] Failed to load all page dimensions:", err)
@@ -804,7 +786,7 @@
     })
 
     async function renderPageLayers(
-        targetPdf: ViewerDocument,
+        targetPdf: ViewerPagedDocument,
         pageNo: number,
         textContainer: HTMLElement,
         annotationContainer: HTMLDivElement | null,

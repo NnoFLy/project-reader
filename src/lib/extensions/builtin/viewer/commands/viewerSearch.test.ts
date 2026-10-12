@@ -22,7 +22,7 @@ import { buildBookmarkItems, buildSearchItems, parsePage } from "./viewerPromptI
 import { SearchStore, searchStore } from "../stores/searchStore.svelte"
 import { LocalSearchHistoryRepository, normalizeHistory } from "../stores/searchHistoryRepository"
 import { vfsStore } from "$lib/modules/documents"
-import type { ViewerDocument } from "../viewerDocument"
+import type { ViewerPagedDocument } from "../viewerDocument"
 
 afterEach(() => {
     searchStore.reset()
@@ -91,7 +91,7 @@ describe("viewer search indexing", () => {
         const pdf = {
             pageCount: 1,
             getText: vi.fn().mockResolvedValue([{ text: "needle" }]),
-        } as unknown as ViewerDocument
+        } as unknown as ViewerPagedDocument
         searchStore.initDocument({ pdf, bookId: "search-book" })
         searchStore.setQuery("needle")
         const setQuery = vi.spyOn(searchStore, "setQuery")
@@ -116,7 +116,7 @@ describe("viewer search indexing", () => {
                         resolvers.push(resolve)
                     }),
             ),
-        } as unknown as ViewerDocument
+        } as unknown as ViewerPagedDocument
         store.initDocument({ pdf, bookId: "replacement-book" })
 
         const firstIndex = store.startIndexing()
@@ -145,7 +145,7 @@ describe("viewer search indexing", () => {
                 .fn()
                 .mockRejectedValueOnce(new Error("temporary extraction failure"))
                 .mockResolvedValueOnce([{ text: "retried" }]),
-        } as unknown as ViewerDocument
+        } as unknown as ViewerPagedDocument
         searchStore.initDocument({ pdf, bookId: "retry-book" })
 
         await searchStore.startIndexing()
@@ -168,7 +168,7 @@ describe("viewer search indexing", () => {
                         textResolvers.push(resolve)
                     }),
             ),
-        } as unknown as ViewerDocument
+        } as unknown as ViewerPagedDocument
         searchStore.initDocument({ pdf, bookId: "cancelled-book" })
 
         const indexing = searchStore.startIndexing()
@@ -199,7 +199,7 @@ describe("viewer search indexing", () => {
             .mockResolvedValueOnce([
                 { id: "cached-book_1", bookId: "cached-book", pageNumber: 1, text: "cached" },
             ] as any)
-        const pdf = { pageCount: 1, getText: vi.fn() } as unknown as ViewerDocument
+        const pdf = { pageCount: 1, getText: vi.fn() } as unknown as ViewerPagedDocument
         searchStore.initDocument({ pdf, bookId: "cached-book" })
 
         await searchStore.startIndexing()
@@ -239,8 +239,8 @@ describe("search history repository", () => {
     it("loads and persists history for the active book session", () => {
         const repository = new LocalSearchHistoryRepository(storage())
         const store = new SearchStore(repository)
-        const pdfA = { pageCount: 1 } as ViewerDocument
-        const pdfB = { pageCount: 1 } as ViewerDocument
+        const pdfA = { pageCount: 1 } as ViewerPagedDocument
+        const pdfB = { pageCount: 1 } as ViewerPagedDocument
 
         store.initDocument({ pdf: pdfA, bookId: "book-a" })
         store.addToHistory("alpha")

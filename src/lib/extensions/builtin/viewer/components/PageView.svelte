@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { ViewerDocument } from "../viewerDocument"
+    import type { ViewerPagedDocument } from "../viewerDocument"
     import { renderViewerPageLayers } from "../viewerDocument"
     import { settingsStore } from "$lib/modules/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
@@ -27,7 +27,7 @@
         renderLayers = true,
         class: className = "",
     } = $props<{
-        pdf: ViewerDocument | null
+        pdf: ViewerPagedDocument | null
         pageNumber: number
         image: string | null
         width: number
@@ -44,7 +44,7 @@
     let controller: AbortController | null = null
 
     async function renderPageLayers(
-        targetPdf: ViewerDocument,
+        targetPdf: ViewerPagedDocument,
         pageNo: number,
         textContainer: HTMLElement,
         annotationContainer: HTMLDivElement | null,

@@ -2,8 +2,8 @@ import type {
     DocumentOutlineEntry,
     OpenedDocument,
     PagedDocument,
+    ReflowableDocument,
     ReaderPage,
-    ReaderSection,
     DocumentSource,
 } from "$lib/document-model"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
@@ -17,22 +17,23 @@ export interface ViewerPageLayerTarget {
     readonly signal?: AbortSignal
 }
 
-/**
- * The viewer-facing document capability. Format adapters remain responsible for
- * parsing and rendering; the viewer only relies on format-neutral page data.
- */
-export interface ViewerDocument extends PagedDocument {
+/** Optional, format-neutral capabilities attached by a paged adapter. */
+export interface ViewerPagedExtras {
     /** Text extraction is optional; rendering must not depend on it. */
     getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
-    /** Reflow adapters retain their format-neutral sections for a non-paged surface. */
-    getSections?: () => Promise<readonly ReaderSection[]>
     getOutline?(): Promise<readonly DocumentOutlineEntry[] | null>
-    getAllPageDimensions?(
-        signal?: AbortSignal,
-    ): Promise<readonly { width: number; height: number }[]>
     validateRenderBounds?(quality?: number, signal?: AbortSignal): Promise<void>
     renderPageLayers?(pageNumber: number, target: ViewerPageLayerTarget): Promise<void>
 }
+
+/** A paged document as consumed by the bitmap viewer. */
+export type ViewerPagedDocument = PagedDocument & ViewerPagedExtras
+
+/** A reflowable document retains sections and never exposes paged-only fields. */
+export type ViewerReflowDocument = ReflowableDocument
+
+/** The viewer preserves the document model's discriminated union. */
+export type ViewerDocument = ViewerPagedDocument | ViewerReflowDocument
 
 export interface ViewerDocumentLoader {
     open(
@@ -73,45 +74,29 @@ function asViewerDocument(
 ): ViewerDocument {
     if (document.kind === "reflowable") {
         return {
-            kind: document.kind,
+            kind: "reflowable",
             metadata: document.metadata,
             capabilities: document.capabilities,
             getSections: () => document.getSections(),
             close: () => service.close(document),
-        } as unknown as ViewerDocument
+        }
     }
 
-    const candidate = document as PagedDocument & {
-        getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
-        getOutline?: () => Promise<readonly DocumentOutlineEntry[] | null>
-        getAllPageDimensions?: (
-            signal?: AbortSignal,
-        ) => Promise<readonly { width: number; height: number }[]>
-        validateRenderBounds?: (quality?: number, signal?: AbortSignal) => Promise<void>
-    }
+    const candidate = document as PagedDocument & ViewerPagedExtras
     return {
-        get kind() {
-            return document.kind
-        },
-        get metadata() {
-            return document.metadata
-        },
-        get capabilities() {
-            return document.capabilities
-        },
-        get pageCount() {
-            return document.pageCount
-        },
-        getText: candidate.getText ? (pageNumber) => candidate.getText!(pageNumber) : undefined,
-        getSections: undefined,
+        kind: "paged",
+        metadata: document.metadata,
+        capabilities: document.capabilities,
+        pageCount: document.pageCount,
         getPage: (pageNumber) => document.getPage(pageNumber),
         renderPage: (pageNumber, options) => document.renderPage(pageNumber, options),
+        getText: candidate.getText ? (pageNumber) => candidate.getText!(pageNumber) : undefined,
         getOutline: candidate.getOutline ? () => candidate.getOutline!() : undefined,
-        getAllPageDimensions: candidate.getAllPageDimensions
-            ? (signal) => candidate.getAllPageDimensions!(signal)
-            : undefined,
         validateRenderBounds: candidate.validateRenderBounds
             ? (quality, signal) => candidate.validateRenderBounds!(quality, signal)
+            : undefined,
+        renderPageLayers: candidate.renderPageLayers
+            ? (pageNumber, target) => candidate.renderPageLayers!(pageNumber, target)
             : undefined,
         close: () => service.close(document),
     }
@@ -140,15 +125,33 @@ export function getViewerDocumentLoader(): ViewerDocumentLoader {
     return defaultLoader
 }
 
-export function getViewerPageCount(document: ViewerDocument): number {
+export function isViewerPagedDocument(document: ViewerDocument): document is ViewerPagedDocument {
+    return document.kind === "paged"
+}
+
+export function getViewerPageCount(document: ViewerPagedDocument): number {
     return document.pageCount
 }
 
 export async function getViewerPage(
-    document: ViewerDocument,
+    document: ViewerPagedDocument,
     pageNumber: number,
 ): Promise<ReaderPage> {
     return document.getPage(pageNumber)
+}
+
+/** Loads generic page metadata for paged viewers without adapter-specific methods. */
+export async function getViewerPageDimensions(
+    document: ViewerPagedDocument,
+    signal?: AbortSignal,
+): Promise<readonly { width: number; height: number }[]> {
+    const dimensions: { width: number; height: number }[] = []
+    for (let pageNumber = 1; pageNumber <= document.pageCount; pageNumber += 1) {
+        signal?.throwIfAborted()
+        const page = await document.getPage(pageNumber)
+        dimensions.push({ width: page.width, height: page.height })
+    }
+    return dimensions
 }
 
 export function assertDocumentFileSize(bytes: number): void {
@@ -168,7 +171,7 @@ export function isDocumentResourceLimitError(error: unknown): boolean {
 }
 
 export async function renderViewerPageLayers(
-    document: ViewerDocument,
+    document: ViewerPagedDocument,
     pageNumber: number,
     target: ViewerPageLayerTarget,
 ): Promise<void> {
@@ -178,12 +181,6 @@ export async function renderViewerPageLayers(
     }
 
     target.textContainer.replaceChildren()
-    if (document.getSections) {
-        const sections = await document.getSections()
-        const section = sections[pageNumber - 1]
-        if (section) target.textContainer.textContent = section.content
-        return
-    }
     if (!document.getText) return
     const items = await document.getText(pageNumber)
     for (const item of items) {

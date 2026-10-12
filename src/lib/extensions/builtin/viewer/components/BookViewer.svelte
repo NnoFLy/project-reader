@@ -4,7 +4,11 @@
     const viewerUI = mountViewerUI()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import type { DocumentOutlineEntry } from "$lib/document-model"
-    import type { ViewerDocument } from "../viewerDocument"
+    import type {
+        ViewerDocument,
+        ViewerPagedDocument,
+        ViewerReflowDocument,
+    } from "../viewerDocument"
     import { getViewerDocumentLoader } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
@@ -24,6 +28,7 @@
     import ViewerHeader from "./ViewerHeader.svelte"
     import Sidebar from "./Sidebar.svelte"
     import CanvasPane from "./CanvasPane.svelte"
+    import ReflowDocumentView from "./ReflowDocumentView.svelte"
     import PageBitmapPreview from "./PageBitmapPreview.svelte"
     import ViewerFooter from "./ViewerFooter.svelte"
     import { notesStore } from "../stores/notesStore.svelte"
@@ -340,12 +345,13 @@
     const url = $derived(currentBook?.url ?? "")
     const name = $derived(currentBook?.name ?? "")
 
-    let pdf = $state.raw<ViewerDocument | null>(null)
+    let pdf = $state.raw<ViewerPagedDocument | null>(null)
+    let reflowDocument = $state.raw<ViewerReflowDocument | null>(null)
     let isLoaded = $state(false)
     let gestureHintDismissed = $state(true)
 
     let lastPageNo = 1
-    let lastBitmapPdf: ViewerDocument | null = null
+    let lastBitmapPdf: ViewerPagedDocument | null = null
     let lastBitmapLayout: "single" | "split" | "scroll" | null = null
     let lastBitmapQuality: number | null = null
     let currentPageImage = $state<string | null>(null)
@@ -641,6 +647,7 @@
             untrack(() => {
                 isLoaded = false
                 pdf = null
+                reflowDocument = null
                 isPageLoading = false
             })
             return
@@ -655,6 +662,7 @@
         untrack(() => {
             isLoaded = false
             pdf = null
+            reflowDocument = null
             isPageLoading = false
             const currentBook = viewerStore.getCurrentBook()
             viewerStore.currentPage = currentBook?.pageNumber || 1
@@ -687,6 +695,11 @@
                         return
                     }
                     loadedDoc = currentDoc
+                    if (currentDoc.kind === "reflowable") {
+                        reflowDocument = currentDoc
+                        isLoaded = true
+                        return
+                    }
                     pdf = currentDoc
                     const pagesCount = currentDoc.pageCount
                     const author = currentDoc.metadata.author
@@ -944,7 +957,7 @@
         searchStore.reset()
     })
 
-    let lastPdf: ViewerDocument | null = null
+    let lastPdf: ViewerPagedDocument | null = null
 
     $effect(() => {
         const currentPdf = pdf
@@ -1238,7 +1251,11 @@
                             </aside>
                         {/if}
 
-                        {#if viewport.isCompact && settingsStore.layout !== "scroll"}
+                        {#if reflowDocument}
+                            <div class="reflow-pane-wrapper">
+                                <ReflowDocumentView document={reflowDocument} />
+                            </div>
+                        {:else if viewport.isCompact && settingsStore.layout !== "scroll"}
                             <Slider
                                 enabled={!isPageLoading &&
                                     !modalManager.hasBlockingModal &&
@@ -1555,6 +1572,7 @@
         flex-direction: row;
     }
 
+    .reflow-pane-wrapper,
     .canvas-pane-wrapper {
         flex: 1;
         display: flex;

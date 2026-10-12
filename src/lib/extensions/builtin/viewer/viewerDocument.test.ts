@@ -59,6 +59,8 @@ describe("viewer document loading", () => {
             expect.objectContaining({ name: "book.pdf" }),
             undefined,
         )
+        expect(loaded.kind).toBe("paged")
+        if (loaded.kind !== "paged") throw new Error("expected paged document")
         expect(await loaded.getText?.(1)).toEqual([{ text: "test" }])
 
         await loaded.close()
@@ -83,6 +85,8 @@ describe("viewer document loading", () => {
             url: "blob:render-only",
         })
 
+        expect(loaded.kind).toBe("paged")
+        if (loaded.kind !== "paged") throw new Error("expected paged document")
         expect(loaded.getText).toBeUndefined()
         await loaded.close()
         expect(service.close).toHaveBeenCalledWith(renderOnly)
@@ -105,7 +109,8 @@ describe("viewer document loading", () => {
         })
 
         expect(loaded.kind).toBe("reflowable")
-        await expect(loaded.getSections?.()).resolves.toEqual([
+        if (loaded.kind !== "reflowable") throw new Error("expected reflowable document")
+        await expect(loaded.getSections()).resolves.toEqual([
             { id: "intro", title: "Intro", content: "Hello" },
         ])
         await loaded.close()

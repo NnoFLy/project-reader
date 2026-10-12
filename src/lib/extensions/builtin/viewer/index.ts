@@ -52,7 +52,8 @@ export function activateViewer(
     void viewerStore.configureStorage(viewerStorage)
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {
-            context.notifications.error(`Unable to open book ${bookId}: ${String(error)}`)
+            console.error("[Viewer] Unable to open document", { bookId, error })
+            context.notifications.error("Unable to open document")
         },
     })
     const openContribution: CommandContribution = {

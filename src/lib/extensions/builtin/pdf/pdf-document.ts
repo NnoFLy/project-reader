@@ -82,9 +82,6 @@ export class PagedPdfDocument implements PagedDocument {
         "text",
         "search",
         "outline",
-        "annotations",
-        "links",
-        "selection",
         "thumbnails",
     ])
     private documentMetadata: DocumentMetadata = { title: null, author: null }

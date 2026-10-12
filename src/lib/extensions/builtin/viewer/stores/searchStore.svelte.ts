@@ -7,7 +7,7 @@ import {
     viewerLibraryCapability as vfsStore,
     viewerLibraryMutationCapability as vfsMutations,
 } from "../viewerHost"
-import type { ViewerDocument } from "../viewerDocument"
+import type { ViewerPagedDocument } from "../viewerDocument"
 import { getSafeStorage } from "$lib/shared/state/safeStorage"
 import { untrack } from "svelte"
 import {
@@ -44,7 +44,7 @@ export class SearchStore {
     searchStartPage = $state<number | null>(null)
 
     private readonly historyRepository: SearchHistoryRepository
-    private currentPdf: ViewerDocument | null = null
+    private currentPdf: ViewerPagedDocument | null = null
     private currentBookId: string | null = null
 
     constructor(
@@ -121,7 +121,7 @@ export class SearchStore {
         for (const listener of this.matchesChangedListeners) listener()
     }
 
-    initDocument({ pdf, bookId }: { pdf: ViewerDocument; bookId: string }) {
+    initDocument({ pdf, bookId }: { pdf: ViewerPagedDocument; bookId: string }) {
         if (this.currentPdf === pdf && this.currentBookId === bookId) return
         this.currentPdf = pdf
         this.currentBookId = bookId
