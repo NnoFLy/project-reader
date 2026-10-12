@@ -1,6 +1,6 @@
 import type { ExtensionContext, SettingContribution } from "$lib/extension-api"
 import SettingsView from "./SettingsView.svelte"
-import { settingsCommands } from "./commands/settingsCommands"
+import { settingsCommands, type SettingsCommandPayload } from "./commands/settingsCommands"
 import { configureSettings, CONSTANTS, settingsStore } from "./state/settingsStore.svelte"
 
 export const SETTINGS_VIEW_ID = "settings.panel"
@@ -70,6 +70,16 @@ export function activateSettings(context: ExtensionContext): void {
     })
     for (const setting of settingDefinitions)
         context.settings.register(setting as SettingContribution)
+    for (const command of Object.values(settingsCommands)) {
+        const keymap = "keymap" in command ? command.keymap : undefined
+        context.commands.register({
+            id: command.id,
+            label: command.label,
+            keybinding:
+                keymap === undefined ? undefined : Array.isArray(keymap) ? keymap : [keymap],
+            execute: (payload) => command.run(payload as SettingsCommandPayload | undefined),
+        })
+    }
     configureSettings(context.settings, context.storage)
 }
 

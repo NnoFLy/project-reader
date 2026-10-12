@@ -28,7 +28,20 @@ describe("builtin settings", () => {
             "settings.prefer-pdf-title",
         ])
 
-        settingsStore.theme = "dark"
+        const commands = host.contributions.forExtension("builtin.settings").commands
+        expect(commands.list().map(({ id }) => id)).toEqual([
+            "settings.theme",
+            "settings.layout",
+            "settings.language",
+            "settings.zoom.in",
+            "settings.zoom.out",
+            "settings.quality.in",
+            "settings.quality.out",
+            "settings.animations.toggle",
+            "settings.pdf-title.toggle",
+        ])
+
+        await commands.execute("settings.theme", { value: "dark" })
         await new Promise((resolve) => setTimeout(resolve, 0))
         expect(
             await createExtensionStorage(backend, "builtin.settings").get("settings.theme"),

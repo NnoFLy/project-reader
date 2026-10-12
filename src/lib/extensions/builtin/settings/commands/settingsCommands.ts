@@ -1,80 +1,40 @@
 import { page } from "$app/state"
-import { switchLanguage } from "../language/language"
-import { getLanguageName } from "../language/locale"
-import { CONSTANTS, settingsStore, type Layout, type Theme } from "../state/settingsStore.svelte"
-import { stepAndClampScale } from "../utils/zoom"
-import { commandsStore } from "$lib/modules/commands"
-import { defineCommands } from "$lib/modules/commands"
-import { promptStore, type PromptItem } from "$lib/modules/prompt"
+import type { CommandContribution } from "$lib/extension-api"
 import * as m from "$lib/paraglide/messages"
 import { getLocale } from "$lib/paraglide/runtime"
-import type { Locale } from "$lib/modules/commands"
+import { switchLanguage } from "../language/language"
+import { getLanguageName } from "../language/locale"
+import {
+    CONSTANTS,
+    settingsStore,
+    type Layout,
+    type Language,
+    type Theme,
+} from "../state/settingsStore.svelte"
+import { stepAndClampScale } from "../utils/zoom"
 
-const themeItems = (): PromptItem<Theme>[] => [
-    {
-        id: "theme-light",
-        label: m.light(),
-        englishLabel: m.light({}, { locale: "en" }),
-        description: settingsStore.theme === "light" ? "✓" : undefined,
-        category: "settings",
-        value: "light",
-    },
-    {
-        id: "theme-dark",
-        label: m.dark(),
-        englishLabel: m.dark({}, { locale: "en" }),
-        description: settingsStore.theme === "dark" ? "✓" : undefined,
-        category: "settings",
-        value: "dark",
-    },
-    {
-        id: "theme-system",
-        label: m.system(),
-        englishLabel: m.system({}, { locale: "en" }),
-        description: settingsStore.theme === "system" ? "✓" : undefined,
-        category: "settings",
-        value: "system",
-    },
-]
+export type SettingsCommandPayload = { readonly value?: unknown }
 
-const layoutItems = (): PromptItem<Layout>[] => [
-    {
-        id: "layout-single",
-        label: m.single_page(),
-        englishLabel: m.single_page({}, { locale: "en" }),
-        description: settingsStore.layout === "single" ? "✓" : undefined,
-        category: "settings",
-        value: "single",
-    },
-    {
-        id: "layout-split",
-        label: m.split_pages(),
-        englishLabel: m.split_pages({}, { locale: "en" }),
-        description: settingsStore.layout === "split" ? "✓" : undefined,
-        category: "settings",
-        value: "split",
-    },
-    {
-        id: "layout-scroll",
-        label: m.scroll_pages(),
-        englishLabel: m.scroll_pages({}, { locale: "en" }),
-        description: settingsStore.layout === "scroll" ? "✓" : undefined,
-        category: "settings",
-        value: "scroll",
-    },
-]
+/** UI metadata retained for built-in surfaces; activation adapts it to the host command contract. */
+export type SettingsCommand = Pick<CommandContribution, "id"> & {
+    readonly label: () => string
+    readonly englishLabel?: () => string
+    readonly keymap?: string | readonly string[]
+    readonly category: "settings"
+    readonly subtitle?: () => string
+    readonly run: (payload?: SettingsCommandPayload) => void | Promise<void>
+}
 
-const languageItems = (): PromptItem<Locale>[] =>
-    (["ru", "en"] as const).map((locale) => ({
-        id: `language-${locale}`,
-        label: getLanguageName(locale),
-        englishLabel: getLanguageName(locale, "en"),
-        description: getLocale() === locale ? "✓" : undefined,
-        category: "settings",
-        value: locale,
-    }))
+const themeValues: readonly Theme[] = ["light", "dark", "system"]
+const layoutValues: readonly Layout[] = ["single", "split", "scroll"]
+const languageValues: readonly Language[] = ["ru", "en"]
 
-function updateQuality(value: number) {
+function nextValue<T>(current: T, values: readonly T[]): T {
+    const index = values.indexOf(current)
+    return values[(index + 1) % values.length]
+}
+
+function updateQuality(value: number): void {
     if (!Number.isFinite(value)) return
     settingsStore.quality = Math.min(
         Math.max(Math.round(value), CONSTANTS.minQuality),
@@ -82,7 +42,7 @@ function updateQuality(value: number) {
     )
 }
 
-export const settingsCommands = defineCommands({
+export const settingsCommands = {
     "settings.theme": {
         id: "settings.theme",
         keymap: "shift+t",
@@ -90,19 +50,12 @@ export const settingsCommands = defineCommands({
         englishLabel: () => m.keymap_change_theme({}, { locale: "en" }),
         category: "settings",
         subtitle: () => `${m.theme()}: ${settingsStore.theme}`,
-        run: async ({ value } = {}) => {
-            if (value !== undefined) {
-                settingsStore.theme = value
-                return
-            }
-            const selected = await promptStore.choose({
-                id: "settings.theme",
-                placeholder: m.select_theme(),
-                items: themeItems,
-            })
-            if (selected !== undefined) {
-                await commandsStore.execute("settings.theme", { value: selected })
-            }
+        run: (payload) => {
+            const value = payload?.value
+            settingsStore.theme =
+                value === "light" || value === "dark" || value === "system"
+                    ? value
+                    : nextValue(settingsStore.theme, themeValues)
         },
     },
     "settings.layout": {
@@ -111,19 +64,12 @@ export const settingsCommands = defineCommands({
         englishLabel: () => m.keymap_toggle_layouts({}, { locale: "en" }),
         category: "settings",
         subtitle: () => `${m.layout()}: ${settingsStore.layout}`,
-        run: async ({ value } = {}) => {
-            if (value !== undefined) {
-                settingsStore.layout = value
-                return
-            }
-            const selected = await promptStore.choose({
-                id: "settings.layout",
-                placeholder: m.select_layout(),
-                items: layoutItems,
-            })
-            if (selected !== undefined) {
-                await commandsStore.execute("settings.layout", { value: selected })
-            }
+        run: (payload) => {
+            const value = payload?.value
+            settingsStore.layout =
+                value === "single" || value === "split" || value === "scroll"
+                    ? value
+                    : nextValue(settingsStore.layout, layoutValues)
         },
     },
     "settings.language": {
@@ -132,19 +78,13 @@ export const settingsCommands = defineCommands({
         englishLabel: () => m.keymap_change_language({}, { locale: "en" }),
         category: "settings",
         subtitle: () => getLanguageName(getLocale()),
-        run: async ({ value } = {}) => {
-            if (value !== undefined) {
-                switchLanguage(value, page.url)
-                return
-            }
-            const selected = await promptStore.choose({
-                id: "settings.language",
-                placeholder: m.select_language(),
-                items: languageItems,
-            })
-            if (selected !== undefined) {
-                await commandsStore.execute("settings.language", { value: selected })
-            }
+        run: (payload) => {
+            const value = payload?.value
+            const locale =
+                value === "en" || value === "ru"
+                    ? value
+                    : nextValue(settingsStore.language, languageValues)
+            switchLanguage(locale, page.url)
         },
     },
     "settings.zoom.in": {
@@ -155,15 +95,16 @@ export const settingsCommands = defineCommands({
         category: "settings",
         subtitle: () => m.scale_subtitle({ scale: Math.round(settingsStore.scale * 100) }),
         run: (payload) => {
+            const value = payload?.value
             settingsStore.scale =
-                payload?.value === undefined
-                    ? stepAndClampScale(
+                typeof value === "number"
+                    ? Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale)
+                    : stepAndClampScale(
                           settingsStore.scale,
                           1,
                           CONSTANTS.minScale,
                           CONSTANTS.maxScale,
                       )
-                    : Math.min(Math.max(payload.value, CONSTANTS.minScale), CONSTANTS.maxScale)
         },
     },
     "settings.zoom.out": {
@@ -174,15 +115,16 @@ export const settingsCommands = defineCommands({
         category: "settings",
         subtitle: () => m.scale_subtitle({ scale: Math.round(settingsStore.scale * 100) }),
         run: (payload) => {
+            const value = payload?.value
             settingsStore.scale =
-                payload?.value === undefined
-                    ? stepAndClampScale(
+                typeof value === "number"
+                    ? Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale)
+                    : stepAndClampScale(
                           settingsStore.scale,
                           -1,
                           CONSTANTS.minScale,
                           CONSTANTS.maxScale,
                       )
-                    : Math.min(Math.max(payload.value, CONSTANTS.minScale), CONSTANTS.maxScale)
         },
     },
     "settings.quality.in": {
@@ -192,7 +134,9 @@ export const settingsCommands = defineCommands({
         category: "settings",
         subtitle: () => `${m.quality()}: ${settingsStore.quality}`,
         run: (payload) => {
-            updateQuality(payload?.value ?? settingsStore.quality + 1)
+            updateQuality(
+                typeof payload?.value === "number" ? payload.value : settingsStore.quality + 1,
+            )
         },
     },
     "settings.quality.out": {
@@ -202,7 +146,9 @@ export const settingsCommands = defineCommands({
         category: "settings",
         subtitle: () => `${m.quality()}: ${settingsStore.quality}`,
         run: (payload) => {
-            updateQuality(payload?.value ?? settingsStore.quality - 1)
+            updateQuality(
+                typeof payload?.value === "number" ? payload.value : settingsStore.quality - 1,
+            )
         },
     },
     "settings.animations.toggle": {
@@ -227,4 +173,4 @@ export const settingsCommands = defineCommands({
             settingsStore.preferPdfTitle = !settingsStore.preferPdfTitle
         },
     },
-})
+} satisfies Record<string, SettingsCommand>
