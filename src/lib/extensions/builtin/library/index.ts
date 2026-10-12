@@ -31,6 +31,7 @@ export async function activateLibrary(
     const libraryStorage = context.storage.namespace("library")
     await context.migration?.migrateLibrary(libraryStorage)
     const store = configureLibraryStore(libraryStorage)
+    await store.init()
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
     const unavailablePrompt: PromptService = {
