@@ -53,8 +53,7 @@
                 <span class="outline-text">{m.outline()}</span>
             </Button>
         {/if}
-        <span class="file-badge">PDF</span>
-        <span class="file-name" title={name}>{name || "document.pdf"}</span>
+        <span class="file-name" title={name}>{name || m.unknown_book()}</span>
     </div>
 
     <div class="header-actions">
@@ -186,20 +185,6 @@
         gap: 6px;
     }
 
-    .file-badge {
-        flex-shrink: 0;
-        background: var(--muted-bg-color);
-        color: var(--muted-text-color);
-        font-family: var(--ui-mono-font);
-        font-size: var(--font-size-xs);
-        font-weight: 700;
-        padding: 3px 7px;
-        border-radius: var(--radius-sm);
-        letter-spacing: 0.06em;
-        border: var(--border-inline) solid var(--border-color);
-        box-shadow: var(--shadow-inline);
-    }
-
     .file-name {
         min-width: 0;
         font-size: var(--font-size-xl);
@@ -235,10 +220,6 @@
             font-weight: 700;
         }
 
-        .file-badge {
-            display: none;
-        }
-
         .settings-text,
         .outline-text {
             display: none;
@@ -255,12 +236,6 @@
 
         .file-name {
             font-size: var(--font-size-md);
-        }
-    }
-
-    @media (--tiny-mobile) {
-        .file-badge {
-            display: none;
         }
     }
 </style>
