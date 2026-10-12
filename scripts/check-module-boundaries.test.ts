@@ -184,11 +184,21 @@ describe("target architecture boundaries", () => {
             ].join("\n"),
             "src/lib/extension-api/contracts.ts":
                 'import type { CoreContract } from "$lib/core/contracts"\nexport type ExtensionContract = CoreContract\n',
+            "src/lib/extension-host/document-contracts.ts": [
+                'import type { DocumentAdapter } from "../document-model"',
+                'import { DocumentAdapterRegistry } from "../core/documents"',
+                "void (0 as unknown as DocumentAdapter)",
+                "void DocumentAdapterRegistry",
+            ].join("\n"),
             "src/lib/extensions/builtin/index.ts": [
                 'import type { AppExtension } from "../../extension-api"',
                 'import { ExtensionHost } from "../../extension-host"',
+                'import { activateViewer } from "./viewer"',
+                'import { pdfDocumentAdapter } from "./pdf"',
                 "void (0 as unknown as AppExtension)",
                 "void ExtensionHost",
+                "void activateViewer",
+                "void pdfDocumentAdapter",
             ].join("\n"),
             "src/lib/extensions/builtin/viewer/index.ts": [
                 'import type { CoreContract } from "$lib/core/contracts"',
@@ -248,7 +258,19 @@ describe("target architecture boundaries", () => {
             "extension host importing shared code",
             "src/lib/extension-host/main.ts",
             'import "$lib/shared/state/safeStorage"',
-            "extension-host may only import core and extension-api",
+            "extension-host may only import core, extension-api, and document-model",
+        ],
+        [
+            "extension host importing a plugin",
+            "src/lib/extension-host/main.ts",
+            'import "$lib/extensions/builtin/viewer"',
+            "extension-host may only import core, extension-api, and document-model",
+        ],
+        [
+            "builtin host importing shared code",
+            "src/lib/extensions/builtin/index.ts",
+            'import "$lib/shared/state/safeStorage"',
+            "builtin host may only import host contracts and builtin extensions",
         ],
         [
             "document model importing routes",

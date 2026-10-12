@@ -20,6 +20,7 @@ const TARGET_LAYERS = new Set([
     "core",
     "extension-api",
     "extension-host",
+    "builtin-host",
     "document-model",
     "plugin",
     "adapter",
@@ -181,8 +182,8 @@ function targetArea(sourceRoot, file) {
     }
     if (relative === "routes" || relative.startsWith("routes/")) return { kind: "routes" }
 
-    // The builtin extension registry is application composition, not an extension.
-    if (relative === "lib/extensions/builtin/index.ts") return { kind: "extension-host" }
+    // The builtin extension registry composes extensions into the host.
+    if (relative === "lib/extensions/builtin/index.ts") return { kind: "builtin-host" }
 
     const adapterMatch = relative.match(
         /^lib\/(?:adapters|extensions\/builtin\/([^/]+)\/adapter(?:s)?)(?:\/|$)/,
@@ -202,13 +203,23 @@ function targetBoundaryViolation(from, to) {
     const allowedTargets = {
         core: ["core", "extension-api", "extension-host", "document-model"],
         "extension-api": ["core", "extension-api", "document-model"],
-        "extension-host": ["core", "extension-api", "extension-host"],
+        "extension-host": ["core", "extension-api", "extension-host", "document-model"],
+        "builtin-host": [
+            "core",
+            "extension-api",
+            "extension-host",
+            "builtin-host",
+            "document-model",
+            "plugin",
+            "adapter",
+        ],
         "document-model": ["core", "document-model"],
     }
     const boundaryMessages = {
         core: "core may only import core, extension-api, extension-host, and document-model",
         "extension-api": "extension-api may only import core contracts",
-        "extension-host": "extension-host may only import core and extension-api",
+        "extension-host": "extension-host may only import core, extension-api, and document-model",
+        "builtin-host": "builtin host may only import host contracts and builtin extensions",
         "document-model": "document-model may only import core contracts",
     }
     if (allowedTargets[from.kind] && !allowedTargets[from.kind].includes(to.kind)) {
