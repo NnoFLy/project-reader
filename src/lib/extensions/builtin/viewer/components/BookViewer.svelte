@@ -12,7 +12,10 @@
     import { untrack, onMount, onDestroy } from "svelte"
     import { on } from "svelte/events"
     import { viewerStore } from "../stores/viewerStore.svelte"
-    import { viewerLibraryCapability as vfsStore } from "../viewerHost"
+    import {
+        viewerLibraryCapability as vfsStore,
+        viewerLibraryMutationCapability as vfsMutations,
+    } from "../viewerHost"
     import { searchStore } from "../stores/searchStore.svelte"
     import { goto, replaceState } from "$app/navigation"
     import { page } from "$app/state"
@@ -93,7 +96,7 @@
                     return
                 }
                 const book = viewerStore.getCurrentBook()
-                if (book) vfsStore.pushForwardHistory(book.id)
+                if (book) vfsMutations.pushForwardHistory(book.id)
                 handleClose()
             },
             scroll: (payload, scrollAmount) => {
@@ -462,7 +465,7 @@
 
     onMount(() => {
         gestureHintDismissed = safeStorageGet("viewer-gesture-hint-dismissed") === "1"
-        vfsStore.clearForwardHistory()
+        vfsMutations.clearForwardHistory()
         if (vfsStore.initialized && !viewerStore.getCurrentBook()) {
             goto(resolve(localizedPath("/") as any))
             return

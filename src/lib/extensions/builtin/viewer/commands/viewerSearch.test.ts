@@ -3,10 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 vi.mock("../viewerHost", async () => {
     const actual = await vi.importActual<typeof import("../viewerHost")>("../viewerHost")
     const { vfsStore } = await import("$lib/modules/documents")
+    Object.assign(vfsStore, {
+        getIndexedTexts: (bookId: string) => vfsStore.db.indexedTexts.getByBookId(bookId),
+        saveIndexedTexts: (bookId: string, records: unknown[]) =>
+            vfsStore.db.indexedTexts.bulkPut(records as any),
+    })
     return {
         ...actual,
         viewerLibraryCapability: vfsStore,
+        viewerLibraryMutationCapability: vfsStore,
         isViewerLibraryCapabilityInstalled: () => true,
+        getViewerLibraryMutationCapability: () => vfsStore,
         getViewerLibraryCapability: () => vfsStore,
     }
 })
@@ -79,8 +86,8 @@ describe("viewer Prompt item builders", () => {
 describe("viewer search indexing", () => {
     it("reruns a waiting query after uncached full indexing", async () => {
         vfsStore.nodes["search-book"] = { id: "search-book", type: "file" } as any
-        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
-        vi.spyOn(vfsStore.db.indexedTexts, "bulkPut").mockResolvedValueOnce("search-book_1")
+        vi.spyOn(vfsStore as any, "getIndexedTexts").mockResolvedValueOnce([])
+        vi.spyOn(vfsStore as any, "saveIndexedTexts").mockResolvedValueOnce(true)
         const pdf = {
             pageCount: 1,
             getText: vi.fn().mockResolvedValue([{ text: "needle" }]),
@@ -99,7 +106,7 @@ describe("viewer search indexing", () => {
     it("does not let cancelled indexing clear replacement indexing state", async () => {
         const store = new SearchStore()
         vfsStore.nodes["replacement-book"] = { id: "replacement-book", type: "file" } as any
-        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValue([])
+        vi.spyOn(vfsStore as any, "getIndexedTexts").mockResolvedValue([])
         const resolvers: ((value: { text: string }[]) => void)[] = []
         const pdf = {
             pageCount: 1,
@@ -130,8 +137,8 @@ describe("viewer search indexing", () => {
 
     it("retries a failed page extraction before completing indexing", async () => {
         vfsStore.nodes["retry-book"] = { id: "retry-book", type: "file" } as any
-        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
-        vi.spyOn(vfsStore.db.indexedTexts, "bulkPut").mockResolvedValueOnce("retry-book_1")
+        vi.spyOn(vfsStore as any, "getIndexedTexts").mockResolvedValueOnce([])
+        vi.spyOn(vfsStore as any, "saveIndexedTexts").mockResolvedValueOnce(true)
         const pdf = {
             pageCount: 1,
             getText: vi
@@ -151,7 +158,7 @@ describe("viewer search indexing", () => {
 
     it("stops requesting pages after reset during extraction", async () => {
         vfsStore.nodes["cancelled-book"] = { id: "cancelled-book", type: "file" } as any
-        vi.spyOn(vfsStore.db.indexedTexts, "getByBookId").mockResolvedValueOnce([])
+        vi.spyOn(vfsStore as any, "getIndexedTexts").mockResolvedValueOnce([])
         const textResolvers: ((value: { text: string }[]) => void)[] = []
         const pdf = {
             pageCount: 20,
@@ -188,10 +195,10 @@ describe("viewer search indexing", () => {
             metadata: { pageNumber: 1 },
         }
         const getByBookId = vi
-            .spyOn(vfsStore.db.indexedTexts, "getByBookId")
+            .spyOn(vfsStore as any, "getIndexedTexts")
             .mockResolvedValueOnce([
                 { id: "cached-book_1", bookId: "cached-book", pageNumber: 1, text: "cached" },
-            ])
+            ] as any)
         const pdf = { pageCount: 1, getText: vi.fn() } as unknown as ViewerDocument
         searchStore.initDocument({ pdf, bookId: "cached-book" })
 

@@ -3,7 +3,9 @@ import { viewerStore } from "./viewerStore.svelte"
 import {
     isViewerLibraryCapabilityInstalled,
     getViewerLibraryCapability,
+    getViewerLibraryMutationCapability,
     viewerLibraryCapability as vfsStore,
+    viewerLibraryMutationCapability as vfsMutations,
 } from "../viewerHost"
 import type { ViewerDocument } from "../viewerDocument"
 import { getSafeStorage } from "$lib/shared/state/safeStorage"
@@ -21,6 +23,7 @@ export interface SearchMatch {
 
 export class SearchStore {
     private files = getViewerLibraryCapability() ?? vfsStore
+    private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     query = $state("")
     matches = $state.raw<SearchMatch[]>([])
     private _currentMatchIndex = $state(-1)
@@ -166,7 +169,7 @@ export class SearchStore {
 
         try {
             // 1. Try to load from IndexedDB first
-            const cachedTexts = await this.files.db.indexedTexts.getByBookId(bookId)
+            const cachedTexts = await this.files.getIndexedTexts(bookId)
             if (
                 cachedTexts &&
                 cachedTexts.length === totalPages &&
@@ -205,7 +208,7 @@ export class SearchStore {
                 if (!recordsToSave.length || !isCurrent()) return
                 const batch = recordsToSave
                 recordsToSave = []
-                await this.files.saveIndexedTexts(
+                await this.mutations.saveIndexedTexts(
                     bookId,
                     batch.map((record) => ({
                         id: `${bookId}_${record.pageNumber}`,
@@ -515,6 +518,7 @@ export class SearchStore {
     resetLifecycle() {
         this.dispose()
         this.files = getViewerLibraryCapability() ?? vfsStore
+        this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
         this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
             ? this.files.onContentRestored((bookId) => {
                   if (this.currentBookId !== bookId || !this.currentPdf) return

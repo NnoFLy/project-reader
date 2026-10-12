@@ -133,6 +133,21 @@ export class LibraryStorage {
         return this.storage
     }
 
+    private enqueueTableWrite<T>(operation: () => Promise<T>): Promise<T> {
+        // Transaction callbacks already run inside the queue. Re-entering the queue here
+        // would deadlock the callback, so their table writes use the active journal directly.
+        if (this.activeJournal) return operation()
+        const task = this.queue.then(async () => {
+            await this.ready
+            return operation()
+        })
+        this.queue = task.then(
+            () => undefined,
+            () => undefined,
+        )
+        return task
+    }
+
     private async repairJournal(storage: StorageNamespace): Promise<void> {
         const journal = await storage.get<TransactionJournal>(JOURNAL_KEY)
         if (!journal) return
@@ -161,7 +176,8 @@ export class LibraryStorage {
     private async restoreJournal(journal: TransactionJournal): Promise<void> {
         for (const entry of [...journal.entries].reverse()) {
             const table = this.tables[entry.table]
-            if (entry.existed) await table.set(entry.id, entry.previous)
+            if (entry.existed && entry.previous !== undefined)
+                await table.set(entry.id, entry.previous)
             else await table.delete(entry.id)
         }
     }
@@ -173,32 +189,40 @@ export class LibraryStorage {
                 await this.ready
                 return storage.get<T>(id)
             },
-            put: async (value) => {
-                await this.ready
-                await this.recordBeforeMutation(name, value.id)
-                await storage.set(value.id, value)
-                return value.id
-            },
-            update: async (id, changes) => {
-                await this.ready
-                const current = await storage.get<T>(id)
-                if (!current) return 0
-                await this.recordBeforeMutation(name, id)
-                await storage.set(id, { ...current, ...changes })
-                return 1
-            },
-            bulkPut: async (values) => {
-                for (const value of values) await this.table<T>(name).put(value)
-                return values.at(-1)?.id ?? ""
-            },
-            delete: async (id) => {
-                await this.ready
-                await this.recordBeforeMutation(name, id)
-                await storage.delete(id)
-            },
-            bulkDelete: async (ids) => {
-                for (const id of ids) await this.table<T>(name).delete(id)
-            },
+            put: (value) =>
+                this.enqueueTableWrite(async () => {
+                    await this.recordBeforeMutation(name, value.id)
+                    await storage.set(value.id, value)
+                    return value.id
+                }),
+            update: (id, changes) =>
+                this.enqueueTableWrite(async () => {
+                    const current = await storage.get<T>(id)
+                    if (!current) return 0
+                    await this.recordBeforeMutation(name, id)
+                    await storage.set(id, { ...current, ...changes })
+                    return 1
+                }),
+            bulkPut: (values) =>
+                this.enqueueTableWrite(async () => {
+                    for (const value of values) {
+                        await this.recordBeforeMutation(name, value.id)
+                        await storage.set(value.id, value)
+                    }
+                    return values.at(-1)?.id ?? ""
+                }),
+            delete: (id) =>
+                this.enqueueTableWrite(async () => {
+                    await this.recordBeforeMutation(name, id)
+                    await storage.delete(id)
+                }),
+            bulkDelete: (ids) =>
+                this.enqueueTableWrite(async () => {
+                    for (const id of ids) {
+                        await this.recordBeforeMutation(name, id)
+                        await storage.delete(id)
+                    }
+                }),
             getAll: async () => {
                 await this.ready
                 const values: Array<T | undefined> = await Promise.all(

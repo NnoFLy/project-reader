@@ -4,7 +4,9 @@ import { untrack } from "svelte"
 import {
     isViewerLibraryCapabilityInstalled,
     getViewerLibraryCapability,
+    getViewerLibraryMutationCapability,
     viewerLibraryCapability as vfsStore,
+    viewerLibraryMutationCapability as vfsMutations,
     type UserNote,
 } from "../viewerHost"
 
@@ -27,6 +29,7 @@ export interface PopupState {
 
 class NotesStore {
     private files = getViewerLibraryCapability() ?? vfsStore
+    private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     notes = $state<UserNote[]>([])
     activePopup = $state<PopupState | null>(null)
     activeSelection = $state<SelectionState | null>(null)
@@ -85,6 +88,7 @@ class NotesStore {
     reset() {
         this.dispose()
         this.files = getViewerLibraryCapability() ?? vfsStore
+        this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
         this.disposed = false
         this.pendingDeletionBookIds.clear()
         this.pendingDeletionNoteIds.clear()
@@ -169,7 +173,7 @@ class NotesStore {
         const lifecycleEpoch = this.lifecycleEpoch
         const bookGeneration = this.bookLoadGenerations.get(bookId) ?? 0
         try {
-            const loaded = (await this.files.db.userNotes.getByBookId(bookId)) as UserNote[]
+            const loaded = (await this.files.getUserNotes(bookId)) as UserNote[]
             if (
                 this.files.isDisposed ||
                 lifecycleEpoch !== this.lifecycleEpoch ||
@@ -245,9 +249,9 @@ class NotesStore {
                 !this.isWriteAllowed(bookId)
             )
                 return null
-            const written = await this.files.serializeBookMutation(bookId, async () => {
+            const written = await this.mutations.serializeBookMutation(bookId, async () => {
                 if (!this.isWriteAllowed(bookId, note.id)) return false
-                await this.files.db.userNotes.put(note)
+                await this.mutations.putUserNote(note)
                 return true
             })
             if (
@@ -336,9 +340,9 @@ class NotesStore {
                 !this.isWriteAllowed(note.bookId, id)
             )
                 return
-            const written = await this.files.serializeBookMutation(note.bookId, async () => {
+            const written = await this.mutations.serializeBookMutation(note.bookId, async () => {
                 if (!this.isWriteAllowed(note.bookId, id)) return false
-                await this.files.db.userNotes.put($state.snapshot(note))
+                await this.mutations.putUserNote($state.snapshot(note))
                 return true
             })
             if (
@@ -392,9 +396,9 @@ class NotesStore {
     }
 
     private async deleteUnknownNote(id: string): Promise<boolean> {
-        const deleted = await this.files.serializeMetadataMutation(async () => {
+        const deleted = await this.mutations.serializeMetadataMutation(async () => {
             if (this.disposed || this.files.isDisposed) return false
-            await this.files.db.userNotes.delete(id)
+            await this.mutations.deleteUserNote(id)
             return true
         })
         return deleted === true
@@ -416,9 +420,9 @@ class NotesStore {
         let deleted = false
         try {
             if (note) {
-                deleted = !!(await this.files.serializeBookMutation(note.bookId, async () => {
+                deleted = !!(await this.mutations.serializeBookMutation(note.bookId, async () => {
                     if (this.disposed || this.files.isDisposed) return false
-                    await this.files.db.userNotes.delete(id)
+                    await this.mutations.deleteUserNote(id)
                     return true
                 }))
                 if (!deleted) return

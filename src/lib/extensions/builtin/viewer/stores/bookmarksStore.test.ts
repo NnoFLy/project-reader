@@ -56,8 +56,7 @@ vi.mock("../viewerHost", () => ({
         },
         onNodesDeleting,
         isNodeDeleting: vi.fn(() => false),
-        serializeBookMutation,
-        serializeMetadataMutation,
+        getBookmarks: getAll,
         db: {
             bookmarks: {
                 put,
@@ -68,8 +67,16 @@ vi.mock("../viewerHost", () => ({
             },
         },
     },
+    viewerLibraryMutationCapability: {
+        serializeBookMutation,
+        serializeMetadataMutation,
+        putBookmark: put,
+        deleteBookmark: deleteRecord,
+        deleteBookmarks: bulkDelete,
+    },
     isViewerLibraryCapabilityInstalled: () => true,
     getViewerLibraryCapability: () => undefined,
+    getViewerLibraryMutationCapability: () => undefined,
 }))
 
 import { bookmarksStore } from "./bookmarksStore.svelte"

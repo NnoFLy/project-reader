@@ -7,11 +7,84 @@ import { activateLibrary, libraryStore } from "./library"
 import { installDocumentService } from "./library/state/libraryStore.svelte"
 import { activatePrompt, getPromptCommandRegistry, openCommandPalette, promptStore } from "./prompt"
 import { activateSettings } from "./settings"
-import { activateViewer, type ViewerFileCapability, type ViewerLibraryCapability } from "./viewer"
+import {
+    activateViewer,
+    type ViewerFileCapability,
+    type ViewerLibraryCapability,
+    type ViewerLibraryMutationCapability,
+} from "./viewer"
 
-// The built-in library owns file handles, object URLs, and relink state. Expose that
-// singleton through the viewer's narrow host capability instead of creating another store.
-const builtinViewerLibraryCapability = libraryStore as unknown as ViewerLibraryCapability
+const readonlyRecord = <T extends object>(record: T): Readonly<T> =>
+    new Proxy(record, {
+        set: () => false,
+        deleteProperty: () => false,
+        defineProperty: () => false,
+    })
+
+// The built-in library owns file handles, object URLs, and relink state. Expose only the
+// viewer's read capability and its explicitly typed mutation operations.
+const builtinViewerLibraryCapability: ViewerLibraryCapability = {
+    get nodes() {
+        return readonlyRecord(libraryStore.nodes) as ViewerLibraryCapability["nodes"]
+    },
+    get allFiles() {
+        return Object.freeze([...libraryStore.allFiles]) as ViewerLibraryCapability["allFiles"]
+    },
+    get fileUrls() {
+        return readonlyRecord(libraryStore.fileUrls) as ViewerLibraryCapability["fileUrls"]
+    },
+    get isLockedMap() {
+        return readonlyRecord(libraryStore.isLockedMap) as ViewerLibraryCapability["isLockedMap"]
+    },
+    get initialized() {
+        return libraryStore.initialized
+    },
+    get isDisposed() {
+        return libraryStore.isDisposed
+    },
+    getFileUrl: (id) => libraryStore.getFileUrl(id),
+    getContentGeneration: (id) => libraryStore.getContentGeneration(id),
+    isCurrentContent: (id, generation) => libraryStore.isCurrentContent(id, generation),
+    isCurrentFileUrl: (id, url, generation) => libraryStore.isCurrentFileUrl(id, url, generation),
+    onNodesDeleted: (listener) => libraryStore.onNodesDeleted(listener),
+    onNodesDeleting: (listener) => libraryStore.onNodesDeleting(listener),
+    onNodeRelinked: (listener) => libraryStore.onNodeRelinked(listener),
+    onContentRestored: (listener) => libraryStore.onContentRestored(listener),
+    onNodeInvalidated: (listener) => libraryStore.onNodeInvalidated(listener),
+    isNodeDeleting: (id) => libraryStore.isNodeDeleting(id),
+    getIndexedTexts: (bookId) => libraryStore.getIndexedTexts(bookId),
+    getUserNotes: (bookId) => libraryStore.getUserNotes(bookId),
+    getBookmarks: () => libraryStore.getBookmarks(),
+    getPreviewUrl: (id) => libraryStore.getPreviewUrl(id),
+    getFolderPath: (id) => libraryStore.getFolderPath(id),
+}
+
+const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
+    revokeFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
+    setActiveFileId: (id) => {
+        libraryStore.activeFileId = id
+    },
+    serializeBookMutation: (id, mutation) => libraryStore.serializeBookMutation(id, mutation),
+    serializeMetadataMutation: (mutation) => libraryStore.serializeMetadataMutation(mutation),
+    saveIndexedTexts: (id, records, generation) =>
+        libraryStore.saveIndexedTexts(id, records as never[], generation),
+    putUserNote: (note) => libraryStore.putUserNote(note),
+    deleteUserNote: (id) => libraryStore.deleteUserNote(id),
+    putBookmark: (bookmark) => libraryStore.putBookmark(bookmark),
+    deleteBookmark: (id) => libraryStore.deleteBookmark(id),
+    deleteBookmarks: (ids) => libraryStore.deleteBookmarks(ids),
+    revokePreviewUrl: (id) => libraryStore.revokePreviewUrl(id),
+    invalidatePreview: (id) => libraryStore.invalidatePreview(id),
+    updateFile: (id, changes, ...options) =>
+        libraryStore.updateFile(
+            id,
+            changes,
+            options[0] as boolean | undefined,
+            options[1] as number | undefined,
+        ),
+    pushForwardHistory: (id) => libraryStore.pushForwardHistory(id),
+    clearForwardHistory: () => libraryStore.clearForwardHistory(),
+}
 
 const builtinViewerFileCapability: ViewerFileCapability = {
     get nodes() {
@@ -103,11 +176,17 @@ const builtinExtensions: readonly AppExtension[] = [
     {
         manifest: BUILTIN_MANIFESTS[2],
         activate: (context) =>
-            activateViewer(context, builtinViewerFileCapability, builtinViewerLibraryCapability, {
-                promptStore,
-                getPromptCommandRegistry,
-                openCommandPalette,
-            }),
+            activateViewer(
+                context,
+                builtinViewerFileCapability,
+                builtinViewerLibraryCapability,
+                builtinViewerLibraryMutations,
+                {
+                    promptStore,
+                    getPromptCommandRegistry,
+                    openCommandPalette,
+                },
+            ),
     },
     {
         manifest: BUILTIN_MANIFESTS[3],

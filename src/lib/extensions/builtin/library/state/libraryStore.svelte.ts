@@ -455,6 +455,39 @@ export class VFSStore {
         })
     }
 
+    /** Viewer-scoped metadata access; the database tables stay private to the library. */
+    getIndexedTexts(bookId: string): Promise<IndexedText[]> {
+        return this.db.indexedTexts.getByBookId(bookId)
+    }
+
+    getUserNotes(bookId: string): Promise<import("./libraryStore.types").UserNote[]> {
+        return this.db.userNotes.getByBookId(bookId)
+    }
+
+    getBookmarks(): Promise<import("./libraryStore.types").Bookmark[]> {
+        return this.db.bookmarks.getAll()
+    }
+
+    putUserNote(note: import("./libraryStore.types").UserNote): Promise<string> {
+        return this.db.userNotes.put(note)
+    }
+
+    deleteUserNote(id: string): Promise<void> {
+        return this.db.userNotes.delete(id)
+    }
+
+    putBookmark(bookmark: import("./libraryStore.types").Bookmark): Promise<string> {
+        return this.db.bookmarks.put(bookmark)
+    }
+
+    deleteBookmark(id: string): Promise<void> {
+        return this.db.bookmarks.delete(id)
+    }
+
+    deleteBookmarks(ids: string[]): Promise<void> {
+        return this.db.bookmarks.bulkDelete(ids)
+    }
+
     pushForwardHistory(id: string | null) {
         if (id) {
             this.forwardHistory.push(id)

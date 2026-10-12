@@ -54,12 +54,18 @@ vi.mock("../viewerHost", () => ({
             return disposed.value
         },
         isNodeDeleting: vi.fn(() => false),
+        getUserNotes: getByBookId,
+        db: { userNotes: { put, delete: deleteRecord, get, getByBookId } },
+    },
+    viewerLibraryMutationCapability: {
         serializeBookMutation,
         serializeMetadataMutation,
-        db: { userNotes: { put, delete: deleteRecord, get, getByBookId } },
+        putUserNote: put,
+        deleteUserNote: deleteRecord,
     },
     isViewerLibraryCapabilityInstalled: () => true,
     getViewerLibraryCapability: () => undefined,
+    getViewerLibraryMutationCapability: () => undefined,
 }))
 
 import { notesStore } from "./notesStore.svelte"

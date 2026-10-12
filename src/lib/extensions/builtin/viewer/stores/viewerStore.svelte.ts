@@ -5,13 +5,16 @@ import type { DocumentOutlineEntry } from "$lib/document-model"
 import {
     isViewerLibraryCapabilityInstalled,
     getViewerLibraryCapability,
+    getViewerLibraryMutationCapability,
     viewerLibraryCapability as vfsStore,
+    viewerLibraryMutationCapability as vfsMutations,
 } from "../viewerHost"
 import { type Book, fileNodeToBook } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
 
 class ViewerStore {
     private files = getViewerLibraryCapability() ?? vfsStore
+    private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     private storage: StorageNamespace | undefined
     private storageGeneration = 0
     private persistenceQueue: Promise<void> = Promise.resolve()
@@ -100,6 +103,7 @@ class ViewerStore {
     reset() {
         this.dispose()
         this.files = getViewerLibraryCapability() ?? vfsStore
+        this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
         this.disposed = false
         this.book = null
         this.outlineList = null
@@ -124,7 +128,7 @@ class ViewerStore {
             window.removeEventListener("beforeunload", this.flush)
             this.listening = false
         }
-        if (this.book?.url) this.files.revokeFileUrl(this.book.id, this.book.url)
+        if (this.book?.url) this.mutations.revokeFileUrl(this.book.id, this.book.url)
         for (const id of this.deferredStaleUrls.keys()) this.flushDeferredStaleUrls(id)
         this.pendingBookSwitches.clear()
     }
@@ -231,7 +235,7 @@ class ViewerStore {
         const oldBook = this.book
         if (oldBook.url) this.releaseStaleUrl(oldBook.id, oldBook.url)
         this.book = null
-        this.files.activeFileId = null
+        this.mutations.setActiveFileId(null)
         this.persistViewerState(true)
     }
 
@@ -257,7 +261,7 @@ class ViewerStore {
         const operationDisposalEpoch = this.disposalEpoch
         const operationBookSwitchGeneration = this.bookSwitchGeneration
         const bookId = this.book.id
-        this.files.activeFileId = bookId
+        this.mutations.setActiveFileId(bookId)
         const matchingNode = this.files.nodes[bookId]
         if (!matchingNode || matchingNode.type !== "file") {
             await this.clearDeletedBook(bookId)
@@ -347,7 +351,7 @@ class ViewerStore {
     private releaseStaleUrl(id: string, url: string) {
         // Each switch owns the lease returned by getFileUrl. Release stale switches
         // immediately even when another switch for the same book is still pending.
-        if (!this.files.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
+        if (!this.mutations.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
             URL.revokeObjectURL(url)
     }
 
@@ -357,7 +361,7 @@ class ViewerStore {
         this.deferredStaleUrls.delete(id)
         for (const { url } of deferred) {
             if (!this.disposed && this.book?.id === id && this.book.url === url) continue
-            if (!this.files.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
+            if (!this.mutations.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
                 URL.revokeObjectURL(url)
         }
     }
@@ -459,7 +463,7 @@ class ViewerStore {
 
         // Set the active book state only after a missing URL has been resolved.
         this.book = newBook
-        this.files.activeFileId = newBookId ?? null
+        this.mutations.setActiveFileId(newBookId ?? null)
         this.persistViewerState(true)
 
         if (newBook) {
@@ -510,7 +514,7 @@ class ViewerStore {
         )
             return
 
-        await this.files.updateFile(
+        await this.mutations.updateFile(
             book.id,
             {
                 name: book.name,

@@ -2,12 +2,15 @@ import { browser } from "$app/environment"
 import {
     isViewerLibraryCapabilityInstalled,
     getViewerLibraryCapability,
+    getViewerLibraryMutationCapability,
     viewerLibraryCapability as vfsStore,
+    viewerLibraryMutationCapability as vfsMutations,
     type Bookmark,
 } from "../viewerHost"
 
 class BookmarksStore {
     private files = getViewerLibraryCapability() ?? vfsStore
+    private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     bookmarks = $state<Bookmark[]>([])
     private loadGeneration = 0
     private lifecycleEpoch = 0
@@ -45,6 +48,7 @@ class BookmarksStore {
     reset() {
         this.dispose()
         this.files = getViewerLibraryCapability() ?? vfsStore
+        this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
         this.disposed = false
         this.pendingDeletionBookIds.clear()
         this.pendingDeletionBookmarkIds.clear()
@@ -64,7 +68,7 @@ class BookmarksStore {
         const generation = ++this.loadGeneration
         const lifecycleEpoch = this.lifecycleEpoch
         try {
-            const loaded = (await this.files.db.bookmarks.getAll()) as Bookmark[]
+            const loaded = (await this.files.getBookmarks()) as Bookmark[]
             if (
                 this.files.isDisposed ||
                 lifecycleEpoch !== this.lifecycleEpoch ||
@@ -76,10 +80,10 @@ class BookmarksStore {
             const stale = loaded.filter((bookmark) => !validBookIds.has(bookmark.bookId))
             if (stale.length > 0) {
                 if (this.files.isDisposed || lifecycleEpoch !== this.lifecycleEpoch) return
-                const cleaned = await this.files.serializeMetadataMutation(async () => {
+                const cleaned = await this.mutations.serializeMetadataMutation(async () => {
                     if (this.files.isDisposed || lifecycleEpoch !== this.lifecycleEpoch)
                         return false
-                    await this.files.db.bookmarks.bulkDelete(stale.map((bookmark) => bookmark.id))
+                    await this.mutations.deleteBookmarks(stale.map((bookmark) => bookmark.id))
                     return true
                 })
                 if (
@@ -117,9 +121,9 @@ class BookmarksStore {
                 !this.isWriteAllowed(bookId)
             )
                 return null
-            const written = await this.files.serializeBookMutation(bookId, async () => {
+            const written = await this.mutations.serializeBookMutation(bookId, async () => {
                 if (!this.isWriteAllowed(bookId, bookmark.id)) return false
-                await this.files.db.bookmarks.put(bookmark)
+                await this.mutations.putBookmark(bookmark)
                 return true
             })
             if (
@@ -163,11 +167,14 @@ class BookmarksStore {
                     !this.isWriteAllowed(updated.bookId, id)
                 )
                     return
-                const written = await this.files.serializeBookMutation(updated.bookId, async () => {
-                    if (!this.isWriteAllowed(updated.bookId, id)) return false
-                    await this.files.db.bookmarks.put(updated)
-                    return true
-                })
+                const written = await this.mutations.serializeBookMutation(
+                    updated.bookId,
+                    async () => {
+                        if (!this.isWriteAllowed(updated.bookId, id)) return false
+                        await this.mutations.putBookmark(updated)
+                        return true
+                    },
+                )
                 if (
                     !written ||
                     this.disposed ||
@@ -232,9 +239,9 @@ class BookmarksStore {
     }
 
     private async deleteUnknownBookmark(id: string): Promise<boolean> {
-        const deleted = await this.files.serializeMetadataMutation(async () => {
+        const deleted = await this.mutations.serializeMetadataMutation(async () => {
             if (this.disposed || this.files.isDisposed) return false
-            await this.files.db.bookmarks.delete(id)
+            await this.mutations.deleteBookmark(id)
             return true
         })
         return deleted === true
@@ -251,9 +258,9 @@ class BookmarksStore {
         let deleted = false
         try {
             deleted = !!(bookmark
-                ? await this.files.serializeBookMutation(bookmark.bookId, async () => {
+                ? await this.mutations.serializeBookMutation(bookmark.bookId, async () => {
                       if (this.disposed || this.files.isDisposed) return false
-                      await this.files.db.bookmarks.delete(id)
+                      await this.mutations.deleteBookmark(id)
                       return true
                   })
                 : await this.deleteUnknownBookmark(id))

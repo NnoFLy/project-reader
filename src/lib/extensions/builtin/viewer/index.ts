@@ -7,6 +7,7 @@ import {
     installViewerHostCapabilities,
     type ViewerFileCapability,
     type ViewerLibraryCapability,
+    type ViewerLibraryMutationCapability,
     type ViewerPromptCapability,
 } from "./viewerHost"
 import { bookmarksStore } from "./stores/bookmarksStore.svelte"
@@ -23,6 +24,7 @@ export { installViewerHostCapabilities } from "./viewerHost"
 export type {
     ViewerFileCapability,
     ViewerLibraryCapability,
+    ViewerLibraryMutationCapability,
     ViewerPromptCapability,
 } from "./viewerHost"
 
@@ -32,12 +34,14 @@ export function activateViewer(
     context: ExtensionContext,
     fileCapability?: ViewerFileCapability,
     libraryCapability?: ViewerLibraryCapability,
+    libraryMutationCapability?: ViewerLibraryMutationCapability,
     promptCapability?: ViewerPromptCapability,
 ): void {
     const viewerStorage = context.storage.namespace("viewer")
     installViewerHostCapabilities({
         files: fileCapability,
         library: libraryCapability,
+        libraryMutations: libraryMutationCapability,
         storage: viewerStorage,
         prompt: promptCapability,
     })

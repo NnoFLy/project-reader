@@ -8,10 +8,17 @@ import { viewerStore } from "./viewerStore.svelte"
 vi.mock("../viewerHost", async () => {
     const actual = await vi.importActual<typeof import("../viewerHost")>("../viewerHost")
     const { vfsStore } = await import("$lib/modules/documents")
+    Object.assign(vfsStore, {
+        setActiveFileId: (id: string | null) => {
+            vfsStore.activeFileId = id
+        },
+    })
     return {
         ...actual,
         viewerLibraryCapability: vfsStore,
+        viewerLibraryMutationCapability: vfsStore,
         isViewerLibraryCapabilityInstalled: () => true,
+        getViewerLibraryMutationCapability: () => vfsStore,
     }
 })
 
@@ -53,12 +60,14 @@ describe("ViewerStore URL synchronization", () => {
         vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
         vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
         vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        const revokeFileUrl = vi.spyOn(vfsStore, "revokeFileUrl").mockImplementation(() => true)
-        vfsStore.nodes = {
+        const revokeFileUrl = vi
+            .spyOn(vfsStore as any, "revokeFileUrl")
+            .mockImplementation(() => true)
+        ;(vfsStore as any).nodes = {
             old: { ...bookNode, id: "old" },
             next: { ...bookNode, id: "next", name: "next.pdf" },
         }
-        vfsStore.isLockedMap = {}
+        ;(vfsStore as any).isLockedMap = {}
         ;(viewerStore as any).book = {
             id: "old",
             name: "old.pdf",
@@ -89,7 +98,7 @@ describe("ViewerStore URL synchronization", () => {
     })
 
     it("does not update metadata after disposal when defaults are omitted", async () => {
-        const updateFile = vi.spyOn(vfsStore, "updateFile")
+        const updateFile = vi.spyOn(vfsStore as any, "updateFile")
         const getContentGeneration = vi.spyOn(vfsStore, "getContentGeneration")
         viewerStore.dispose()
 
@@ -118,8 +127,8 @@ describe("ViewerStore URL synchronization", () => {
         vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
         vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
         vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        vfsStore.nodes = { book: bookNode }
-        vfsStore.isLockedMap = {}
+        ;(vfsStore as any).nodes = { book: bookNode }
+        ;(vfsStore as any).isLockedMap = {}
         ;(viewerStore as any).book = {
             id: "book",
             name: "book.pdf",
