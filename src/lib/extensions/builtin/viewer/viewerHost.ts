@@ -87,6 +87,8 @@ export interface ViewerFileCapability {
     readonly isLockedMap: Readonly<Record<string, boolean | undefined>>
     getFileUrl(id: string): Promise<string | undefined>
     restoreFileAccess(id: string): Promise<string | undefined>
+    /** Ask the host to present its file-relink flow for an inaccessible node. */
+    requestRelink(id: string): void
     waitForRelink(id: string): Promise<void>
     /** Release the viewer's lease; URL lifetime remains host-owned. */
     releaseFileUrl(id: string, url: string): boolean
@@ -101,6 +103,7 @@ const unavailable: ViewerFileCapability = {
     isLockedMap: {},
     getFileUrl: async () => undefined,
     restoreFileAccess: async () => undefined,
+    requestRelink: () => undefined,
     waitForRelink: async () => undefined,
     releaseFileUrl: () => false,
     getContentGeneration: () => 0,

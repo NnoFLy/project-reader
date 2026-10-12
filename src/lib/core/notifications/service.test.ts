@@ -21,6 +21,21 @@ describe("NotificationServiceImpl", () => {
         })
     })
 
+    it("disposes a notification handle when the host dismisses its id", () => {
+        const service = new NotificationServiceImpl()
+        const onRemove = vi.fn()
+        service.subscribe(vi.fn(), onRemove)
+
+        const notification = service.info("Expires")
+
+        expect(service.dismiss(service.list()[0].id)).toBe(true)
+        expect(service.dismiss("missing")).toBe(false)
+        expect(service.list()).toEqual([])
+        expect(onRemove).toHaveBeenCalledOnce()
+        notification.dispose()
+        expect(onRemove).toHaveBeenCalledOnce()
+    })
+
     it("does not notify removal more than once", () => {
         const service = new NotificationServiceImpl()
         const onRemove = vi.fn()

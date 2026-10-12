@@ -3,7 +3,7 @@ import { DocumentService } from "../../core/documents"
 import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
 import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
-import { activateLibrary, libraryStore, LibraryRelinkHost } from "./library"
+import { activateLibrary, libraryStore, requestLibraryRelink, LibraryRelinkHost } from "./library"
 import { installDocumentService } from "./library/state/libraryStore.svelte"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
@@ -98,6 +98,7 @@ const builtinViewerFileCapability: ViewerFileCapability = {
     },
     getFileUrl: (id) => libraryStore.getFileUrl(id),
     restoreFileAccess: (id) => libraryStore.restoreFileAccess(id),
+    requestRelink: (id) => requestLibraryRelink(id),
     waitForRelink: (id) => libraryStore.waitForRelink(id),
     releaseFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
     getContentGeneration: (id) => libraryStore.getContentGeneration(id),

@@ -2,8 +2,11 @@
     const viewerUI = useViewerUI()
     import { useViewerUI } from "../state/viewerUI.svelte"
     import { viewport } from "$lib/shared/state/viewport.svelte"
-    import type { ViewerPagedDocument } from "../viewerDocument"
-    import { renderViewerPageLayers } from "../viewerDocument"
+    import {
+        getViewerDocumentErrorDiagnostic,
+        renderViewerPageLayers,
+        type ViewerPagedDocument,
+    } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import * as m from "$lib/paraglide/messages"
     import { untrack } from "svelte"
@@ -77,7 +80,13 @@
                     .catch((err: any) => {
                         if (controller.signal.aborted) return
                         if (!err.message?.startsWith("Rendering cancelled")) {
-                            console.error(`[ScrollPage] Failed to load page ${pageNo}`, err)
+                            console.error(
+                                `[ScrollPage] Failed to load page ${pageNo}`,
+                                getViewerDocumentErrorDiagnostic(
+                                    err,
+                                    "Unable to render document page",
+                                ),
+                            )
                         }
                         isLoading = false
                     })
@@ -114,7 +123,10 @@
                 textLayerRenderCount += 1
             } catch (err) {
                 if (controller.signal.aborted) return
-                console.error(`[ScrollPage] Failed to render layers for page ${pageNo}`, err)
+                console.error(
+                    `[ScrollPage] Failed to render layers for page ${pageNo}`,
+                    getViewerDocumentErrorDiagnostic(err, "Unable to render document layers"),
+                )
             }
         }
 

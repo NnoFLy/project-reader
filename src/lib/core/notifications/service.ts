@@ -4,19 +4,23 @@ let notificationSequence = 0
 
 export class NotificationServiceImpl implements NotificationService {
     private readonly notifications = new Map<string, Notification>()
+    private readonly handles = new Map<string, Disposable>()
     private readonly listeners = new Set<(notification: Notification) => void>()
     private readonly removalListeners = new Set<(notification: Notification) => void>()
 
     show(notification: Omit<Notification, "id">): Disposable {
         const value = { ...notification, id: `notification-${++notificationSequence}` }
         this.notifications.set(value.id, value)
-        for (const listener of this.listeners) listener(value)
-        return {
+        const handle: Disposable = {
             dispose: () => {
                 if (!this.notifications.delete(value.id)) return
+                this.handles.delete(value.id)
                 for (const listener of this.removalListeners) listener(value)
             },
         }
+        this.handles.set(value.id, handle)
+        for (const listener of this.listeners) listener(value)
+        return handle
     }
 
     info(message: string): Disposable {
@@ -37,6 +41,13 @@ export class NotificationServiceImpl implements NotificationService {
 
     list(): readonly Notification[] {
         return [...this.notifications.values()]
+    }
+
+    dismiss(id: string): boolean {
+        const handle = this.handles.get(id)
+        if (!handle) return false
+        handle.dispose()
+        return true
     }
 
     subscribe(

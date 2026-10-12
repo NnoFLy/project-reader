@@ -117,6 +117,7 @@ export function createViewerOpenCommand(options: {
                                 "Unable to access document file",
                             ),
                         )
+                        viewerFileCapability.requestRelink(fileNode.id)
                         await options.onFileAccessFailure({ bookId: payload.bookId, error })
                         releaseAllFileUrls(acquiredLeases)
                         return
@@ -168,6 +169,7 @@ export function createViewerOpenCommand(options: {
                         return
                     }
                     if (!book.url) {
+                        viewerFileCapability.requestRelink(fileNode.id)
                         await options.onFileAccessFailure({
                             bookId: payload.bookId,
                             error: new Error("File access is unavailable"),

@@ -167,6 +167,7 @@
             const timer = notificationTimers.get(id)
             if (timer !== undefined) window.clearTimeout(timer)
             notificationTimers.delete(id)
+            notificationService.dismiss(id)
             notifications = notifications.filter((current) => current.id !== id)
         }
         const show = (notification: Notification) => {
@@ -179,7 +180,10 @@
         }
         for (const notification of notificationService.list()) show(notification)
         const subscription = notificationService.subscribe(show, (notification) => {
-            dismiss(notification.id)
+            const timer = notificationTimers.get(notification.id)
+            if (timer !== undefined) window.clearTimeout(timer)
+            notificationTimers.delete(notification.id)
+            notifications = notifications.filter((current) => current.id !== notification.id)
         })
         return () => {
             subscription.dispose()

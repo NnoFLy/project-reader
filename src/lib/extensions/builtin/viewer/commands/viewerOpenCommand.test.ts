@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const {
     goto,
     restoreFileAccess,
+    requestRelink,
     waitForRelink,
     setCurrentBook,
     getCurrentBook,
@@ -11,11 +12,13 @@ const {
     viewerFileCapability,
 } = vi.hoisted(() => {
     const restoreFileAccess = vi.fn()
+    const requestRelink = vi.fn()
     const waitForRelink = vi.fn(async () => undefined)
     const nodes: Record<string, any> = {}
     return {
         goto: vi.fn(),
         restoreFileAccess,
+        requestRelink,
         waitForRelink,
         setCurrentBook: vi.fn(),
         getCurrentBook: vi.fn(),
@@ -24,6 +27,7 @@ const {
         viewerFileCapability: {
             nodes,
             restoreFileAccess,
+            requestRelink,
             waitForRelink,
             getFileUrl: vi.fn(),
             getContentGeneration: vi.fn(() => 0),
@@ -312,6 +316,7 @@ describe("viewer.open integration", () => {
         ).resolves.toBeUndefined()
 
         expect(onFileAccessFailure).toHaveBeenCalledWith({ bookId: "book", error })
+        expect(requestRelink).toHaveBeenCalledWith("book")
         expect(diagnostic).toHaveBeenCalledWith("[Viewer] Failed to restore file access:", {
             name: "DocumentError",
             message: "Unable to access document file",

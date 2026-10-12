@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ViewerPagedDocument } from "../viewerDocument"
-    import { renderViewerPageLayers } from "../viewerDocument"
+    import { getViewerDocumentErrorDiagnostic, renderViewerPageLayers } from "../viewerDocument"
     import { settingsStore } from "$lib/core/settings"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { searchStore } from "../stores/searchStore.svelte"
@@ -62,7 +62,10 @@
             renderCount += 1
         } catch (err) {
             if (signal?.aborted) return
-            console.error(`[PageView] Failed to render page layers for page ${pageNo}`, err)
+            console.error(
+                `[PageView] Failed to render page layers for page ${pageNo}`,
+                getViewerDocumentErrorDiagnostic(err, "Unable to render document layers"),
+            )
         }
     }
 

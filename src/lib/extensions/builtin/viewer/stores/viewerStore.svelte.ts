@@ -11,6 +11,7 @@ import {
 } from "../viewerHost"
 import { type Book, fileNodeToBook } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
+import { getViewerDocumentErrorDiagnostic } from "../viewerDocument"
 
 class ViewerStore {
     private files = getViewerLibraryCapability() ?? vfsStore
@@ -43,7 +44,10 @@ class ViewerStore {
             this.currentPage = savedBook.pageNumber || 1
             this.scrollPosition = savedBook.scrollPosition || 0
         } catch (error) {
-            console.error("[ViewerStore] Failed to restore book:", error)
+            console.error(
+                "[ViewerStore] Failed to restore book:",
+                getViewerDocumentErrorDiagnostic(error, "Unable to restore viewer state"),
+            )
         }
     }
 
@@ -337,7 +341,10 @@ class ViewerStore {
             this.persistenceQueue = this.persistenceQueue
                 .then(() => (savedBook ? storage.set("book", savedBook) : storage.delete("book")))
                 .catch((error) => {
-                    console.error("[ViewerStore] Failed to persist book:", error)
+                    console.error(
+                        "[ViewerStore] Failed to persist book:",
+                        getViewerDocumentErrorDiagnostic(error, "Unable to save viewer state"),
+                    )
                 })
         }
 

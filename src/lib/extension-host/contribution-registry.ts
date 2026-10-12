@@ -410,7 +410,14 @@ export class ContributionRegistry {
     }
 
     listViews(slot?: ViewSlot): readonly RegisteredView[] {
-        return [...this.registries.values()].flatMap((value) => value.hostViews.listForHost(slot))
+        return [...this.registries.values()]
+            .flatMap((value) => value.hostViews.listForHost(slot))
+            .sort((left, right) => {
+                const extensionOrder = left.extensionId < right.extensionId ? -1 : 1
+                if (left.extensionId !== right.extensionId) return extensionOrder
+                if (left.id === right.id) return 0
+                return left.id < right.id ? -1 : 1
+            })
     }
 
     listAdapters(): readonly RegisteredDocumentAdapter[] {

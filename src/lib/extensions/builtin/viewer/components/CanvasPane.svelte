@@ -2,8 +2,12 @@
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
-    import type { ViewerPagedDocument } from "../viewerDocument"
-    import { getViewerPageDimensions, renderViewerPageLayers } from "../viewerDocument"
+    import {
+        getViewerDocumentErrorDiagnostic,
+        getViewerPageDimensions,
+        renderViewerPageLayers,
+        type ViewerPagedDocument,
+    } from "../viewerDocument"
     import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "../viewerHost"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { safeStorageGet } from "$lib/shared/state/safeStorage"
@@ -246,7 +250,10 @@
                     fallbackPageDim1 = { width, height }
                 })
                 .catch((err: unknown) => {
-                    console.warn("[CanvasPane] Failed to get page dimension for page 1:", err)
+                    console.warn(
+                        "[CanvasPane] Failed to get page dimension for page 1:",
+                        getViewerDocumentErrorDiagnostic(err, "Unable to read document page"),
+                    )
                 })
             if (p2 && p2 <= pdf!.pageCount) {
                 pdf!
@@ -255,7 +262,10 @@
                         fallbackPageDim2 = { width, height }
                     })
                     .catch((err: unknown) => {
-                        console.warn("[CanvasPane] Failed to get page dimension for page 2:", err)
+                        console.warn(
+                            "[CanvasPane] Failed to get page dimension for page 2:",
+                            getViewerDocumentErrorDiagnostic(err, "Unable to read document page"),
+                        )
                     })
             } else {
                 fallbackPageDim2 = null
@@ -278,7 +288,13 @@
                     if (!controller.signal.aborted) pageDimensions = [...dims]
                 } catch (err) {
                     if (!controller.signal.aborted) {
-                        console.warn("[CanvasPane] Failed to load all page dimensions:", err)
+                        console.warn(
+                            "[CanvasPane] Failed to load all page dimensions:",
+                            getViewerDocumentErrorDiagnostic(
+                                err,
+                                "Unable to read document dimensions",
+                            ),
+                        )
                     }
                 }
             }
@@ -815,7 +831,10 @@
             }
         } catch (err) {
             if (signal?.aborted) return
-            console.error(`[CanvasPane] Failed to render page layers for page ${pageNo}`, err)
+            console.error(
+                `[CanvasPane] Failed to render page layers for page ${pageNo}`,
+                getViewerDocumentErrorDiagnostic(err, "Unable to render document layers"),
+            )
         }
     }
 

@@ -20,6 +20,38 @@ const adapter: DocumentAdapter = {
 }
 
 describe("contribution registries", () => {
+    it("lists views in stable extension and contribution order", () => {
+        const contributions = new ContributionRegistry()
+        const settings = contributions.forExtension(
+            "builtin.settings",
+            createPermissionSet(["views"]),
+        )
+        const library = contributions.forExtension(
+            "builtin.library",
+            createPermissionSet(["views"]),
+        )
+
+        settings.views.registerNative({
+            id: "settings.panel",
+            slot: "workbench.sidebar",
+            title: "Settings",
+            kind: "native",
+            component: {},
+        })
+        library.views.registerNative({
+            id: "library.page",
+            slot: "workbench.panel",
+            title: "Library",
+            kind: "native",
+            component: {},
+        })
+
+        expect(contributions.listViews().map(({ id }) => id)).toEqual([
+            "library.page",
+            "settings.panel",
+        ])
+    })
+
     it("validates namespaces, duplicate IDs, and disposal", () => {
         const registry = new ContributionRegistry().forExtension(
             "builtin.viewer",

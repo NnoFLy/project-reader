@@ -7,7 +7,7 @@ import {
     viewerLibraryCapability as vfsStore,
     viewerLibraryMutationCapability as vfsMutations,
 } from "../viewerHost"
-import type { ViewerPagedDocument } from "../viewerDocument"
+import { getViewerDocumentErrorDiagnostic, type ViewerPagedDocument } from "../viewerDocument"
 import { getSafeStorage } from "$lib/shared/state/safeStorage"
 import { untrack } from "svelte"
 import {
@@ -235,7 +235,10 @@ export class SearchStore {
                         if (attempt === 1) {
                             console.warn(
                                 `[SearchStore] Failed to extract page ${pageNumber} after retry:`,
-                                error,
+                                getViewerDocumentErrorDiagnostic(
+                                    error,
+                                    "Unable to extract document text",
+                                ),
                             )
                             return null
                         }
@@ -262,12 +265,22 @@ export class SearchStore {
             const extractionResults = await Promise.allSettled([extract(), extract()])
             for (const result of extractionResults) {
                 if (result.status === "rejected" && !signal.aborted) {
-                    console.error("[SearchStore] Failed to extract PDF text:", result.reason)
+                    console.error(
+                        "[SearchStore] Failed to extract PDF text:",
+                        getViewerDocumentErrorDiagnostic(
+                            result.reason,
+                            "Unable to extract document text",
+                        ),
+                    )
                 }
             }
             await flushRecords()
         } catch (e) {
-            if (!signal.aborted) console.error("[SearchStore] Failed to index PDF:", e)
+            if (!signal.aborted)
+                console.error(
+                    "[SearchStore] Failed to index PDF:",
+                    getViewerDocumentErrorDiagnostic(e, "Unable to index document text"),
+                )
         } finally {
             if (this.indexingAbortController === controller) {
                 this.indexingAbortController = null
@@ -517,7 +530,10 @@ export class SearchStore {
                 CSS.highlights.set("search-match", new Highlight(...allMatchRanges))
                 CSS.highlights.set("search-match-active", new Highlight(...allActiveRanges))
             } catch (e) {
-                console.error("[SearchStore] Failed to update CSS Highlights:", e)
+                console.error(
+                    "[SearchStore] Failed to update CSS Highlights:",
+                    getViewerDocumentErrorDiagnostic(e, "Unable to update document highlights"),
+                )
             }
         })
     }
