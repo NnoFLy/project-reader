@@ -1,10 +1,5 @@
-import type {
-    AppExtension,
-    DocumentSource as ExtensionDocumentSource,
-    ExtensionManifest,
-} from "../../extension-api"
+import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../extension-api"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
-import type { DocumentSource as PdfDocumentSource } from "$lib/document-model"
 import { pdfDocumentAdapter } from "./pdf"
 import { activateLibrary } from "./library"
 import { activatePrompt } from "./prompt"
@@ -27,34 +22,16 @@ const manifest = (
     contributes,
 })
 
-const pdfExtensionSource = (source: ExtensionDocumentSource): PdfDocumentSource => ({
-    id: source.id,
-    name: source.name ?? source.id,
-    size: source.size ?? 0,
-    mimeType: "application/pdf",
-    read: async (offset, length, signal) => {
-        signal?.throwIfAborted()
-        const bytes = await source.read(offset, length)
-        signal?.throwIfAborted()
-        return bytes.slice().buffer
-    },
-})
-
-const openPdfDocument = async (source: ExtensionDocumentSource) => {
-    const document = await pdfDocumentAdapter.open(pdfExtensionSource(source))
-    return {
-        id: source.id,
-        kind: document.kind,
-        close: () => document.close(),
-    }
+const builtinPdfAdapter: DocumentAdapter = {
+    id: "builtin.pdf.document",
+    extensions: pdfDocumentAdapter.extensions,
+    mimeTypes: pdfDocumentAdapter.mimeTypes,
+    probe: (source, signal) => pdfDocumentAdapter.probe(source, signal),
+    open: (source, signal) => pdfDocumentAdapter.open(source, signal),
 }
 
 const activatePdf = (context: Parameters<AppExtension["activate"]>[0]): void => {
-    context.documents.register({
-        id: "builtin.pdf.document",
-        extensions: ["pdf"],
-        open: openPdfDocument,
-    })
+    context.documents.register(builtinPdfAdapter)
 }
 
 export const BUILTIN_MANIFESTS = [
@@ -75,7 +52,7 @@ export const BUILTIN_MANIFESTS = [
         ],
     }),
     manifest("builtin.pdf", "PDF", [{ type: "onDocumentType", extension: "pdf" }], {
-        adapters: [{ id: "builtin.pdf.document", extensions: ["pdf"], open: openPdfDocument }],
+        adapters: [builtinPdfAdapter],
     }),
 ] as const
 

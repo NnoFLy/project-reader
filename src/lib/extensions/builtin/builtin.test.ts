@@ -35,10 +35,19 @@ describe("built-in contributions", () => {
                 id: "builtin.pdf.document",
                 extensionId: "builtin.pdf",
                 extensions: ["pdf"],
+                mimeTypes: ["application/pdf"],
             }),
         ])
+        expect(host.documentService.adapters.get("builtin.pdf.document")).toBe(
+            host.contributions.listAdapters()[0],
+        )
         expect(BUILTIN_MANIFESTS.find(({ id }) => id === "builtin.pdf")?.activationEvents).toEqual([
             { type: "onDocumentType", extension: "pdf" },
         ])
+
+        await host.dispose()
+
+        expect(host.contributions.listAdapters()).toEqual([])
+        expect(host.documentService.adapters.get("builtin.pdf.document")).toBeUndefined()
     })
 })
