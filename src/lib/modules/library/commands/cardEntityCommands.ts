@@ -1,9 +1,29 @@
 import { tick } from "svelte"
-import type { AppCommandPayloads } from "$lib/modules/commands"
 import { defineCommands } from "$lib/modules/commands"
 import * as m from "$lib/paraglide/messages"
+import {
+    type LibraryBookReadStateTogglePayload,
+    type LibraryCardOpenPayload,
+    type LibraryNodeDeletePayload,
+    type LibraryNodeEditMetadataPayload,
+    type LibraryNodeMovePayload,
+    type LibraryNodePinTogglePayload,
+    type LibraryNodeRelinkPayload,
+    type LibraryNodeRenamePayload,
+    type LibrarySelectionTogglePayload,
+    type LibraryCardCommandPayload,
+    isLibraryBookReadStateTogglePayload,
+    isLibraryCardOpenPayload,
+    isLibraryNodeDeletePayload,
+    isLibraryNodeEditMetadataPayload,
+    isLibraryNodeMovePayload,
+    isLibraryNodePinTogglePayload,
+    isLibraryNodeRelinkPayload,
+    isLibraryNodeRenamePayload,
+    isLibrarySelectionTogglePayload,
+} from "./libraryCommandPayloads"
 
-type WithNodeId<T> = T & { nodeId: string }
+type WithNodeId<T extends { nodeId?: string }> = LibraryCardCommandPayload<T>
 
 export interface LibraryCardCommandContext {
     getNodeId: () => string | undefined
@@ -15,33 +35,15 @@ export interface LibraryCardCommandContext {
     canEditMetadata?: () => boolean
     canRenameFolder?: () => boolean
     setMenuOpen: (open: boolean) => void
-    openNode: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.card.open"]>>,
-    ) => Promise<void>
-    toggleSelection: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.selection.toggle"]>>,
-    ) => Promise<void>
-    moveNode: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.move"]>>,
-    ) => Promise<void>
-    togglePinned?: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.pin.toggle"]>>,
-    ) => Promise<void>
-    deleteNode: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.delete"]>>,
-    ) => Promise<void>
-    editMetadata: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.edit-metadata"]>>,
-    ) => Promise<void>
-    renameFolder?: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.rename"]>>,
-    ) => Promise<void>
-    toggleReadState: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.book.read-state.toggle"]>>,
-    ) => Promise<void>
-    relink: (
-        payload: WithNodeId<NonNullable<AppCommandPayloads["library.node.relink"]>>,
-    ) => Promise<void>
+    openNode: (payload: WithNodeId<LibraryCardOpenPayload>) => Promise<void>
+    toggleSelection: (payload: WithNodeId<LibrarySelectionTogglePayload>) => Promise<void>
+    moveNode: (payload: WithNodeId<LibraryNodeMovePayload>) => Promise<void>
+    togglePinned?: (payload: WithNodeId<LibraryNodePinTogglePayload>) => Promise<void>
+    deleteNode: (payload: WithNodeId<LibraryNodeDeletePayload>) => Promise<void>
+    editMetadata: (payload: WithNodeId<LibraryNodeEditMetadataPayload>) => Promise<void>
+    renameFolder?: (payload: WithNodeId<LibraryNodeRenamePayload>) => Promise<void>
+    toggleReadState: (payload: WithNodeId<LibraryBookReadStateTogglePayload>) => Promise<void>
+    relink: (payload: WithNodeId<LibraryNodeRelinkPayload>) => Promise<void>
 }
 
 export function createLibraryCardCommands(context: LibraryCardCommandContext) {
@@ -74,7 +76,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibrarySelectionTogglePayload | undefined) => {
+                if (!isLibrarySelectionTogglePayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
@@ -89,7 +92,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "navigation",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryCardOpenPayload | undefined) => {
+                if (!isLibraryCardOpenPayload(payload)) return
                 const merged = withNodeId(payload)
                 if (merged) await context.openNode(merged)
             },
@@ -101,7 +105,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodeMovePayload | undefined) => {
+                if (!isLibraryNodeMovePayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
@@ -116,7 +121,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodePinTogglePayload | undefined) => {
+                if (!isLibraryNodePinTogglePayload(payload)) return
                 const merged = withNodeId({
                     ...payload,
                     isPinned: payload?.isPinned ?? !context.isPinned?.(),
@@ -133,7 +139,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodeDeletePayload | undefined) => {
+                if (!isLibraryNodeDeletePayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
@@ -153,7 +160,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
                 !context.isExecutable() ||
                 (context.canRenameFolder?.() === false && context.canEditMetadata?.() === false),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodeRenamePayload | undefined) => {
+                if (!isLibraryNodeRenamePayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
@@ -171,7 +179,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable() || context.canEditMetadata?.() === false,
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodeEditMetadataPayload | undefined) => {
+                if (!isLibraryNodeEditMetadataPayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
@@ -188,7 +197,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable() || context.canToggleReadState?.() === false,
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryBookReadStateTogglePayload | undefined) => {
+                if (!isLibraryBookReadStateTogglePayload(payload)) return
                 const merged = withNodeId({
                     ...payload,
                     markAsRead: payload?.markAsRead ?? !context.isRead(),
@@ -205,7 +215,8 @@ export function createLibraryCardCommands(context: LibraryCardCommandContext) {
             category: "commands",
             disabled: () => !context.isExecutable(),
             palette: true,
-            run: async (payload) => {
+            run: async (payload: LibraryNodeRelinkPayload | undefined) => {
+                if (!isLibraryNodeRelinkPayload(payload)) return
                 const merged = withNodeId(payload)
                 if (!merged) return
                 closeMenu()
