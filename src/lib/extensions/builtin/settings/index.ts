@@ -71,13 +71,17 @@ export function activateSettings(context: ExtensionContext): void {
     for (const setting of settingDefinitions)
         context.settings.register(setting as SettingContribution)
     configureSettings(context.settings, context.storage)
-
 }
 
 export { settingsCommands, settingsStore, configureSettings }
 export { getLocalizedCurrentHref, localizedPath } from "./language/language"
 export { getLanguageName } from "./language/locale"
 export { stepAndClampScale } from "./utils/zoom"
-export { CONSTANTS, DEFAULT_SETTINGS, SETTING_IDS, sanitizeSettings } from "./state/settingsStore.svelte"
+export {
+    CONSTANTS,
+    DEFAULT_SETTINGS,
+    SETTING_IDS,
+    sanitizeSettings,
+} from "./state/settingsStore.svelte"
 export type { AppLocale } from "./language/language"
 export type { Layout, Settings, Theme } from "./state/settingsStore.svelte"

@@ -30,8 +30,8 @@ describe("builtin settings", () => {
 
         settingsStore.theme = "dark"
         await new Promise((resolve) => setTimeout(resolve, 0))
-        expect(await createExtensionStorage(backend, "builtin.settings").get("settings.theme")).toBe(
-            "dark",
-        )
+        expect(
+            await createExtensionStorage(backend, "builtin.settings").get("settings.theme"),
+        ).toBe("dark")
     })
 })

@@ -38,8 +38,7 @@
                 max="500"
                 step="5"
                 value={Math.round(settingsStore.scale * 100)}
-                oninput={(event) =>
-                    (settingsStore.scale = Number(event.currentTarget.value) / 100)}
+                oninput={(event) => (settingsStore.scale = Number(event.currentTarget.value) / 100)}
             />
             <output>{Math.round(settingsStore.scale * 100)}%</output>
         </label>
