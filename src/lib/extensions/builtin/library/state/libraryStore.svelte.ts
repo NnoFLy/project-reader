@@ -54,7 +54,7 @@ function getDocumentService(): VfsDocumentService {
     return installedDocumentService
 }
 
-async function openDocument(source: DocumentSource): Promise<PagedDocument> {
+async function openDocument(source: DocumentSource): Promise<OpenedDocument> {
     const service = await getDocumentService()
     let document: OpenedDocument
     try {
@@ -65,35 +65,23 @@ async function openDocument(source: DocumentSource): Promise<PagedDocument> {
         if (error instanceof Error && error.cause instanceof Error) throw error.cause
         throw error
     }
-    if (document.kind !== "paged") {
-        await service.close(document)
-        throw new Error(`Document adapter returned a non-paged document for ${source.name}`)
-    }
+    // The service remains responsible for the document's complete discriminated union. Keep
+    // the capability paired with every opened document so callers can close either kind.
     documentServices.set(document, service)
     return document
 }
 
-async function openBlobDocument(
-    blob: Blob,
-    id: string,
-    name: string,
-    mimeType?: string,
-): Promise<PagedDocument> {
+async function openBlobDocument(blob: Blob, id: string, name: string): Promise<OpenedDocument> {
     return openDocument(
-        createBlobDocumentSource({ id, name, blob, mimeType: mimeType || blob.type || undefined }),
+        createBlobDocumentSource({ id, name, blob, mimeType: blob.type || undefined }),
     )
 }
 
-async function openUrlDocument(
-    url: string,
-    id: string,
-    name: string,
-    mimeType?: string,
-): Promise<PagedDocument> {
+async function openUrlDocument(url: string, id: string, name: string): Promise<OpenedDocument> {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Failed to read document source (${response.status})`)
     const blob = await response.blob()
-    return openBlobDocument(blob, id, name, mimeType)
+    return openBlobDocument(blob, id, name)
 }
 
 async function closeDocument(document: OpenedDocument | null | undefined): Promise<void> {
@@ -164,7 +152,7 @@ interface ImportGenerations {
     request: number
     relinkEpoch: number
     relinkOwner: number
-    document: PagedDocument | null
+    document: OpenedDocument | null
     tempUrl: string
 }
 
@@ -293,7 +281,7 @@ export class VFSStore {
     private metadataEnrichmentController: AbortController | null = null
     private metadataEnrichmentTask: Promise<void> | null = null
     private metadataEnrichmentIdleId: number | null = null
-    private activeMetadataDocument: PagedDocument | null = null
+    private activeMetadataDocument: OpenedDocument | null = null
     private readonly pendingResourceRollbacks = new Map<
         string,
         { generations: ImportGenerations; parentId: string | null }
@@ -798,11 +786,11 @@ export class VFSStore {
             return
         }
 
-        let doc: PagedDocument | null = null
+        let doc: OpenedDocument | null = null
         try {
-            doc = await openUrlDocument(url, id, node.name, "application/pdf")
+            doc = await openUrlDocument(url, id, node.name)
             this.activeMetadataDocument = doc
-            if (signal.aborted) return
+            if (signal.aborted || doc.kind !== "paged") return
             const { pageCount, author } = doc.metadata
             if (signal.aborted || !this.isCurrentContent(id, generation)) return
             await this.updateFile(
@@ -833,7 +821,7 @@ export class VFSStore {
         }
         this.metadataEnrichmentController?.abort()
         this.metadataEnrichmentController = null
-        void this.activeMetadataDocument?.close()
+        void closeDocument(this.activeMetadataDocument).catch(() => undefined)
     }
 
     configureStorage(storage: StorageNamespace): void {
@@ -972,15 +960,11 @@ export class VFSStore {
                 return ""
             }
             if (fileUrl) {
-                let doc: PagedDocument | null = null
+                let doc: OpenedDocument | null = null
                 try {
-                    doc = await openUrlDocument(
-                        fileUrl,
-                        id,
-                        this.nodes[id]?.name ?? id,
-                        "application/pdf",
-                    )
-                    if (this.disposed) return ""
+                    const node = this.nodes[id]
+                    doc = await openUrlDocument(fileUrl, id, node?.name ?? id)
+                    if (this.disposed || doc.kind !== "paged") return ""
                     const renderedPage = await this.awaitUnlessDisposed(renderDocumentPage(doc, 1))
                     const pageUrl = renderedPage.url
                     if (pageUrl) {
@@ -1066,10 +1050,10 @@ export class VFSStore {
             if (url) this.releaseTemporaryFileUrl(id, url)
             return null
         }
-        let document: PagedDocument | null = null
+        let document: OpenedDocument | null = null
         try {
-            document = await openUrlDocument(url, id, node.name, "application/pdf")
-            return document.pageCount
+            document = await openUrlDocument(url, id, node.name)
+            return document.kind === "paged" ? document.pageCount : null
         } finally {
             await closeDocument(document).catch(() => undefined)
             this.releaseTemporaryFileUrl(id, url)
@@ -1823,19 +1807,6 @@ export class VFSStore {
                 })
                 return []
             }
-            const isPdf =
-                input.name.toLowerCase().endsWith(".pdf") ||
-                (this.isFileSource(input.source) && input.source.type === "application/pdf")
-            if (!isPdf) {
-                const result: ImportResult = {
-                    id: crypto.randomUUID(),
-                    name: input.name,
-                    status: "rejected",
-                }
-                rejected.set(inputIndex, result)
-                if (!this.disposed) callbacks.onFailure?.(result, "validation")
-                return []
-            }
             if (this.isFileSource(input.source)) {
                 try {
                     if (input.source.size > DOCUMENT_SOURCE_LIMITS.maxFileBytes)
@@ -2024,18 +1995,19 @@ export class VFSStore {
         const source = this.importSources.get(job.id)
         if (!source) return null
 
-        let document: PagedDocument | null = null
+        let document: OpenedDocument | null = null
         let tempUrl = ""
         let committed = false
         try {
             const isFile = this.isFileSource(source)
             const file = isFile ? source : await this.awaitUnlessDisposed(source.getFile())
             this.throwIfDisposed()
-            // Parse and inspect every page before writing any persistent state. The loaded
-            // document is transferred to enrichment so valid imports are not parsed twice.
+            // Open the bounded source before writing persistent state. Paged documents receive
+            // the existing render-bound validation; reflowable documents have no page data to
+            // validate or synthesize.
             try {
-                document = await openBlobDocument(file, job.id, job.name, "application/pdf")
-                await validateRenderBounds(document)
+                document = await openBlobDocument(file, job.id, job.name)
+                if (document.kind === "paged") await validateRenderBounds(document)
                 this.throwIfDisposed()
             } catch (error) {
                 if (isDocumentResourceLimitError(error)) throw error
@@ -2201,7 +2173,7 @@ export class VFSStore {
                 void markerTask.finally(() => this.resourceRollbackRetryTasks.delete(markerTask))
             }
         }
-        const awaitPdfOperation = <T>(promise: Promise<T>) =>
+        const awaitDocumentOperation = <T>(promise: Promise<T>) =>
             this.awaitResourceOperation(promise, registerResourceLimit)
         try {
             this.throwIfDisposed()
@@ -2212,47 +2184,67 @@ export class VFSStore {
                     ? source
                     : await this.awaitUnlessDisposed(source.getFile())
                 this.throwIfDisposed()
-                doc = await openBlobDocument(file, job.id, job.name, "application/pdf")
-                await awaitPdfOperation(validateRenderBounds(doc))
+                doc = await openBlobDocument(file, job.id, job.name)
+                if (doc.kind === "paged") await awaitDocumentOperation(validateRenderBounds(doc))
                 this.throwIfDisposed()
             }
 
-            const {
-                pageCount: totalPages,
-                author,
-                title: pdfTitle,
-            } = await awaitPdfOperation(getDocumentDetails(doc))
-            this.throwIfDisposed()
-            await awaitPdfOperation(
-                this.updateFile(
-                    job.id,
-                    {
-                        metadata: {
-                            pageNumber: 1,
-                            totalPages,
-                            author,
-                            pdfTitle: pdfTitle?.trim() || null,
-                        },
-                    },
-                    true,
-                    generations.content,
-                ),
-            )
-            this.throwIfDisposed()
-
-            const renderedPage = await awaitPdfOperation(renderDocumentPage(doc, 1))
-            this.throwIfDisposed()
-            previewUrl = renderedPage.url
-            this.throwIfDisposed()
-            if (previewUrl) {
-                await awaitPdfOperation(
-                    this.savePreview(
+            if (doc.kind === "paged") {
+                const {
+                    pageCount: totalPages,
+                    author,
+                    title: documentTitle,
+                } = await awaitDocumentOperation(getDocumentDetails(doc))
+                this.throwIfDisposed()
+                await awaitDocumentOperation(
+                    this.updateFile(
                         job.id,
-                        previewUrl,
+                        {
+                            metadata: {
+                                pageNumber: 1,
+                                totalPages,
+                                author,
+                                pdfTitle: documentTitle?.trim() || null,
+                            },
+                        },
                         true,
                         generations.content,
-                        generations.preview,
-                        generations.request,
+                    ),
+                )
+                this.throwIfDisposed()
+
+                const renderedPage = await awaitDocumentOperation(renderDocumentPage(doc, 1))
+                this.throwIfDisposed()
+                previewUrl = renderedPage.url
+                this.throwIfDisposed()
+                if (previewUrl) {
+                    await awaitDocumentOperation(
+                        this.savePreview(
+                            job.id,
+                            previewUrl,
+                            true,
+                            generations.content,
+                            generations.preview,
+                            generations.request,
+                        ),
+                    )
+                    this.throwIfDisposed()
+                }
+            } else {
+                // Reflowable documents have no page count or page bitmap. Preserve only their
+                // generic metadata instead of inventing paged values or a fake preview.
+                const { author, title } = doc.metadata
+                await awaitDocumentOperation(
+                    this.updateFile(
+                        job.id,
+                        {
+                            metadata: {
+                                author: author ?? null,
+                                pdfTitle: typeof title === "string" ? title.trim() || null : null,
+                            },
+                        },
+                        true,
+                        generations.content,
                     ),
                 )
                 this.throwIfDisposed()
@@ -3023,10 +3015,11 @@ export class VFSStore {
                 fileObj,
                 id,
                 this.nodes[id]?.name ?? fileObj.name,
-                "application/pdf",
             )
             try {
-                await this.awaitUnlessDisposed(validateRenderBounds(candidateDocument))
+                if (candidateDocument.kind === "paged") {
+                    await this.awaitUnlessDisposed(validateRenderBounds(candidateDocument))
+                }
             } finally {
                 await closeDocument(candidateDocument).catch(() => undefined)
             }
