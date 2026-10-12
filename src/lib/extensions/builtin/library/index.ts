@@ -1,4 +1,5 @@
 import type { AnyCommandDefinition } from "./commands/commands.types"
+import type { HostCommandMetadata } from "$lib/core/commands"
 import type { CommandContribution, ExtensionContext } from "$lib/extension-api"
 import LibraryPage from "./LibraryPage.svelte"
 import { createLibraryCommands } from "./commands/libraryCommands"
@@ -60,7 +61,7 @@ export async function activateLibrary(
     const commands = createLibraryCommands(libraryUI)
     const registrations = Object.values(commands).map((value) => {
         const command = value as AnyCommandDefinition
-        const contribution: CommandContribution = {
+        const contribution = {
             id: command.id,
             label: command.label,
             keybinding: command.keymap
@@ -68,9 +69,21 @@ export async function activateLibrary(
                     ? command.keymap
                     : [command.keymap]
                 : undefined,
-            execute: (payload) => command.run(payload as never),
+            execute: (payload: unknown) => command.run(payload as never),
             isEnabled: () => !command.disabled?.(),
-        }
+            ...(command.allowInInputs === undefined
+                ? {}
+                : { allowInInputs: command.allowInInputs }),
+            ...(command.preventDefault === undefined
+                ? {}
+                : { preventDefault: command.preventDefault }),
+            ...(command.shouldHandleKey === undefined
+                ? {}
+                : { shouldHandleKey: command.shouldHandleKey }),
+            ...(command.keyboardPayload === undefined
+                ? {}
+                : { keyboardPayload: command.keyboardPayload }),
+        } satisfies CommandContribution & HostCommandMetadata
         return context.commands.register(contribution)
     })
     context.lifecycle.onDispose(async () => {

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { getContext, onMount } from "svelte"
     import type { Component } from "svelte"
+    import type { Notification } from "$lib/extension-api"
     import { version } from "$app/environment"
     import { updated } from "$app/state"
     import { afterNavigate } from "$app/navigation"
@@ -140,6 +141,7 @@
     let promptViews = $derived(
         ready ? hostContext.application.host.contributions.listViews("prompt.result") : [],
     )
+    let notifications = $state<Notification[]>([])
 
     afterNavigate(({ to }) => {
         if (!to) return
@@ -157,6 +159,16 @@
     onMount(() => {
         appUpdate.initialize()
         if (updated.current) appUpdate.markAvailable()
+
+        const notificationService = hostContext.application.host.notifications
+        notifications = [...notificationService.list()]
+        const subscription = notificationService.subscribe((notification) => {
+            notifications = [
+                ...notifications.filter((current) => current.id !== notification.id),
+                notification,
+            ]
+        })
+        return () => subscription.dispose()
     })
 </script>
 
@@ -170,6 +182,21 @@
                 <View />
             {/if}
         {/each}
+
+        {#if notifications.length > 0}
+            <section class="host-notifications" aria-label="Notifications">
+                {#each notifications as notification (notification.id)}
+                    <div
+                        class={`host-notification host-notification-${notification.level}`}
+                        role={notification.level === "error" ? "alert" : "status"}
+                        aria-live={notification.level === "error" ? "assertive" : "polite"}
+                        aria-atomic="true"
+                    >
+                        <span>{notification.message}</span>
+                    </div>
+                {/each}
+            </section>
+        {/if}
     </div>
 </div>
 
@@ -177,4 +204,36 @@
     @import "$lib/shared/styles/variables.css";
     @import "$lib/shared/styles/typography.css";
     @import "$lib/shared/styles/global.css";
+
+    .host-notifications {
+        position: fixed;
+        z-index: 1000;
+        inset: auto 1.25rem 1.25rem auto;
+        display: grid;
+        gap: 0.65rem;
+        width: min(24rem, calc(100vw - 2.5rem));
+        pointer-events: none;
+    }
+
+    .host-notification {
+        border: 1px solid hsl(220 20% 35% / 0.8);
+        border-radius: 0.75rem;
+        padding: 0.8rem 1rem;
+        color: hsl(210 30% 96%);
+        background: hsl(222 26% 15% / 0.96);
+        box-shadow: 0 0.75rem 2rem hsl(220 40% 4% / 0.32);
+        font: 0.875rem/1.4 var(--font-sans, sans-serif);
+    }
+
+    .host-notification-success {
+        border-color: hsl(145 55% 42% / 0.9);
+    }
+
+    .host-notification-warning {
+        border-color: hsl(38 85% 52% / 0.9);
+    }
+
+    .host-notification-error {
+        border-color: hsl(0 72% 58% / 0.9);
+    }
 </style>

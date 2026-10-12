@@ -3,7 +3,11 @@
     import AppChrome from "./AppChrome.svelte"
     import { createBuiltinApplication } from "./bootstrap"
     import { APP_HOST_CONTEXT, type AppHostContext } from "./hostContext"
-    import { findKeybindingConflicts, normalizeKeybinding } from "$lib/core/commands"
+    import {
+        findKeybindingConflicts,
+        normalizeKeybinding,
+        resolveHostKeybindings,
+    } from "$lib/core/commands"
 
     let { children } = $props()
     const application = createBuiltinApplication()
@@ -38,7 +42,7 @@
     }
 
     onMount(() => {
-        const handleKeydown = (event: KeyboardEvent) => {
+        const handleKeydown = async (event: KeyboardEvent) => {
             if (!ready) return
             const candidates = eventKeyCandidates(event)
             const bindings = application.host.commands
@@ -48,29 +52,35 @@
                         when?.() !== false && candidates.has(normalizeKeybinding(keybinding)),
                 )
             if (bindings.length === 0) return
-            if (bindings.length > 1) {
-                const conflict = findKeybindingConflicts(bindings)[0]
+
+            const enabledBindings = await resolveHostKeybindings(bindings, event)
+            if (enabledBindings.length === 0) return
+            if (enabledBindings.length > 1) {
+                const conflict = findKeybindingConflicts(enabledBindings)[0]
                 const description = conflict
                     ? `${conflict[0]} (${conflict[1]
                           .map(({ extensionId, commandId }) => `${extensionId}:${commandId}`)
                           .join(", ")})`
-                    : bindings
+                    : enabledBindings
                           .map(({ extensionId, commandId }) => `${extensionId}:${commandId}`)
                           .sort()
                           .join(", ")
                 console.error(`[AppShell] Ignoring conflicting keybinding: ${description}`)
-                event.preventDefault()
-                event.stopImmediatePropagation()
                 return
             }
-            const binding = bindings[0]
-            // Host dispatch is capture-phase so a local viewer/window handler cannot execute the
-            // same command without the host payload, enabled, and permission checks.
-            event.preventDefault()
+
+            const binding = enabledBindings[0]
+            // Stop other listeners now that this binding has passed validation, but wait to
+            // cancel the browser default until the command itself is accepted.
             event.stopImmediatePropagation()
-            void application.host.commands.execute(binding.commandId).catch((error) => {
+            try {
+                const payload = binding.keyboardPayload?.(event)
+                await application.host.commands.execute(binding.commandId, payload, event)
+                if (binding.preventDefault !== false) event.preventDefault()
+                event.stopImmediatePropagation()
+            } catch (error) {
                 console.error(`[AppShell] Failed to execute ${binding.commandId}`, error)
-            })
+            }
         }
         window.addEventListener("keydown", handleKeydown, { capture: true })
         void application.start().then(() => (ready = true))

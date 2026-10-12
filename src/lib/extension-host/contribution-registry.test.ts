@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import type { DocumentAdapter } from "../extension-api"
 import { createPermissionSet } from "../extension-api"
 import { MemoryStorageBackend, createExtensionStorage } from "../core/storage"
+import type { HostCommandMetadata } from "../core/commands"
 import { ContributionRegistry } from "./contribution-registry"
 
 const adapter: DocumentAdapter = {
@@ -131,6 +132,42 @@ describe("contribution registries", () => {
         expect(contributions.globalCommands.listKeybindings()).toEqual([
             { commandId: "viewer.open", keybinding: "ctrl+o", extensionId: "builtin.viewer" },
             { commandId: "viewer.open", keybinding: "meta+o", extensionId: "builtin.viewer" },
+        ])
+    })
+
+    it("keeps command keyboard metadata on host bindings", () => {
+        const contributions = new ContributionRegistry()
+        const viewer = contributions.forExtension(
+            "builtin.viewer",
+            createPermissionSet(["commands"]),
+        )
+        const shouldHandleKey = vi.fn(() => true)
+        const keyboardPayload = vi.fn(() => ({ repeated: false }))
+        viewer.commands.register({
+            id: "viewer.open",
+            label: "Open",
+            keybinding: ["ctrl+o"],
+            execute: () => undefined,
+            isEnabled: () => true,
+            ...({
+                allowInInputs: true,
+                preventDefault: false,
+                shouldHandleKey,
+                keyboardPayload,
+            } satisfies HostCommandMetadata),
+        })
+
+        expect(contributions.globalCommands.listKeybindings()).toEqual([
+            {
+                commandId: "viewer.open",
+                keybinding: "ctrl+o",
+                extensionId: "builtin.viewer",
+                allowInInputs: true,
+                preventDefault: false,
+                shouldHandleKey,
+                keyboardPayload,
+                isEnabled: expect.any(Function),
+            },
         ])
     })
 

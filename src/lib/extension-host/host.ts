@@ -16,7 +16,7 @@ import {
     type PermissionSet,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
-import type { HostCommandFacade } from "../core/commands"
+import { normalizeKeybinding, type HostCommandFacade } from "../core/commands"
 import { NotificationServiceImpl } from "../core/notifications"
 import { createExtensionStorage, MemoryStorageBackend, type StorageBackend } from "../core/storage"
 import { ContributionRegistry } from "./contribution-registry"
@@ -357,7 +357,7 @@ function assertValidKeybinding(keybinding: readonly string[], commandId: string)
 }
 
 function keybindingKey(keybinding: readonly string[]): string {
-    return keybinding.map((part) => part.trim().toLowerCase()).join("+")
+    return normalizeKeybinding(keybinding.join("+"))
 }
 
 function assertUniqueExtensionNamespaces(manifests: readonly ExtensionManifest[]): void {

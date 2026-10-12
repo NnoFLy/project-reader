@@ -11,7 +11,15 @@ import {
     type RegisteredCommand,
 } from "../../extension-api"
 
-export interface HostKeybinding {
+export interface HostCommandMetadata {
+    readonly allowInInputs?: boolean
+    readonly preventDefault?: boolean
+    readonly shouldHandleKey?: (event: KeyboardEvent) => boolean
+    readonly keyboardPayload?: (event: KeyboardEvent) => unknown
+    readonly isEnabled?: (context?: unknown) => boolean | Promise<boolean>
+}
+
+export interface HostKeybinding extends HostCommandMetadata {
     readonly commandId: string
     readonly keybinding: string
     readonly when?: (context?: unknown) => boolean
@@ -37,6 +45,35 @@ export function normalizeKeybinding(keybinding: string): string {
         .filter(Boolean)
         .sort()
         .join("+")
+}
+
+export async function resolveHostKeybindings(
+    bindings: readonly HostKeybinding[],
+    event: KeyboardEvent,
+): Promise<readonly HostKeybinding[]> {
+    const focusedInput = isFocusedInputTarget(event.target)
+    const eligible: HostKeybinding[] = []
+    for (const binding of bindings) {
+        if (focusedInput && binding.allowInInputs !== true) continue
+        if (binding.shouldHandleKey && !binding.shouldHandleKey(event)) continue
+        if (binding.isEnabled && !(await binding.isEnabled(event))) continue
+        eligible.push(binding)
+    }
+    return eligible
+}
+
+function isFocusedInputTarget(target: EventTarget | null): boolean {
+    if (!target || typeof target !== "object") return false
+    const element = target as {
+        tagName?: string
+        isContentEditable?: boolean
+        closest?: (selector: string) => unknown
+    }
+    return (
+        ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName?.toUpperCase() ?? "") ||
+        element.isContentEditable === true ||
+        Boolean(element.closest?.("input, textarea, select, [contenteditable='true']"))
+    )
 }
 
 export function findKeybindingConflicts(
@@ -138,9 +175,10 @@ export class CommandRegistryImpl implements CommandRegistry {
     }
 
     listKeybindings(): readonly HostKeybinding[] {
-        const registered = [...this.keybindings.entries()].flatMap(([, bindings]) =>
+        const registered = [...this.keybindings.entries()].flatMap(([commandId, bindings]) =>
             bindings.map((binding) => ({
                 ...binding,
+                ...metadataForCommand(this.commands.get(commandId)),
                 keybinding: binding.keybinding.join("+"),
                 extensionId: this.extensionId,
             })),
@@ -149,6 +187,7 @@ export class CommandRegistryImpl implements CommandRegistry {
             (command.keybinding ?? []).map((keybinding) => ({
                 commandId: command.id,
                 keybinding,
+                ...metadataForCommand(command),
                 extensionId: this.extensionId,
             })),
         )
@@ -173,6 +212,24 @@ export class CommandRegistryImpl implements CommandRegistry {
 
     private assertUsable(): void {
         if (this.disposed) throw new Error(`Command registry for ${this.extensionId} is disposed`)
+    }
+}
+
+function metadataForCommand(command: RegisteredCommand | undefined): HostCommandMetadata {
+    if (!command) return {}
+    const metadata = command as RegisteredCommand & HostCommandMetadata
+    return {
+        ...(metadata.allowInInputs === undefined ? {} : { allowInInputs: metadata.allowInInputs }),
+        ...(metadata.preventDefault === undefined
+            ? {}
+            : { preventDefault: metadata.preventDefault }),
+        ...(metadata.shouldHandleKey === undefined
+            ? {}
+            : { shouldHandleKey: metadata.shouldHandleKey }),
+        ...(metadata.keyboardPayload === undefined
+            ? {}
+            : { keyboardPayload: metadata.keyboardPayload }),
+        ...(metadata.isEnabled === undefined ? {} : { isEnabled: metadata.isEnabled }),
     }
 }
 
