@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { AppExtension, DocumentAdapter } from "../extension-api"
 import { DocumentService } from "../core/documents"
 import { ExtensionHost } from "./host"
@@ -107,6 +107,33 @@ describe("extension host lifecycle", () => {
         expect(host.dispose()).toBe(first)
         await first
         expect(() => register?.()).toThrow("disposed")
+    })
+
+    it("closes documents through the document service during idempotent disposal", async () => {
+        const documentService = new DocumentService()
+        const events: string[] = []
+        const closeAll = vi.spyOn(documentService, "closeAll").mockImplementation(async () => {
+            events.push("documents")
+        })
+        const host = new ExtensionHost({
+            extensions: [
+                extension("builtin.viewer", ({ lifecycle }) => {
+                    lifecycle.onDispose(() => {
+                        events.push("extension")
+                    })
+                }),
+            ],
+            documentService,
+        })
+        await host.activate("builtin.viewer")
+
+        const first = host.dispose()
+        expect(host.dispose()).toBe(first)
+        await first
+
+        expect(closeAll).toHaveBeenCalledTimes(1)
+        expect(events).toEqual(["documents", "extension"])
+        expect(documentService.openDocumentCount).toBe(0)
     })
 
     it("rejects duplicate manifest keybindings and unknown permissions", () => {

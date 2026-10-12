@@ -179,16 +179,23 @@ export class ExtensionHost {
         if (this.disposal) return this.disposal
         this.disposing = true
         const runtimes = [...this.runtimes.values()]
-        this.disposal = Promise.all(
-            runtimes.map((runtime) =>
-                this.enqueue(runtime, async () => {
-                    runtime.state = "disposed"
-                    await runtime.lifecycle.dispose()
-                    this.contributions.disposeExtension(runtime.extension.manifest.id)
-                }),
+        this.disposal = Promise.allSettled([
+            this.documentService.closeAll(),
+            Promise.all(
+                runtimes.map((runtime) =>
+                    this.enqueue(runtime, async () => {
+                        runtime.state = "disposed"
+                        await runtime.lifecycle.dispose()
+                        this.contributions.disposeExtension(runtime.extension.manifest.id)
+                    }),
+                ),
             ),
-        ).then(() => {
+        ]).then((results) => {
             this.contributions.dispose()
+            const rejected = results.find(
+                (result): result is PromiseRejectedResult => result.status === "rejected",
+            )
+            if (rejected) throw rejected.reason
         })
         return this.disposal
     }
