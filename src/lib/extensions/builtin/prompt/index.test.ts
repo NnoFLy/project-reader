@@ -1,27 +1,60 @@
 import { describe, expect, it } from "vitest"
-import { InvalidCommandPayloadError } from "$lib/extension-api"
-import { getPromptCommandRegistry } from "$lib/modules/prompt"
-import { createBuiltinHost } from "../index"
+import { CommandRegistryImpl } from "$lib/core/commands"
+import {
+    InvalidCommandPayloadError,
+    type ExtensionContext,
+    type Lifecycle,
+    type ViewRegistry,
+} from "$lib/extension-api"
+import { activatePrompt } from "./index"
+
+function createPromptContext() {
+    const commands = new CommandRegistryImpl("builtin.prompt")
+    const disposeListeners: Array<() => void | Promise<void>> = []
+    const lifecycle: Lifecycle = {
+        state: "enabled",
+        onDispose(listener) {
+            disposeListeners.push(listener)
+            return { dispose: () => undefined }
+        },
+        isDisposed: () => false,
+    }
+    const views: ViewRegistry = {
+        register: () => ({ dispose: () => undefined }),
+        registerNative: () => ({ dispose: () => undefined }),
+        get: () => undefined,
+        list: () => [],
+    }
+    const context = {
+        extension: { id: "builtin.prompt", name: "Prompt", version: "0.0.1", engine: ">=0.0.1" },
+        commands,
+        views,
+        settings: {} as ExtensionContext["settings"],
+        documents: {} as ExtensionContext["documents"],
+        storage: {} as ExtensionContext["storage"],
+        notifications: {} as ExtensionContext["notifications"],
+        lifecycle,
+    } satisfies ExtensionContext
+    return {
+        context,
+        async dispose() {
+            await Promise.all(disposeListeners.map((listener) => listener()))
+            commands.dispose()
+        },
+    }
+}
 
 describe("builtin.prompt activation", () => {
-    it("registers prompt commands through the extension registry", async () => {
-        const host = createBuiltinHost()
-        await host.start()
+    it("registers prompt commands through the extension command contract", async () => {
+        const { context, dispose } = createPromptContext()
+        activatePrompt(context)
 
-        const commands = host.contributions
-            .listCommands()
-            .filter(({ id }) => id.startsWith("prompt."))
-        expect(commands.map(({ id }) => id)).toEqual(["prompt.open", "prompt.close"])
-        expect(getPromptCommandRegistry()).toBeDefined()
-
+        expect(context.commands.list().map(({ id }) => id)).toEqual(["prompt.open", "prompt.close"])
         await expect(
-            host.contributions.listCommands()[0]?.validatePayload?.({ initialQuery: 1 }),
-        ).toBe(false)
-        await expect(
-            getPromptCommandRegistry()?.execute("prompt.open", { initialQuery: 1 }),
+            context.commands.execute("prompt.open", { initialQuery: 1 }),
         ).rejects.toBeInstanceOf(InvalidCommandPayloadError)
 
-        await host.dispose()
-        expect(getPromptCommandRegistry()).toBeUndefined()
+        await dispose()
+        expect(context.commands.list()).toEqual([])
     })
 })
