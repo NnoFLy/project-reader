@@ -16,9 +16,9 @@ import type {
 } from "./vfsStore.types"
 import { FolderNameError } from "./vfsStore.types"
 import { Database } from "../db/db"
-import type { DocumentService } from "$lib/core/documents"
-import { DocumentService as DocumentServiceImpl } from "$lib/core/documents"
-import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "$lib/core/files"
+import type { DocumentService } from "../../../core/documents"
+import { DocumentService as DocumentServiceImpl } from "../../../core/documents"
+import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
 import type {
     DocumentSource,
     OpenedDocument,
