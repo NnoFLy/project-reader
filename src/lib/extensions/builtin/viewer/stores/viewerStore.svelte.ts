@@ -128,7 +128,7 @@ class ViewerStore {
             window.removeEventListener("beforeunload", this.flush)
             this.listening = false
         }
-        if (this.book?.url) this.mutations.revokeFileUrl(this.book.id, this.book.url)
+        if (this.book?.url) this.mutations.releaseFileUrl(this.book.id, this.book.url)
         for (const id of this.deferredStaleUrls.keys()) this.flushDeferredStaleUrls(id)
         this.pendingBookSwitches.clear()
     }
@@ -351,8 +351,7 @@ class ViewerStore {
     private releaseStaleUrl(id: string, url: string) {
         // Each switch owns the lease returned by getFileUrl. Release stale switches
         // immediately even when another switch for the same book is still pending.
-        if (!this.mutations.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
-            URL.revokeObjectURL(url)
+        this.mutations.releaseFileUrl(id, url)
     }
 
     private flushDeferredStaleUrls(id: string) {
@@ -361,8 +360,7 @@ class ViewerStore {
         this.deferredStaleUrls.delete(id)
         for (const { url } of deferred) {
             if (!this.disposed && this.book?.id === id && this.book.url === url) continue
-            if (!this.mutations.revokeFileUrl(id, url) && this.files.fileUrls[id] === url)
-                URL.revokeObjectURL(url)
+            this.mutations.releaseFileUrl(id, url)
         }
     }
 

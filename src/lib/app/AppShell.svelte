@@ -3,6 +3,7 @@
     import AppChrome from "./AppChrome.svelte"
     import { createBuiltinApplication } from "./bootstrap"
     import { APP_HOST_CONTEXT, type AppHostContext } from "./hostContext"
+    import { findKeybindingConflicts, normalizeKeybinding } from "$lib/core/commands"
 
     let { children } = $props()
     const application = createBuiltinApplication()
@@ -19,19 +20,6 @@
     }
     setContext(APP_HOST_CONTEXT, hostContext)
     setContext("app-host-services", hostContext.services)
-
-    function normalizeKeybinding(keybinding: string): string {
-        const isMac =
-            typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/i.test(navigator.platform)
-        return keybinding
-            .trim()
-            .toLowerCase()
-            .split("+")
-            .map((part) => (part === "mod" ? (isMac ? "meta" : "ctrl") : part.trim()))
-            .filter(Boolean)
-            .sort()
-            .join("+")
-    }
 
     function eventKeyCandidates(event: KeyboardEvent): Set<string> {
         const modifiers = [
@@ -53,22 +41,41 @@
         const handleKeydown = (event: KeyboardEvent) => {
             if (!ready) return
             const candidates = eventKeyCandidates(event)
-            const binding = application.host.commands
+            const bindings = application.host.commands
                 .listKeybindings()
-                .find(
+                .filter(
                     ({ keybinding, when }) =>
                         when?.() !== false && candidates.has(normalizeKeybinding(keybinding)),
                 )
-            if (!binding) return
+            if (bindings.length === 0) return
+            if (bindings.length > 1) {
+                const conflict = findKeybindingConflicts(bindings)[0]
+                const description = conflict
+                    ? `${conflict[0]} (${conflict[1]
+                          .map(({ extensionId, commandId }) => `${extensionId}:${commandId}`)
+                          .join(", ")})`
+                    : bindings
+                          .map(({ extensionId, commandId }) => `${extensionId}:${commandId}`)
+                          .sort()
+                          .join(", ")
+                console.error(`[AppShell] Ignoring conflicting keybinding: ${description}`)
+                event.preventDefault()
+                event.stopImmediatePropagation()
+                return
+            }
+            const binding = bindings[0]
+            // Host dispatch is capture-phase so a local viewer/window handler cannot execute the
+            // same command without the host payload, enabled, and permission checks.
             event.preventDefault()
+            event.stopImmediatePropagation()
             void application.host.commands.execute(binding.commandId).catch((error) => {
                 console.error(`[AppShell] Failed to execute ${binding.commandId}`, error)
             })
         }
-        window.addEventListener("keydown", handleKeydown)
+        window.addEventListener("keydown", handleKeydown, { capture: true })
         void application.start().then(() => (ready = true))
         return () => {
-            window.removeEventListener("keydown", handleKeydown)
+            window.removeEventListener("keydown", handleKeydown, { capture: true })
             void application.stop()
         }
     })

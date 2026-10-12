@@ -14,7 +14,6 @@ export interface ViewerPromptCapability {
 export interface ViewerLibraryCapability {
     readonly nodes: Readonly<Record<string, ViewerFileNode | undefined>>
     readonly allFiles: readonly ViewerFileNode[]
-    readonly fileUrls: Readonly<Record<string, string>>
     readonly isLockedMap: Readonly<Record<string, boolean>>
     readonly initialized: boolean
     readonly isDisposed: boolean
@@ -37,7 +36,8 @@ export interface ViewerLibraryCapability {
 
 /** Viewer writes are explicitly separate from the read-only library state capability. */
 export interface ViewerLibraryMutationCapability {
-    revokeFileUrl(id: string, url?: string): boolean
+    /** Release the viewer's lease; URL lifetime remains host-owned. */
+    releaseFileUrl(id: string, url?: string): boolean
     setActiveFileId(id: string | null): void
     serializeBookMutation<T>(id: string, mutation: () => Promise<T>): Promise<T | undefined>
     serializeMetadataMutation<T>(mutation: () => Promise<T>): Promise<T | undefined>
@@ -101,13 +101,13 @@ export interface ViewerFileNode {
 }
 
 export interface ViewerFileCapability {
-    nodes: Record<string, ViewerFileNode | undefined>
-    fileUrls: Record<string, string | undefined>
-    isLockedMap: Record<string, boolean | undefined>
+    readonly nodes: Readonly<Record<string, ViewerFileNode | undefined>>
+    readonly isLockedMap: Readonly<Record<string, boolean | undefined>>
     getFileUrl(id: string): Promise<string | undefined>
     restoreFileAccess(id: string): Promise<string | undefined>
     waitForRelink(id: string): Promise<void>
-    revokeFileUrl(id: string, url: string): boolean
+    /** Release the viewer's lease; URL lifetime remains host-owned. */
+    releaseFileUrl(id: string, url: string): boolean
     getContentGeneration(id: string): number
     isCurrentContent(id: string, generation: number): boolean
     isCurrentFileUrl(id: string, url: string, generation?: number): boolean
@@ -116,12 +116,11 @@ export interface ViewerFileCapability {
 
 const unavailable: ViewerFileCapability = {
     nodes: {},
-    fileUrls: {},
     isLockedMap: {},
     getFileUrl: async () => undefined,
     restoreFileAccess: async () => undefined,
     waitForRelink: async () => undefined,
-    revokeFileUrl: () => false,
+    releaseFileUrl: () => false,
     getContentGeneration: () => 0,
     isCurrentContent: () => false,
     isCurrentFileUrl: () => false,

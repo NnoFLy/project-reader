@@ -29,8 +29,7 @@ const {
             getContentGeneration: vi.fn(() => 0),
             isCurrentContent: vi.fn(() => true),
             isCurrentFileUrl: vi.fn(() => true),
-            revokeFileUrl: vi.fn(() => false),
-            fileUrls: {} as Record<string, string>,
+            releaseFileUrl: vi.fn(() => false),
             clearForwardHistory: vi.fn(),
         },
     }
@@ -65,13 +64,10 @@ describe("viewer.open integration", () => {
         viewerFileCapability.isCurrentContent.mockReturnValue(true)
         viewerFileCapability.isCurrentFileUrl.mockReturnValue(true)
         for (const id of Object.keys(nodes)) delete nodes[id]
-        for (const id of Object.keys(viewerFileCapability.fileUrls))
-            delete viewerFileCapability.fileUrls[id]
     })
 
     it("opens an accessible file and navigates only after the viewer accepts it", async () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "blob:book", isLocked: false }
-        viewerFileCapability.fileUrls.book = "blob:book"
         const onFileAccessFailure = vi.fn()
 
         await createViewerOpenCommand({ onFileAccessFailure }).run({ bookId: "book" })
@@ -122,7 +118,6 @@ describe("viewer.open integration", () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "old", isLocked: true }
         restoreFileAccess.mockImplementation(async () => {
             nodes.book = { ...nodes.book, url: "restored", isLocked: false }
-            viewerFileCapability.fileUrls.book = "restored"
             return "restored"
         })
 
@@ -141,11 +136,11 @@ describe("viewer.open integration", () => {
             return "blob:restored"
         })
         viewerFileCapability.isCurrentFileUrl.mockReturnValue(false)
-        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.releaseFileUrl.mockReturnValue(true)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
-        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("book", "blob:restored")
+        expect(viewerFileCapability.releaseFileUrl).toHaveBeenCalledWith("book", "blob:restored")
         expect(setCurrentBook).not.toHaveBeenCalled()
     })
 
@@ -160,12 +155,12 @@ describe("viewer.open integration", () => {
                 nodes.book = { ...nodes.book, url: "blob:second", isLocked: false }
                 return "blob:second"
             })
-        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.releaseFileUrl.mockReturnValue(true)
 
         await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run({ bookId: "book" })
 
         expect(restoreFileAccess).toHaveBeenCalledTimes(2)
-        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("book", "blob:first")
+        expect(viewerFileCapability.releaseFileUrl).toHaveBeenCalledWith("book", "blob:first")
         expect(setCurrentBook).toHaveBeenCalledWith(
             expect.objectContaining({ id: "book", url: "blob:second" }),
         )
@@ -208,7 +203,7 @@ describe("viewer.open integration", () => {
                     resolveFirst = resolve
                 }),
         )
-        viewerFileCapability.revokeFileUrl.mockReturnValue(true)
+        viewerFileCapability.releaseFileUrl.mockReturnValue(true)
         nodes.first = { id: "first", type: "file", name: "First", isLocked: false }
         nodes.second = {
             id: "second",
@@ -225,7 +220,7 @@ describe("viewer.open integration", () => {
         resolveFirst?.("blob:first")
         await firstOpen
 
-        expect(viewerFileCapability.revokeFileUrl).toHaveBeenCalledWith("first", "blob:first")
+        expect(viewerFileCapability.releaseFileUrl).toHaveBeenCalledWith("first", "blob:first")
     })
 
     it("keeps the transferred shared URL lease when an older same-book open becomes stale", async () => {
@@ -250,7 +245,7 @@ describe("viewer.open integration", () => {
 
         // Acceptance transferred the older operation's lease to the active viewer. A newer
         // same-book reuse must not let the stale older command release that lease.
-        expect(viewerFileCapability.revokeFileUrl).not.toHaveBeenCalledWith("book", "blob:shared")
+        expect(viewerFileCapability.releaseFileUrl).not.toHaveBeenCalledWith("book", "blob:shared")
     })
 
     it("does not revoke the active URL when an older accepted open loses to reuse failure", async () => {
@@ -294,7 +289,6 @@ describe("viewer.open integration", () => {
             )
             .mockImplementationOnce(async () => {
                 nodes.book = { ...nodes.book, url: "restored", isLocked: false }
-                viewerFileCapability.fileUrls.book = "restored"
                 return "restored"
             })
 

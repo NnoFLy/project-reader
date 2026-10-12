@@ -12,6 +12,7 @@ vi.mock("../viewerHost", async () => {
         setActiveFileId: (id: string | null) => {
             vfsStore.activeFileId = id
         },
+        releaseFileUrl: (id: string, url?: string) => vfsStore.revokeFileUrl(id, url),
     })
     return {
         ...actual,
@@ -60,8 +61,8 @@ describe("ViewerStore URL synchronization", () => {
         vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
         vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
         vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        const revokeFileUrl = vi
-            .spyOn(vfsStore as any, "revokeFileUrl")
+        const releaseFileUrl = vi
+            .spyOn(vfsStore as any, "releaseFileUrl")
             .mockImplementation(() => true)
         ;(vfsStore as any).nodes = {
             old: { ...bookNode, id: "old" },
@@ -94,7 +95,7 @@ describe("ViewerStore URL synchronization", () => {
         await syncing
 
         expect(viewerStore.getCurrentBook()).toMatchObject({ id: "next", url: "blob:next" })
-        expect(revokeFileUrl).toHaveBeenCalledWith("old", "blob:old")
+        expect(releaseFileUrl).toHaveBeenCalledWith("old", "blob:old")
     })
 
     it("does not update metadata after disposal when defaults are omitted", async () => {

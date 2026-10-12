@@ -25,6 +25,44 @@ export interface HostCommandFacade {
     execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown>
 }
 
+/** Normalize host keybindings before comparing declarations or keyboard events. */
+export function normalizeKeybinding(keybinding: string): string {
+    const isMac =
+        typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/i.test(navigator.platform)
+    return keybinding
+        .trim()
+        .toLowerCase()
+        .split("+")
+        .map((part) => (part.trim() === "mod" ? (isMac ? "meta" : "ctrl") : part.trim()))
+        .filter(Boolean)
+        .sort()
+        .join("+")
+}
+
+export function findKeybindingConflicts(
+    bindings: readonly HostKeybinding[],
+): readonly (readonly [string, readonly HostKeybinding[]])[] {
+    const grouped = new Map<string, HostKeybinding[]>()
+    for (const binding of bindings) {
+        const key = normalizeKeybinding(binding.keybinding)
+        const entries = grouped.get(key) ?? []
+        entries.push(binding)
+        grouped.set(key, entries)
+    }
+    return [...grouped.entries()]
+        .filter(([, entries]) => entries.length > 1)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entries]) => [
+            key,
+            [...entries].sort(
+                (left, right) =>
+                    left.extensionId.localeCompare(right.extensionId) ||
+                    left.commandId.localeCompare(right.commandId) ||
+                    left.keybinding.localeCompare(right.keybinding),
+            ),
+        ])
+}
+
 export class CommandRegistryImpl implements CommandRegistry {
     private readonly commands = new Map<string, RegisteredCommand>()
     private readonly keybindings = new Map<string, KeybindingContribution[]>()

@@ -14,12 +14,18 @@ import {
     type ViewerLibraryMutationCapability,
 } from "./viewer"
 
+const immutableSnapshot = (value: unknown): unknown => {
+    if (!value || typeof value !== "object") return value
+    if (Array.isArray(value)) return Object.freeze(value.map(immutableSnapshot))
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(value).map(([key, entry]) => [key, immutableSnapshot(entry)]),
+        ),
+    )
+}
+
 const readonlyRecord = <T extends object>(record: T): Readonly<T> =>
-    new Proxy(record, {
-        set: () => false,
-        deleteProperty: () => false,
-        defineProperty: () => false,
-    })
+    immutableSnapshot(record) as Readonly<T>
 
 // The built-in library owns file handles, object URLs, and relink state. Expose only the
 // viewer's read capability and its explicitly typed mutation operations.
@@ -28,10 +34,7 @@ const builtinViewerLibraryCapability: ViewerLibraryCapability = {
         return readonlyRecord(libraryStore.nodes) as ViewerLibraryCapability["nodes"]
     },
     get allFiles() {
-        return Object.freeze([...libraryStore.allFiles]) as ViewerLibraryCapability["allFiles"]
-    },
-    get fileUrls() {
-        return readonlyRecord(libraryStore.fileUrls) as ViewerLibraryCapability["fileUrls"]
+        return immutableSnapshot(libraryStore.allFiles) as ViewerLibraryCapability["allFiles"]
     },
     get isLockedMap() {
         return readonlyRecord(libraryStore.isLockedMap) as ViewerLibraryCapability["isLockedMap"]
@@ -60,7 +63,7 @@ const builtinViewerLibraryCapability: ViewerLibraryCapability = {
 }
 
 const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
-    revokeFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
+    releaseFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
     setActiveFileId: (id) => {
         libraryStore.activeFileId = id
     },
@@ -88,18 +91,15 @@ const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
 
 const builtinViewerFileCapability: ViewerFileCapability = {
     get nodes() {
-        return libraryStore.nodes as ViewerFileCapability["nodes"]
-    },
-    get fileUrls() {
-        return libraryStore.fileUrls
+        return readonlyRecord(libraryStore.nodes) as ViewerFileCapability["nodes"]
     },
     get isLockedMap() {
-        return libraryStore.isLockedMap
+        return readonlyRecord(libraryStore.isLockedMap) as ViewerFileCapability["isLockedMap"]
     },
     getFileUrl: (id) => libraryStore.getFileUrl(id),
     restoreFileAccess: (id) => libraryStore.restoreFileAccess(id),
     waitForRelink: (id) => libraryStore.waitForRelink(id),
-    revokeFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
+    releaseFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
     getContentGeneration: (id) => libraryStore.getContentGeneration(id),
     isCurrentContent: (id, generation) => libraryStore.isCurrentContent(id, generation),
     isCurrentFileUrl: (id, url, generation) => libraryStore.isCurrentFileUrl(id, url, generation),

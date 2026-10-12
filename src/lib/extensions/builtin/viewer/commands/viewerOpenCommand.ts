@@ -30,16 +30,9 @@ export function createViewerOpenCommand(options: {
         if (!refs) return
         if (refs > 1) pendingFileUrlRefs.set(key, refs - 1)
         else pendingFileUrlRefs.delete(key)
-        // Every tracked acquisition owns one file capability lease. Releasing one lease must not be
-        // skipped merely because another open currently points at the same URL. If the capability
-        // lease is already gone, only revoke an unowned URL; an active matching book may still
-        // publish this exact URL after a newer same-book open reused it.
-        if (stale && !viewerFileCapability.revokeFileUrl(id, url)) {
-            const activeBook = viewerStore.getCurrentBook()
-            const isPublishedByActiveBook = activeBook?.id === id && activeBook.url === url
-            if (!isPublishedByActiveBook && viewerFileCapability.fileUrls[id] !== url)
-                URL.revokeObjectURL(url)
-        }
+        // Every tracked acquisition owns one host capability lease. Release it only when the
+        // operation is stale; URL lifetime remains entirely host-owned.
+        if (stale) viewerFileCapability.releaseFileUrl(id, url)
     }
     const releaseAllFileUrls = (
         leases: { id: string; url: string }[],
