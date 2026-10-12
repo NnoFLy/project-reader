@@ -1,25 +1,64 @@
 import { describe, expect, it, vi } from "vitest"
-import { CommandScope } from "$lib/modules/commands"
-import { createViewerOpenCommand } from "$lib/modules/viewer"
-import { libraryBookOpenCommand } from "$lib/modules/library"
+import type { AppExtension, CommandRegistry, ExtensionManifest } from "$lib/extension-api"
+import { ExtensionHost } from "$lib/extension-host"
 
-describe("library command scopes", () => {
+function manifest(id: string): ExtensionManifest {
+    return {
+        id,
+        name: id,
+        version: "0.0.1",
+        engine: ">=0.0.1",
+        entry: id,
+        activationEvents: [{ type: "startup" }],
+        permissions: ["commands"],
+    }
+}
+
+describe("host command contributions", () => {
     it("exposes and executes exactly one viewer.open command", async () => {
         const open = vi.fn()
-        const rootScope = new CommandScope()
-        const viewerOpenCommand = createViewerOpenCommand({ onFileAccessFailure: vi.fn() })
-        rootScope.register({ ...viewerOpenCommand, run: open })
+        let viewerCommands: CommandRegistry | undefined
+        const viewerExtension: AppExtension = {
+            manifest: manifest("builtin.viewer"),
+            activate: ({ commands }) => {
+                viewerCommands = commands
+                commands.register({
+                    id: "viewer.open",
+                    label: "Open viewer",
+                    execute: open,
+                })
+            },
+        }
+        const libraryExtension: AppExtension = {
+            manifest: manifest("builtin.library"),
+            activate: ({ commands }) => {
+                commands.register({
+                    id: "library.primary-action",
+                    label: "Open library item",
+                    execute: (payload) => {
+                        if (!viewerCommands) throw new Error("Viewer commands are unavailable")
+                        return viewerCommands.execute("viewer.open", payload)
+                    },
+                })
+            },
+        }
+        const host = new ExtensionHost({ extensions: [viewerExtension, libraryExtension] })
 
-        const libraryScope = new CommandScope(rootScope)
-        libraryScope.register({ ...libraryBookOpenCommand, id: "library.primary-action" })
-        const cardScope = new CommandScope(libraryScope)
+        await host.start()
 
-        expect(libraryScope.listActive().filter(({ id }) => id === "viewer.open")).toHaveLength(1)
-        expect(cardScope.listActive().filter(({ id }) => id === "viewer.open")).toHaveLength(1)
+        const viewerOpenCommands = host.contributions
+            .listCommands()
+            .filter(({ id }) => id === "viewer.open")
+        expect(viewerOpenCommands).toHaveLength(1)
 
-        await cardScope.execute("viewer.open", { bookId: "book-1" })
+        const libraryAction = host.contributions
+            .listCommands()
+            .find(({ id }) => id === "library.primary-action")
+        await libraryAction?.execute({ bookId: "book-1" })
 
         expect(open).toHaveBeenCalledOnce()
         expect(open).toHaveBeenCalledWith({ bookId: "book-1" })
+
+        await host.dispose()
     })
 })
