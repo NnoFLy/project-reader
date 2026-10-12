@@ -1,16 +1,21 @@
 <script lang="ts">
-    import { ViewerPage, viewerStore } from "$lib/modules/viewer"
-    import * as m from "$lib/paraglide/messages"
+    import { getContext } from "svelte"
+    import type { Component } from "svelte"
+    import type { RegisteredView } from "$lib/extension-api"
+    import { APP_HOST_CONTEXT, type AppHostContext } from "../hostContext"
 
-    const documentTitle = $derived(
-        viewerStore.getCurrentBook()?.name
-            ? m.viewer_document_title({ name: viewerStore.getCurrentBook()!.name })
-            : m.viewer_fallback_title(),
+    const hostContext = getContext<AppHostContext>(APP_HOST_CONTEXT)
+    let ready = $derived(hostContext.ready)
+    let contribution = $derived<RegisteredView | undefined>(
+        ready
+            ? hostContext.application.host.contributions
+                  .listViews()
+                  .find((view) => view.id === "viewer.reader")
+            : undefined,
     )
+    let View = $derived(contribution?.component as Component | undefined)
 </script>
 
-<svelte:head>
-    <title>{documentTitle}</title>
-</svelte:head>
-
-<ViewerPage />
+{#if View}
+    <View />
+{/if}

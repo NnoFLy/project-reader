@@ -7,11 +7,27 @@ describe("built-in contributions", () => {
 
         await host.start()
 
-        expect(host.contributions.listViews().map((view) => view.id)).toEqual([
-            "library.page",
-            "prompt.palette",
-            "viewer.reader",
-            "settings.panel",
+        expect(host.contributions.listViews()).toEqual([
+            expect.objectContaining({
+                id: "library.page",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
+                id: "prompt.palette",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
+                id: "viewer.reader",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
+                id: "settings.panel",
+                kind: "native",
+                component: expect.anything(),
+            }),
         ])
         expect(host.contributions.listCommands()).toEqual([])
         expect(host.record("builtin.pdf")?.state).toBe("enabled")

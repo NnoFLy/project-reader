@@ -1,12 +1,15 @@
 import type { ExtensionContext } from "$lib/extension-api"
+import SettingsView from "./SettingsView.svelte"
 
 export const SETTINGS_VIEW_ID = "settings.panel"
 
 export function activateSettings(context: ExtensionContext): void {
-    context.views.register({
+    context.views.registerNative({
         id: SETTINGS_VIEW_ID,
         slot: "workbench.sidebar",
         title: "Settings",
+        kind: "native",
+        component: SettingsView,
     })
     context.settings.register({
         id: "settings.theme",
