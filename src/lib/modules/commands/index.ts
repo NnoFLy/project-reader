@@ -1,4 +1,11 @@
-export type { AppCommandPayloads, Locale } from "./appCommandPayloads"
+export type {
+    AppCommandPayloads,
+    CommandId,
+    ExecuteArgs,
+    Locale,
+    SerializableCommandPayload,
+} from "./appCommandPayloads"
+export { isSerializablePayload, serializablePayload } from "./serializable"
 export {
     defineCommands,
     type AnyCommandDefinition,

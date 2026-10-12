@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { openCommandPalette } from "./commandPalette"
 import { CommandScope, defineCommands } from "$lib/modules/commands"
 import { promptStore } from "../stores/promptStore.svelte"
+import type { CommandRegistry } from "$lib/extension-api"
 
 afterEach(() => promptStore.close())
 
@@ -32,6 +33,35 @@ describe("command palette adapter", () => {
         await promptStore.selectCurrent()
         await closed
         expect(run).toHaveBeenCalledOnce()
+    })
+
+    it("discovers command metadata from the core registry and executes by ID", async () => {
+        const execute = vi.fn()
+        const registry: CommandRegistry = {
+            register: vi.fn(),
+            registerKeybinding: vi.fn(),
+            get: vi.fn(),
+            list: () => [
+                {
+                    id: "library.open",
+                    label: "Open library",
+                    keybinding: ["ctrl+o"],
+                    execute,
+                },
+            ],
+            execute: async (id) => {
+                await execute(id)
+            },
+        }
+
+        const closed = openCommandPalette(registry)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(promptStore.snapshot?.items).toMatchObject([
+            { id: "library.open", label: "Open library", keymap: "Ctrl+O" },
+        ])
+        await promptStore.selectCurrent()
+        await closed
+        expect(execute).toHaveBeenCalledWith("library.open")
     })
 
     it("dispatches a numeric query to the scoped page command", async () => {

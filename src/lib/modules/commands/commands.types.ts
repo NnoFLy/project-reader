@@ -1,4 +1,4 @@
-import type { AppCommandPayloads, CommandId } from "./appCommandPayloads"
+import type { CommandId, ExecuteArgs } from "./appCommandPayloads"
 
 export type CommandCategory =
     | "commands"
@@ -9,11 +9,15 @@ export type CommandCategory =
     | "bookmarks"
 
 export type CommandExecutionResult =
-    | { status: "executed"; id: CommandId }
-    | { status: "unavailable"; id: CommandId }
-    | { status: "disabled"; id: CommandId }
+    | { status: "executed"; id: string }
+    | { status: "unavailable"; id: string }
+    | { status: "disabled"; id: string }
 
-export type CommandDefinition<K extends CommandId = CommandId> = {
+/**
+ * UI command metadata. Payloads are deliberately not a global type map: the
+ * owning plugin validates and interprets its own payload at its boundary.
+ */
+export type CommandDefinition<K extends CommandId = CommandId, Payload = unknown> = {
     id: K
     label: () => string
     englishLabel?: () => string
@@ -26,17 +30,14 @@ export type CommandDefinition<K extends CommandId = CommandId> = {
     preventDefault?: boolean
     palette?: boolean | (() => boolean)
     shouldHandleKey?: (event: KeyboardEvent) => boolean
-    keyboardPayload?: (event: KeyboardEvent) => AppCommandPayloads[K]
-    run: (payload: AppCommandPayloads[K]) => void | Promise<void>
+    keyboardPayload?: (event: KeyboardEvent) => Payload
+    run: (payload: Payload) => void | Promise<void>
 }
 
-export type AnyCommandDefinition = {
-    [K in CommandId]: CommandDefinition<K>
-}[CommandId]
-
-export type CommandDefinitions = Partial<{
-    [K in CommandId]: CommandDefinition<K>
-}>
+// The implementation accepts plugin-local payload signatures. The public
+// command registry validates unknown values before invoking them.
+export type AnyCommandDefinition = CommandDefinition<string, any>
+export type CommandDefinitions = Record<string, CommandDefinition<string, any>>
 
 export interface ActiveCommand<K extends CommandId = CommandId> {
     readonly id: K
@@ -46,16 +47,10 @@ export interface ActiveCommand<K extends CommandId = CommandId> {
     readonly keymap?: string | string[]
     readonly subtitle?: string
     readonly onUnavailable: (callback: () => void) => () => void
-    readonly execute: (
-        ...args: AppCommandPayloads[K] extends undefined
-            ? []
-            : undefined extends AppCommandPayloads[K]
-              ? [payload?: Exclude<AppCommandPayloads[K], undefined>]
-              : [payload: AppCommandPayloads[K]]
-    ) => Promise<CommandExecutionResult>
+    readonly execute: (...args: ExecuteArgs<K>) => Promise<CommandExecutionResult>
 }
 
-export function defineCommands<const T extends CommandDefinitions>(definitions: T): T {
+export function defineCommands<const T extends Partial<CommandDefinitions>>(definitions: T): T {
     for (const [id, definition] of Object.entries(definitions)) {
         if (!definition || definition.id !== id) {
             throw new Error(`Command definition key and id must match: ${id}`)

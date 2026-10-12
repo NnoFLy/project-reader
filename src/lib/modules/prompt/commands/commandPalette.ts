@@ -1,50 +1,87 @@
 import { tick } from "svelte"
+import type { CommandRegistry, RegisteredCommand } from "$lib/extension-api"
 import { commandsStore, formatKeyString, type CommandScope } from "$lib/modules/commands"
 import { promptStore, type PromptItem } from "../index"
 import * as m from "$lib/paraglide/messages"
 
-export async function openCommandPalette(
-    scope: CommandScope = commandsStore.activeScope ?? commandsStore.root,
-    initialQuery?: string,
-): Promise<void> {
-    const commands = scope.listPaletteCommands()
-    type PaletteChoice = {
-        id: string
-        label: string
-        englishLabel?: string
-        description?: string
-        category: (typeof commands)[number]["category"]
-        keymap?: string | string[]
-        execute: () => Promise<void>
-    }
-    const commandItems: PromptItem<PaletteChoice>[] = commands.map((command) => {
-        const keymap = Array.isArray(command.keymap)
-            ? command.keymap.map(formatKeyString)
-            : command.keymap
-              ? formatKeyString(command.keymap)
-              : undefined
-        const choice: PaletteChoice = {
+type CommandSource = CommandScope | CommandRegistry
+
+type PaletteChoice = {
+    id: string
+    label: string
+    englishLabel?: string
+    description?: string
+    category: "commands" | "settings" | "navigation" | "menu" | "books" | "bookmarks"
+    keymap?: string | string[]
+    execute: () => Promise<void>
+}
+
+function isCoreRegistry(source: CommandSource): source is CommandRegistry {
+    return !("listPaletteCommands" in source)
+}
+
+function corePaletteCommands(registry: CommandRegistry): PaletteChoice[] {
+    return registry.list().map((command: RegisteredCommand) => {
+        const label = typeof command.label === "function" ? command.label() : command.label
+        const formattedKeymap = command.keybinding?.map((key) => formatKeyString(key))
+        const keymap =
+            formattedKeymap && formattedKeymap.length === 1 ? formattedKeymap[0] : formattedKeymap
+        return {
             id: command.id,
-            label: command.label,
-            englishLabel: command.englishLabel,
-            description: command.subtitle,
-            category: command.category,
+            label,
             keymap,
+            category: "commands",
             execute: async () => {
-                await command.execute()
+                await registry.execute(command.id)
             },
         }
-        return {
-            ...choice,
-            presentation: { kind: command.category },
-            value: choice,
-        }
     })
+}
 
+export async function openCommandPalette(
+    source: CommandSource = commandsStore.activeScope ?? commandsStore.root,
+    initialQuery?: string,
+): Promise<void> {
+    const commands = isCoreRegistry(source) ? undefined : source.listPaletteCommands()
+    const commandItems: PromptItem<PaletteChoice>[] = (
+        commands
+            ? commands.map((command) => {
+                  const keymap = Array.isArray(command.keymap)
+                      ? command.keymap.map(formatKeyString)
+                      : command.keymap
+                        ? formatKeyString(command.keymap)
+                        : undefined
+                  const choice: PaletteChoice = {
+                      id: command.id,
+                      label: command.label,
+                      englishLabel: command.englishLabel,
+                      description: command.subtitle,
+                      category: command.category,
+                      keymap,
+                      execute: async () => {
+                          await command.execute()
+                      },
+                  }
+                  return {
+                      ...choice,
+                      presentation: { kind: command.category },
+                      value: choice,
+                  }
+              })
+            : corePaletteCommands(source as CommandRegistry).map((choice) => ({
+                  ...choice,
+                  presentation: { kind: choice.category },
+                  value: choice,
+              }))
+    ) as PromptItem<PaletteChoice>[]
+
+    const scope = isCoreRegistry(source)
+        ? (commandsStore.activeScope ?? commandsStore.root)
+        : source
     const parsePageChoice = (query: string): PaletteChoice | undefined => {
         const pageNumber = Number(query.trim())
         if (!Number.isInteger(pageNumber) || pageNumber < 1) return undefined
-        if (!scope.canExecute("viewer.page.go-to")) return undefined
+        if (!scope?.canExecute("viewer.page.go-to")) return undefined
         return {
             id: `viewer.page.go-to:${pageNumber}`,
             label: m.go_to_page({ page: pageNumber }),
@@ -84,8 +121,9 @@ export async function openCommandPalette(
     const closeIfCurrent = () => {
         if (promptStore.snapshot?.request === request) promptStore.close()
     }
-    const stopWatchingScope = scope.onDestroy(closeIfCurrent)
-    const stopWatchingCommands = commands.map((command) => command.onUnavailable(closeIfCurrent))
+    const stopWatchingScope = scope?.onDestroy(closeIfCurrent) ?? (() => undefined)
+    const stopWatchingCommands =
+        commands?.map((command) => command.onUnavailable(closeIfCurrent)) ?? []
     try {
         await promptStore.open(request)
     } finally {

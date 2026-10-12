@@ -29,7 +29,10 @@ describe("built-in contributions", () => {
                 component: expect.anything(),
             }),
         ])
-        expect(host.contributions.listCommands()).toEqual([])
+        expect(host.contributions.listCommands().map(({ id }) => id)).toEqual([
+            "prompt.open",
+            "prompt.close",
+        ])
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
 
         await host.dispose()

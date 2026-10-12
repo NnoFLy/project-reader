@@ -1,5 +1,6 @@
 export { default as KeymapHelp } from "./components/KeymapHelp.svelte"
 export { default as Prompt } from "./components/Prompt.svelte"
 export { openCommandPalette } from "./commands/commandPalette"
+export { getPromptCommandRegistry, setPromptCommandRegistry } from "./commandRegistry"
 export type { PromptItem, PromptRequest, PromptService, PromptSnapshot } from "./prompt.types"
 export { promptStore } from "./stores/promptStore.svelte"
