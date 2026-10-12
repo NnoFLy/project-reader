@@ -1,77 +1,53 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { DOCUMENT_SOURCE_LIMITS, DocumentSourceLimitError } from "$lib/core/files"
 
 const {
-    pdfConstructed,
-    pdfLoad,
-    pdfPageCount,
-    pdfAuthor,
-    pdfTitle,
-    pdfPage,
-    pdfCanvas,
-    pdfDimensions,
-    pdfRenderBounds,
-    pdfClose,
-    pdfFileSize,
-    createPdfDocument,
-} = vi.hoisted(() => ({
-    pdfConstructed: vi.fn(),
-    pdfLoad: vi.fn(),
-    pdfPageCount: vi.fn(),
-    pdfAuthor: vi.fn(),
-    pdfTitle: vi.fn(),
-    pdfPage: vi.fn(),
-    pdfCanvas: vi.fn(),
-    pdfDimensions: vi.fn(),
-    pdfRenderBounds: vi.fn(),
-    pdfClose: vi.fn(),
-    pdfFileSize: vi.fn(),
-    createPdfDocument: () => {
-        pdfConstructed()
+    documentConstructed,
+    documentLoad,
+    documentPageCount,
+    documentAuthor,
+    documentTitle,
+    documentPage,
+    documentCanvas,
+    documentDimensions,
+    documentRenderBounds,
+    documentClose,
+    createDocument,
+    documentService,
+} = vi.hoisted(() => {
+    const documentConstructed = vi.fn()
+    const documentLoad = vi.fn()
+    const documentPageCount = vi.fn()
+    const documentAuthor = vi.fn()
+    const documentTitle = vi.fn()
+    const documentPage = vi.fn()
+    const documentCanvas = vi.fn()
+    const documentDimensions = vi.fn()
+    const documentRenderBounds = vi.fn()
+    const documentClose = vi.fn()
+    const createDocument = () => {
+        documentConstructed()
         return {
-            load: (...args: unknown[]) => pdfLoad(...args),
-            getPageNumber: () => pdfPageCount(),
-            getAuthor: () => pdfAuthor(),
-            getTitle: () => pdfTitle(),
-            getPage: (pageNumber: number) => pdfPage(pageNumber),
-            getCanvasPage: (page: unknown) => pdfCanvas(page),
-            getAllPageDimensions: () => pdfDimensions(),
-            validateRenderBounds: () => pdfRenderBounds(),
-            close: async () => pdfClose(),
+            load: (...args: unknown[]) => documentLoad(...args),
+            getPageNumber: () => documentPageCount(),
+            getAuthor: () => documentAuthor(),
+            getTitle: () => documentTitle(),
+            getPage: (pageNumber: number) => documentPage(pageNumber),
+            getCanvasPage: (page: unknown) => documentCanvas(page),
+            getAllPageDimensions: () => documentDimensions(),
+            validateRenderBounds: () => documentRenderBounds(),
+            close: async () => documentClose(),
         }
-    },
-}))
-
-pdfConstructed.mockName("pdfConstructed")
-
-vi.mock("$app/environment", () => ({ browser: true }))
-vi.mock("$lib/modules/pdf", () => ({
-    PDFResourceLimitError: class PDFResourceLimitError extends Error {
-        constructor(message: string) {
-            super(message)
-            this.name = "PDFResourceLimitError"
-        }
-    },
-    assertPdfFileSize: pdfFileSize,
-    PDFDocument: class {
-        constructor() {
-            return createPdfDocument()
-        }
-    },
-}))
-vi.mock("$lib/extensions/builtin/pdf", () => ({
-    pdfDocumentAdapter: {
-        id: "test.pdf",
-        extensions: ["pdf"],
-        mimeTypes: ["application/pdf"],
-        probe: vi.fn(async () => ({ supported: true, confidence: 1 })),
+    }
+    const documentService = {
         open: vi.fn(async () => {
-            const legacy = createPdfDocument() as any
+            const legacy = createDocument() as any
             await legacy.load()
             const pageCount = await legacy.getPageNumber()
             const author = await legacy.getAuthor()
             const title = await legacy.getTitle()
             return {
-                kind: "paged",
+                kind: "paged" as const,
                 capabilities: new Set(),
                 metadata: { title, author, pageCount },
                 pageCount,
@@ -87,8 +63,27 @@ vi.mock("$lib/extensions/builtin/pdf", () => ({
                 close: () => legacy.close(),
             }
         }),
-    },
-}))
+        close: vi.fn(async (document: { close: () => Promise<void> }) => document.close()),
+    }
+    return {
+        documentConstructed,
+        documentLoad,
+        documentPageCount,
+        documentAuthor,
+        documentTitle,
+        documentPage,
+        documentCanvas,
+        documentDimensions,
+        documentRenderBounds,
+        documentClose,
+        createDocument,
+        documentService,
+    }
+})
+
+documentConstructed.mockName("documentConstructed")
+
+vi.mock("$app/environment", () => ({ browser: true }))
 
 import { VFSStore } from "./vfsStore.svelte"
 import type { ImportInput, VFSNodes } from "./vfsStore.types"
@@ -102,17 +97,19 @@ function handle(name: string): FileSystemFileHandle {
 }
 
 beforeEach(() => {
-    pdfConstructed.mockClear()
-    pdfLoad.mockReset().mockResolvedValue(undefined)
-    pdfPageCount.mockReset().mockResolvedValue(2)
-    pdfAuthor.mockReset().mockResolvedValue(null)
-    pdfTitle.mockReset().mockResolvedValue(null)
-    pdfPage.mockReset().mockResolvedValue({})
-    pdfCanvas.mockReset().mockResolvedValue("")
-    pdfDimensions.mockReset().mockResolvedValue([{ width: 600, height: 800 }])
-    pdfRenderBounds.mockReset().mockResolvedValue(undefined)
-    pdfClose.mockReset().mockResolvedValue(undefined)
-    pdfFileSize.mockReset().mockImplementation(() => undefined)
+    documentConstructed.mockClear()
+    documentLoad.mockReset().mockResolvedValue(undefined)
+    documentPageCount.mockReset().mockResolvedValue(2)
+    documentAuthor.mockReset().mockResolvedValue(null)
+    documentTitle.mockReset().mockResolvedValue(null)
+    documentPage.mockReset().mockResolvedValue({})
+    documentCanvas.mockReset().mockResolvedValue("")
+    documentDimensions.mockReset().mockResolvedValue([{ width: 600, height: 800 }])
+    documentRenderBounds.mockReset().mockResolvedValue(undefined)
+    documentClose.mockReset().mockResolvedValue(undefined)
+    documentService.open.mockClear()
+    documentService.close.mockClear()
+    vi.stubGlobal("__documentService", documentService)
 })
 
 afterEach(() => {
@@ -145,7 +142,7 @@ describe("VFS initialization", () => {
         await store.init()
 
         expect(store.nodes.legacy).toBeDefined()
-        expect(pdfConstructed).not.toHaveBeenCalled()
+        expect(documentConstructed).not.toHaveBeenCalled()
     })
 
     it("cleans a durable resource-limit marker before publishing startup nodes", async () => {
@@ -405,9 +402,8 @@ describe("VFS initialization and import ordering", () => {
     })
 
     it("does not roll back a newer relink when stale import enrichment hits a resource limit", async () => {
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
         let rejectCanvas!: (error: unknown) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise<string>((_, reject) => {
                     rejectCanvas = reject
@@ -443,21 +439,21 @@ describe("VFS initialization and import ordering", () => {
                     getAuthor: vi.fn(async () => null),
                     getTitle: vi.fn(async () => null),
                     getPage: vi.fn(async () => ({})),
-                    getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                    getCanvasPage: (...args: unknown[]) => documentCanvas(...args),
                     close: vi.fn(async () => undefined),
                 },
                 tempUrl: "blob:import",
             },
         )
 
-        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        await vi.waitFor(() => expect(documentCanvas).toHaveBeenCalledOnce())
         ;(store as any).invalidateContent("book")
         ;(store.nodes as any).book = {
             ...store.nodes.book,
             type: "file",
             metadata: { pageNumber: 1, totalPages: 9 },
         }
-        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+        rejectCanvas(new DocumentSourceLimitError("pixel canvas limit"))
 
         await expect(enriching).resolves.toMatchObject({ id: "book", status: "failed" })
         expect(deleteNode).not.toHaveBeenCalled()
@@ -465,9 +461,8 @@ describe("VFS initialization and import ordering", () => {
     })
 
     it("does not roll back after a superseding relink succeeds", async () => {
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
         let rejectCanvas!: (error: unknown) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise<string>((_, reject) => {
                     rejectCanvas = reject
@@ -498,7 +493,7 @@ describe("VFS initialization and import ordering", () => {
                 getAuthor: vi.fn(async () => null),
                 getTitle: vi.fn(async () => null),
                 getPage: vi.fn(async () => ({})),
-                getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                getCanvasPage: (...args: unknown[]) => documentCanvas(...args),
                 close: vi.fn(async () => undefined),
             },
             tempUrl: "blob:import",
@@ -513,8 +508,8 @@ describe("VFS initialization and import ordering", () => {
             generations,
         )
 
-        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
-        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+        await vi.waitFor(() => expect(documentCanvas).toHaveBeenCalledOnce())
+        rejectCanvas(new DocumentSourceLimitError("pixel canvas limit"))
         await vi.waitFor(() => expect((store as any).relinkWaiters.has("book")).toBe(true))
 
         ;(store as any).invalidateContent("book")
@@ -528,9 +523,8 @@ describe("VFS initialization and import ordering", () => {
     })
 
     it("rolls back after a superseding relink fails", async () => {
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
         let rejectCanvas!: (error: unknown) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise<string>((_, reject) => {
                     rejectCanvas = reject
@@ -568,15 +562,15 @@ describe("VFS initialization and import ordering", () => {
                     getAuthor: vi.fn(async () => null),
                     getTitle: vi.fn(async () => null),
                     getPage: vi.fn(async () => ({})),
-                    getCanvasPage: (...args: unknown[]) => pdfCanvas(...args),
+                    getCanvasPage: (...args: unknown[]) => documentCanvas(...args),
                     close: vi.fn(async () => undefined),
                 },
                 tempUrl: "blob:import",
             },
         )
 
-        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
-        rejectCanvas(new PDFResourceLimitError("pixel canvas limit"))
+        await vi.waitFor(() => expect(documentCanvas).toHaveBeenCalledOnce())
+        rejectCanvas(new DocumentSourceLimitError("pixel canvas limit"))
         await vi.waitFor(() => expect((store as any).relinkWaiters.has("book")).toBe(true))
 
         ;(store as any).relinkingCounts.delete("book")
@@ -587,11 +581,11 @@ describe("VFS initialization and import ordering", () => {
     })
 
     it("does not let enrichment metadata commit after a relink supersedes the import", async () => {
-        pdfLoad.mockResolvedValue(undefined)
-        pdfPageCount.mockResolvedValue(4)
-        pdfAuthor.mockResolvedValue("Author")
-        pdfTitle.mockResolvedValue("Title")
-        pdfCanvas.mockResolvedValue("blob:import-preview")
+        documentLoad.mockResolvedValue(undefined)
+        documentPageCount.mockResolvedValue(4)
+        documentAuthor.mockResolvedValue("Author")
+        documentTitle.mockResolvedValue("Title")
+        documentCanvas.mockResolvedValue("blob:import-preview")
 
         let releaseUpdate!: () => void
         let updateStarted!: () => void
@@ -868,7 +862,7 @@ describe("VFS metadata enrichment ownership", () => {
         await Promise.resolve()
         await Promise.resolve()
 
-        expect(pdfConstructed).not.toHaveBeenCalled()
+        expect(documentConstructed).not.toHaveBeenCalled()
         release()
     })
 
@@ -935,7 +929,7 @@ describe("VFS file access persistence", () => {
         expect(revokeObjectURL).toHaveBeenCalledWith("blob:old")
     })
 
-    it("rejects a handle that changes to an oversized file on restored access", async () => {
+    it("creates an access URL without parsing a handle's file contents", async () => {
         const store = new VFSStore({
             book: {
                 id: "book",
@@ -960,16 +954,12 @@ describe("VFS file access persistence", () => {
             files: { put },
             fileContents: { get: vi.fn(async () => ({ handle: changingHandle })) },
         } as never
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        pdfFileSize.mockImplementationOnce(() => {
-            throw new PDFResourceLimitError("PDF file exceeds byte limit")
-        })
         const createObjectURL = vi.spyOn(URL, "createObjectURL")
 
-        await expect(store.getFileUrl("book")).resolves.toBe("")
+        await expect(store.getFileUrl("book")).resolves.toMatch(/^blob:/)
         expect(getFile).toHaveBeenCalledOnce()
-        expect(createObjectURL).not.toHaveBeenCalled()
-        expect(put).toHaveBeenCalledWith(expect.objectContaining({ id: "book", isLocked: true }))
+        expect(createObjectURL).toHaveBeenCalledOnce()
+        expect(put).not.toHaveBeenCalled()
     })
 
     it("rolls back the content generation when relinking cannot read the replacement", async () => {
@@ -1065,7 +1055,7 @@ describe("VFS file access persistence", () => {
 
     it("closes a relink candidate directly when disposal interrupts validation", async () => {
         let resolveLoad!: () => void
-        pdfLoad.mockImplementationOnce(
+        documentLoad.mockImplementationOnce(
             () =>
                 new Promise<void>((resolve) => {
                     resolveLoad = resolve
@@ -1087,20 +1077,16 @@ describe("VFS file access persistence", () => {
         store.db = { close: vi.fn() } as never
 
         const relinking = store.relinkFile("book", handle("replacement.pdf"))
-        await vi.waitFor(() => expect(pdfLoad).toHaveBeenCalledOnce())
-        await store.dispose()
+        await vi.waitFor(() => expect(documentLoad).toHaveBeenCalledOnce())
+        const disposing = store.dispose()
         resolveLoad()
+        await disposing
 
         await expect(relinking).rejects.toMatchObject({ name: "VFSDisposedError" })
-        expect(pdfClose).toHaveBeenCalledOnce()
+        expect(documentClose).toHaveBeenCalledOnce()
     })
 
-    it("rejects oversized relink candidates before creating a PDF document", async () => {
-        const assertSize = vi.mocked((await import("$lib/modules/pdf")).assertPdfFileSize)
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        assertSize.mockImplementationOnce(() => {
-            throw new PDFResourceLimitError("PDF file exceeds byte limit")
-        })
+    it("rejects oversized relink candidates before opening a document", async () => {
         const store = new VFSStore({
             book: {
                 id: "book",
@@ -1115,15 +1101,21 @@ describe("VFS file access persistence", () => {
                 metadata: { pageNumber: 1 },
             },
         })
-        const createObjectURL = vi.spyOn(URL, "createObjectURL")
+        const oversizedHandle = Object.assign(handle("large.pdf"), {
+            getFile: vi.fn(async () => ({
+                size: DOCUMENT_SOURCE_LIMITS.maxFileBytes + 1,
+                type: "application/pdf",
+            })),
+        })
 
-        await expect(store.relinkFile("book", handle("large.pdf"))).rejects.toThrow("byte limit")
-        expect(createObjectURL).not.toHaveBeenCalled()
+        await expect(store.relinkFile("book", oversizedHandle)).rejects.toThrow("limit")
+        expect(documentService.open).not.toHaveBeenCalled()
     })
 
     it("rejects relink candidates that exceed render pixel limits before persistence", async () => {
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        pdfRenderBounds.mockRejectedValueOnce(new PDFResourceLimitError("pixel canvas limit"))
+        documentRenderBounds.mockRejectedValueOnce(
+            new DocumentSourceLimitError("pixel canvas limit"),
+        )
         const store = new VFSStore({
             book: {
                 id: "book",
@@ -1148,7 +1140,7 @@ describe("VFS file access persistence", () => {
     })
 
     it("does not replace persisted content when a relink candidate is not a readable PDF", async () => {
-        pdfLoad.mockRejectedValue(new Error("corrupt replacement"))
+        documentLoad.mockRejectedValue(new Error("corrupt replacement"))
         const store = new VFSStore({
             book: {
                 id: "book",
@@ -1573,10 +1565,7 @@ describe("VFS file access persistence", () => {
             indexedTexts: { deleteByBookId: vi.fn(async () => undefined) },
             transaction: vi.fn(async (_mode, _tables, callback) => callback()),
         } as never
-        const createObjectURL = vi
-            .spyOn(URL, "createObjectURL")
-            .mockReturnValueOnce("blob:candidate")
-            .mockReturnValueOnce("blob:new")
+        const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:new")
 
         const access = store.getFileUrl("book")
         await vi.waitFor(() => expect(oldHandle.getFile).toHaveBeenCalledOnce())
@@ -1585,7 +1574,7 @@ describe("VFS file access persistence", () => {
         resolveOldFile(new Blob(["old"], { type: "application/pdf" }))
 
         await expect(access).resolves.toBe("blob:new")
-        expect(createObjectURL).toHaveBeenCalledTimes(2)
+        expect(createObjectURL).toHaveBeenCalledOnce()
         expect(replacementHandle.queryPermission).toHaveBeenCalledOnce()
     })
 
@@ -4343,7 +4332,7 @@ describe("VFS import registration", () => {
         const records = new Map<string, any>()
         const contents = new Map<string, any>()
         let rejectCanvas!: (error: unknown) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise((_resolve, reject) => {
                     rejectCanvas = reject
@@ -4383,7 +4372,6 @@ describe("VFS import registration", () => {
             null,
         )
         await vi.waitFor(() => expect(rejectCanvas).toEqual(expect.any(Function)))
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
         vi.spyOn(store as any, "cleanupPersistedResourceLimitedFile").mockResolvedValue(false)
         vi.useFakeTimers()
         try {
@@ -4393,7 +4381,7 @@ describe("VFS import registration", () => {
             expect([...records.values()]).toEqual([
                 expect.objectContaining({ cleanupPending: "resource-limit" }),
             ])
-            rejectCanvas(new PDFResourceLimitError("late pixel limit"))
+            rejectCanvas(new DocumentSourceLimitError("late pixel limit"))
             await expect(importing).resolves.toMatchObject([{ status: "failed" }])
             await Promise.resolve()
             expect((store as any).pendingResourceRollbacks.size).toBe(0)
@@ -4418,7 +4406,7 @@ describe("VFS import registration", () => {
         const filesDelete = vi.fn(async (id: string) => records.delete(id))
         const fileContents = new Map<string, any>()
         let rejectCanvas!: (error: unknown) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise((_resolve, reject) => {
                     rejectCanvas = reject
@@ -4466,8 +4454,7 @@ describe("VFS import registration", () => {
         await vi.waitFor(() => expect(rejectCanvas).toEqual(expect.any(Function)))
         const disposing = store.dispose()
         await Promise.resolve()
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        rejectCanvas(new PDFResourceLimitError("pixel limit"))
+        rejectCanvas(new DocumentSourceLimitError("pixel limit"))
         const [results] = await Promise.all([completion, disposing])
 
         expect(results).toMatchObject([{ status: "failed" }])
@@ -4483,10 +4470,6 @@ describe("VFS import registration", () => {
         const first = new Blob(["pdf"], { type: "application/pdf" })
         const second = { size: 200 * 1024 * 1024, type: "application/pdf" }
         source.getFile = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        pdfFileSize.mockImplementation((size: number) => {
-            if (size > 100 * 1024 * 1024) throw new PDFResourceLimitError("byte limit")
-        })
         const store = new VFSStore()
         const records = new Map<string, any>()
         store.db = {
@@ -4638,11 +4621,6 @@ describe("VFS import registration", () => {
     })
 
     it("rejects oversized handle imports before persistence", async () => {
-        const assertSize = vi.mocked((await import("$lib/modules/pdf")).assertPdfFileSize)
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        assertSize.mockImplementationOnce(() => {
-            throw new PDFResourceLimitError("PDF file exceeds byte limit")
-        })
         const transaction = vi.fn(async () => undefined)
         const store = new VFSStore()
         store.db = { transaction } as never
@@ -4659,8 +4637,9 @@ describe("VFS import registration", () => {
     })
 
     it("rejects imports before persistence when render bounds fail", async () => {
-        const { PDFResourceLimitError } = await import("$lib/modules/pdf")
-        pdfRenderBounds.mockRejectedValueOnce(new PDFResourceLimitError("pixel canvas limit"))
+        documentRenderBounds.mockRejectedValueOnce(
+            new DocumentSourceLimitError("pixel canvas limit"),
+        )
         const transaction = vi.fn(async () => undefined)
         const store = new VFSStore()
         store.db = { transaction } as never
@@ -4677,7 +4656,7 @@ describe("VFS import registration", () => {
 
     it("closes preflight documents while enrichment is blocked", async () => {
         let releaseCanvas!: (value: string) => void
-        pdfCanvas.mockImplementationOnce(
+        documentCanvas.mockImplementationOnce(
             () =>
                 new Promise<string>((resolve) => {
                     releaseCanvas = resolve
@@ -4691,14 +4670,14 @@ describe("VFS import registration", () => {
         } as never
 
         const first = store.importFiles([{ name: "first.pdf", source: handle("first.pdf") }], null)
-        await vi.waitFor(() => expect(pdfCanvas).toHaveBeenCalledOnce())
+        await vi.waitFor(() => expect(documentCanvas).toHaveBeenCalledOnce())
         const second = store.importFiles(
             [{ name: "second.pdf", source: handle("second.pdf") }],
             null,
         )
 
-        await vi.waitFor(() => expect(pdfClose).toHaveBeenCalledTimes(2))
-        expect(pdfConstructed).toHaveBeenCalledTimes(3)
+        await vi.waitFor(() => expect(documentClose).toHaveBeenCalledTimes(2))
+        expect(documentConstructed).toHaveBeenCalledTimes(3)
 
         releaseCanvas("")
         await expect(first).resolves.toMatchObject([{ status: "imported" }])
@@ -4706,7 +4685,7 @@ describe("VFS import registration", () => {
     })
 
     it("retains a persisted node when metadata enrichment fails", async () => {
-        pdfLoad.mockRejectedValue(new Error("corrupt PDF"))
+        documentLoad.mockRejectedValue(new Error("corrupt PDF"))
         const store = new VFSStore()
         store.db = {
             files: { put: vi.fn(async () => "book") },
