@@ -1,4 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+
+vi.mock("../viewerHost", async () => {
+    const actual = await vi.importActual<typeof import("../viewerHost")>("../viewerHost")
+    const { vfsStore } = await import("$lib/modules/documents")
+    return {
+        ...actual,
+        viewerLibraryCapability: vfsStore,
+        isViewerLibraryCapabilityInstalled: () => true,
+        getViewerLibraryCapability: () => vfsStore,
+    }
+})
+
 import { buildBookmarkItems, buildSearchItems, parsePage } from "./viewerPromptItems"
 import { SearchStore, searchStore } from "../stores/searchStore.svelte"
 import { LocalSearchHistoryRepository, normalizeHistory } from "../stores/searchHistoryRepository"
