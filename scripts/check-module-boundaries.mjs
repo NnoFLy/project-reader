@@ -20,6 +20,7 @@ const TARGET_LAYERS = new Set([
     "core",
     "extension-api",
     "extension-host",
+    "app-host",
     "builtin-host",
     "document-model",
     "plugin",
@@ -177,13 +178,18 @@ function targetArea(sourceRoot, file) {
     if (relative === "lib/document-model" || relative.startsWith("lib/document-model/")) {
         return { kind: "document-model" }
     }
+    if (relative === "lib/app" || relative.startsWith("lib/app/")) {
+        return { kind: "app-host" }
+    }
     if (relative === "lib/shared" || relative.startsWith("lib/shared/")) {
         return { kind: "shared" }
     }
     if (relative === "routes" || relative.startsWith("routes/")) return { kind: "routes" }
 
     // The builtin extension registry composes extensions into the host.
-    if (relative === "lib/extensions/builtin/index.ts") return { kind: "builtin-host" }
+    if (relative === "lib/extensions/builtin" || relative === "lib/extensions/builtin/index.ts") {
+        return { kind: "builtin-host" }
+    }
 
     const adapterMatch = relative.match(
         /^lib\/(?:adapters|extensions\/builtin\/([^/]+)\/adapter(?:s)?)(?:\/|$)/,
@@ -199,11 +205,22 @@ function targetArea(sourceRoot, file) {
 }
 
 function targetBoundaryViolation(from, to) {
+    if (["app-host", "routes"].includes(from.kind) && to.kind === "module") {
+        return `${from.kind === "app-host" ? "app host" : "routes"} may not import legacy feature internals`
+    }
     if (!TARGET_LAYERS.has(from.kind) || !TARGET_LAYERS.has(to.kind)) return null
     const allowedTargets = {
         core: ["core", "extension-api", "extension-host", "document-model"],
         "extension-api": ["core", "extension-api", "document-model"],
         "extension-host": ["core", "extension-api", "extension-host", "document-model"],
+        "app-host": [
+            "app-host",
+            "core",
+            "extension-api",
+            "extension-host",
+            "builtin-host",
+            "document-model",
+        ],
         "builtin-host": [
             "core",
             "extension-api",
@@ -219,6 +236,8 @@ function targetBoundaryViolation(from, to) {
         core: "core may only import core, extension-api, extension-host, and document-model",
         "extension-api": "extension-api may only import core contracts",
         "extension-host": "extension-host may only import core, extension-api, and document-model",
+        "app-host":
+            "app host may only import app host, core, extension-api, extension-host, builtin host, and document-model",
         "builtin-host": "builtin host may only import host contracts and builtin extensions",
         "document-model": "document-model may only import core contracts",
     }
@@ -228,7 +247,10 @@ function targetBoundaryViolation(from, to) {
     if (from.kind === "shared" && !["core", "document-model", "shared"].includes(to.kind)) {
         return "shared code may only import core-safe code"
     }
-    if (from.kind === "routes" && !["core", "extension-host", "routes"].includes(to.kind)) {
+    if (
+        from.kind === "routes" &&
+        !["core", "extension-host", "app-host", "routes"].includes(to.kind)
+    ) {
         return "routes may only import host-owned code"
     }
     if (["plugin", "adapter"].includes(from.kind)) {
@@ -341,15 +363,18 @@ export function analyzeProject(projectRoot, allowedDependencies = DEFAULT_ALLOWE
                 )
             }
 
-            if (from.kind === "shared" && ["module", "app", "routes"].includes(to.kind)) {
+            if (
+                from.kind === "shared" &&
+                ["module", "app", "app-host", "routes"].includes(to.kind)
+            ) {
                 violations.push(`${location(file)}: shared code may not import ${specifier}`)
             }
-            if (from.kind === "module" && ["app", "routes"].includes(to.kind)) {
+            if (from.kind === "module" && ["app", "app-host", "routes"].includes(to.kind)) {
                 violations.push(`${location(file)}: modules may not import ${specifier}`)
             }
             if (
                 from.kind === "paraglide" &&
-                ["module", "shared", "app", "routes"].includes(to.kind)
+                ["module", "shared", "app", "app-host", "routes"].includes(to.kind)
             ) {
                 violations.push(
                     `${location(file)}: generated Paraglide code imports application code (${specifier})`,

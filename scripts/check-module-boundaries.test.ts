@@ -89,10 +89,10 @@ describe("module boundary checker fixtures", () => {
             'import "$lib/shared/state/x"',
             "generated Paraglide",
         ],
-        ["old core alias", "src/lib/app/main.ts", 'import "$lib/core/state"', "removed alias"],
+        ["old core alias", "src/lib/legacy/main.ts", 'import "$lib/core/state"', "removed alias"],
         [
             "old features alias",
-            "src/lib/app/main.ts",
+            "src/lib/legacy/main.ts",
             'import "$lib/features/library"',
             "removed alias",
         ],
@@ -223,7 +223,48 @@ describe("target architecture boundaries", () => {
         expect(result.status, result.stderr).toBe(0)
     })
 
+    it("accepts app and route host imports", () => {
+        const root = fixture({
+            "src/lib/app/AppChrome.svelte": [
+                '<script lang="ts">',
+                'import type { CoreContract } from "$lib/core/contracts"',
+                'import type { ExtensionContract } from "$lib/extension-api/contracts"',
+                'import type { ExtensionHost } from "$lib/extension-host"',
+                'import type { Document } from "$lib/document-model/document"',
+                'import { createBuiltinHost } from "$lib/extensions/builtin"',
+                "void (0 as unknown as CoreContract)",
+                "void (0 as unknown as ExtensionContract)",
+                "void (0 as unknown as ExtensionHost)",
+                "void (0 as unknown as Document)",
+                "void createBuiltinHost",
+                "</script>",
+            ].join("\n"),
+            "src/routes/+page.svelte": [
+                '<script lang="ts">',
+                'import { AppShell } from "$lib/app"',
+                'import type { ExtensionHost } from "$lib/extension-host"',
+                "void AppShell",
+                "void (0 as unknown as ExtensionHost)",
+                "</script>",
+            ].join("\n"),
+        })
+        const result = cli(root)
+        expect(result.status, result.stderr).toBe(0)
+    })
+
     it.each([
+        [
+            "app host importing a legacy feature",
+            "src/lib/app/AppChrome.svelte",
+            '<script lang="ts">import "$lib/modules/viewer"</script>',
+            "app host may not import legacy feature internals",
+        ],
+        [
+            "app host importing a plugin",
+            "src/lib/app/AppChrome.svelte",
+            '<script lang="ts">import "$lib/extensions/builtin/viewer"</script>',
+            "app host may only import",
+        ],
         [
             "core importing a plugin",
             "src/lib/core/main.ts",
@@ -313,6 +354,12 @@ describe("target architecture boundaries", () => {
             "src/lib/extensions/builtin/pdf/adapter/main.ts",
             'import "../../../../../routes/+page"',
             "adapter may not import routes",
+        ],
+        [
+            "route importing a legacy feature",
+            "src/routes/+page.ts",
+            'import "$lib/modules/viewer"',
+            "routes may not import legacy feature internals",
         ],
         [
             "route importing a plugin",
