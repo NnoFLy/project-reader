@@ -1,9 +1,6 @@
 <script lang="ts">
-    import {
-        commandsStore,
-        KeyboardHandler,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
-    import { useModalCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { commandsStore, KeyboardHandler } from "$lib/modules/commands"
+    import { useModalCommands } from "$lib/modules/commands"
     import * as m from "$lib/paraglide/messages"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Input from "$lib/shared/ui/Input.svelte"

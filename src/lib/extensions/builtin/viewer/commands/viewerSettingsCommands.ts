@@ -1,4 +1,4 @@
-import { settingsCommands } from "$lib/extensions/builtin/settings"
+import { settingsCommands } from "$lib/modules/settings"
 
 export const viewerSettingsCommands = {
     zoomIn: settingsCommands["settings.zoom.in"],

@@ -16,7 +16,7 @@
         type CommandScope,
         getShortcutHint,
         commandsStore,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    } from "$lib/modules/commands"
 
     let {
         name,

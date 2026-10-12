@@ -3,12 +3,8 @@
     import MenuIcon from "$lib/shared/icons/MenuIcon.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
     import BookmarkIcon from "$lib/shared/icons/BookmarkIcon.svelte"
-    import { settingsStore } from "$lib/extensions/builtin/settings"
-    import {
-        commandsStore,
-        getShortcutHint,
-        useCommands,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { settingsStore } from "$lib/modules/settings"
+    import { commandsStore, getShortcutHint, useCommands } from "$lib/modules/commands"
     import { createViewerSidebarCloseCommand } from "../commands/viewerSidebarCloseCommand"
     import { untrack } from "svelte"
     import type { DocumentOutlineEntry } from "$lib/document-model"

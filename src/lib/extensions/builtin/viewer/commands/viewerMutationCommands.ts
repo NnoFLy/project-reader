@@ -1,4 +1,4 @@
-import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+import { defineCommands } from "$lib/modules/commands"
 import * as m from "$lib/paraglide/messages"
 import type {
     ViewerBookmarkAddPayload,

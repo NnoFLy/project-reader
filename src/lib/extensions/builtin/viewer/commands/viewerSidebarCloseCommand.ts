@@ -1,5 +1,4 @@
-import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
-import type { AnyCommandDefinition } from "$lib/extensions/builtin/library/commands/commands.types"
+import { defineCommands, type AnyCommandDefinition } from "$lib/modules/commands"
 
 interface ViewerSidebarCloseCommandOptions {
     label: () => string

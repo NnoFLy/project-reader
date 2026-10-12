@@ -6,7 +6,7 @@
     import MenuIcon from "$lib/shared/icons/MenuIcon.svelte"
     import NavigationIcon from "$lib/shared/icons/NavigationIcon.svelte"
     import SettingsIcon from "$lib/shared/icons/SettingsIcon.svelte"
-    import { KeyboardHandler } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { KeyboardHandler } from "$lib/modules/commands"
     import type { PromptItem } from "../prompt.types"
     import { cubicOut } from "svelte/easing"
     import { fade, fly } from "svelte/transition"

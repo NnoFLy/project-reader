@@ -1,11 +1,8 @@
 <script lang="ts">
-    import {
-        commandsStore,
-        type CommandScope,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
-    import { useModalCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { commandsStore, type CommandScope } from "$lib/modules/commands"
+    import { useModalCommands } from "$lib/modules/commands"
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
-    import { defineCommands } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { defineCommands } from "$lib/modules/commands"
     import type { ViewerBookmarkAddPayload } from "../commands/viewerCommandPayloads"
     import * as m from "$lib/paraglide/messages"
 

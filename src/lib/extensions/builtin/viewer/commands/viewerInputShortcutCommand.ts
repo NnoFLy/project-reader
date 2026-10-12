@@ -1,4 +1,4 @@
-import type { AnyCommandDefinition } from "$lib/extensions/builtin/library/commands/commands.types"
+import type { AnyCommandDefinition } from "$lib/modules/commands"
 
 export function withViewerInputShortcut(
     command: AnyCommandDefinition,

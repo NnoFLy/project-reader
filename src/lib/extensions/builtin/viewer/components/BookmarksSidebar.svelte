@@ -6,7 +6,7 @@
         KeyboardHandler,
         commandsStore,
         type CommandScope,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    } from "$lib/modules/commands"
     import { MediaQuery } from "svelte/reactivity"
     import Button from "$lib/shared/ui/Button.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"

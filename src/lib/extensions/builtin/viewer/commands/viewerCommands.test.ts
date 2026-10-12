@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { PromptRequest, PromptService, PromptSnapshot } from "$lib/extensions/builtin/prompt"
+import type { PromptRequest, PromptService, PromptSnapshot } from "$lib/modules/prompt"
 import { createViewerNavigationCommands } from "./viewerNavigationCommands"
 import { createViewerSearchCommands, type ViewerSearchPort } from "./viewerSearchCommands"
 import { createViewerDisplayCommands } from "./viewerDisplayCommands"

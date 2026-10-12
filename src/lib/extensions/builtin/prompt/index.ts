@@ -20,10 +20,7 @@ export type { PromptCommandActions } from "./promptCommands"
 export { promptStore } from "./stores/promptStore.svelte"
 
 import type { ExtensionContext } from "$lib/extension-api"
-import {
-    isSerializablePayload,
-    serializablePayload,
-} from "$lib/extensions/builtin/library/commands/serializable"
+import { isSerializablePayload, serializablePayload } from "$lib/modules/commands"
 import { openCommandPalette } from "./commands/commandPalette"
 import Prompt from "./components/Prompt.svelte"
 import { setPromptCommandRegistry } from "./commandRegistry"

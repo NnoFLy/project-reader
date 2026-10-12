@@ -2,11 +2,7 @@
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
-    import {
-        useCommands,
-        KeyboardHandler,
-        commandsStore,
-    } from "$lib/extensions/builtin/library/commands/commandsStore.svelte"
+    import { useCommands, KeyboardHandler, commandsStore } from "$lib/modules/commands"
     import { MediaQuery } from "svelte/reactivity"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
