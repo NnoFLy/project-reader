@@ -16,7 +16,6 @@ import {
     type ViewSlot,
     createPermissionSet,
     type PermissionSet,
-    SUPPORTED_EXTENSION_PERMISSIONS,
 } from "../extension-api"
 import { DocumentAdapterRegistry as CoreDocumentAdapterRegistry } from "../core/documents"
 import { CommandRegistryImpl } from "../core/commands"
@@ -248,7 +247,9 @@ interface InternalExtensionRegistries extends ExtensionRegistries {
     readonly hostDocuments: DocumentAdapterRegistryImpl
 }
 
-const defaultPermissions = createPermissionSet(SUPPORTED_EXTENSION_PERMISSIONS)
+// Direct registry construction is retained for tests and host integrations; omitted
+// permissions must not grant an extension any capability.
+const defaultPermissions = createPermissionSet([])
 
 export class ContributionRegistry {
     private readonly registries = new Map<string, InternalExtensionRegistries>()

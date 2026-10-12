@@ -2,12 +2,14 @@ import {
     ExtensionLifecycle,
     assertNamespacedId,
     belongsToExtension,
+    createPermissionSet,
     extensionInfo,
+    guardExtensionCapability,
     type AppExtension,
     type ExtensionContext,
     type ExtensionManifest,
-    type ExtensionPermission,
     type ExtensionStorage,
+    type PermissionSet,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
 import { NotificationServiceImpl } from "../core/notifications"
@@ -25,6 +27,7 @@ export interface ExtensionHostOptions {
 
 interface ExtensionRuntime {
     readonly extension: AppExtension
+    readonly permissions: PermissionSet
     lifecycle: ExtensionLifecycle
     readonly storage: ExtensionStorage
     state: LifecycleRecord["state"]
@@ -46,19 +49,18 @@ export class ExtensionHost {
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
-        const manifests = options.extensions.map((extension) => {
-            validateManifest(extension.manifest)
-            return extension.manifest
-        })
-        const { order } = resolveDependencies(manifests)
-        const byId = new Map(
-            options.extensions.map((extension) => [extension.manifest.id, extension]),
-        )
+        const validated = options.extensions.map((extension) => ({
+            extension,
+            permissions: validateManifest(extension.manifest),
+        }))
+        const { order } = resolveDependencies(validated.map(({ extension }) => extension.manifest))
+        const byId = new Map(validated.map((value) => [value.extension.manifest.id, value]))
         for (const manifest of order) {
-            const extension = byId.get(manifest.id)
-            if (!extension) throw new Error(`No implementation for extension: ${manifest.id}`)
+            const value = byId.get(manifest.id)
+            if (!value) throw new Error(`No implementation for extension: ${manifest.id}`)
             this.runtimes.set(manifest.id, {
-                extension,
+                extension: value.extension,
+                permissions: value.permissions,
                 lifecycle: new ExtensionLifecycle("enabled"),
                 storage: createExtensionStorage(this.storage, manifest.id),
                 state: "enabled",
@@ -215,15 +217,24 @@ export class ExtensionHost {
             for (const dependency of Object.keys(manifest.dependencies ?? {}))
                 await this.activate(dependency)
             runtime.state = "activating"
-            const registries = this.contributions.forExtension(manifest.id)
+            const registries = this.contributions.forExtension(
+                manifest.id,
+                runtime.permissions,
+                runtime.storage,
+            )
             const context: ExtensionContext = {
                 extension: extensionInfo(manifest),
+                permissions: runtime.permissions,
                 commands: registries.commands,
                 views: registries.views,
                 settings: registries.settings,
                 documents: registries.documents,
-                storage: runtime.storage,
-                notifications: this.notifications,
+                storage: guardExtensionCapability(runtime.storage, runtime.permissions, "storage"),
+                notifications: guardExtensionCapability(
+                    this.notifications,
+                    runtime.permissions,
+                    "notifications",
+                ),
                 lifecycle: runtime.lifecycle,
             }
             await runtime.extension.activate(context)
@@ -251,13 +262,13 @@ export class ExtensionHost {
     }
 }
 
-function validateManifest(manifest: ExtensionManifest): void {
+function validateManifest(manifest: ExtensionManifest): PermissionSet {
     assertNamespacedId(manifest.id, "extension")
     for (const field of ["name", "version", "engine", "entry"] as const) {
         if (!manifest[field].trim())
             throw new Error(`Extension ${manifest.id} has an empty ${field}`)
     }
-    for (const permission of manifest.permissions) validatePermission(permission, manifest.id)
+    const permissions = createPermissionSet(manifest.permissions)
     for (const dependency of Object.keys(manifest.dependencies ?? {})) {
         assertNamespacedId(dependency, "dependency")
     }
@@ -302,21 +313,7 @@ function validateManifest(manifest: ExtensionManifest): void {
         if (bindings.has(key)) throw new Error(`Keybinding is already declared: ${key}`)
         bindings.add(key)
     }
-}
-
-const SUPPORTED_PERMISSIONS: ReadonlySet<ExtensionPermission> = new Set([
-    "storage",
-    "notifications",
-    "commands",
-    "views",
-    "documents",
-    "settings",
-])
-
-function validatePermission(permission: ExtensionPermission, extensionId: string): void {
-    if (!SUPPORTED_PERMISSIONS.has(permission)) {
-        throw new Error(`Unsupported permission for ${extensionId}: ${permission}`)
-    }
+    return permissions
 }
 
 function assertValidKeybinding(keybinding: readonly string[], commandId: string): void {

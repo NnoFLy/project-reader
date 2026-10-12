@@ -20,7 +20,10 @@ const adapter: DocumentAdapter = {
 
 describe("contribution registries", () => {
     it("validates namespaces, duplicate IDs, and disposal", () => {
-        const registry = new ContributionRegistry().forExtension("builtin.viewer")
+        const registry = new ContributionRegistry().forExtension(
+            "builtin.viewer",
+            createPermissionSet(["commands"]),
+        )
         const disposable = registry.commands.register({
             id: "viewer.next-page",
             label: "Next page",

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import type { AppExtension, DocumentAdapter } from "../extension-api"
+import type { AppExtension, DocumentAdapter, ExtensionContext } from "../extension-api"
 import { DocumentService } from "../core/documents"
+import { MemoryStorageBackend } from "../core/storage"
 import { ExtensionHost } from "./host"
 
 const extension = (id: string, activate: AppExtension["activate"]): AppExtension => ({
@@ -31,6 +32,61 @@ const adapter: DocumentAdapter = {
 }
 
 describe("extension host lifecycle", () => {
+    it("derives and enforces manifest permissions on the real context", async () => {
+        let context: ExtensionContext | undefined
+        const restricted = {
+            ...extension("builtin.restricted", (value) => {
+                context = value
+            }),
+            manifest: {
+                ...extension("builtin.restricted", () => undefined).manifest,
+                permissions: [],
+            },
+        } satisfies AppExtension
+        const host = new ExtensionHost({ extensions: [restricted] })
+
+        await host.activate("builtin.restricted")
+
+        const activated = context as ExtensionContext
+        expect(activated.permissions?.list()).toEqual([])
+        expect(() => activated.commands.list()).toThrow("permission: commands")
+        expect(() => activated.views.list()).toThrow("permission: views")
+        expect(() => activated.settings.list()).toThrow("permission: settings")
+        expect(() => activated.documents.list()).toThrow("permission: documents")
+        expect(() => activated.notifications.info("denied")).toThrow("permission: notifications")
+        expect(() => activated.storage.get("denied")).toThrow("permission: storage")
+    })
+
+    it("wires settings to durable extension-scoped storage", async () => {
+        const storage = new MemoryStorageBackend()
+        const values: unknown[] = []
+        let activations = 0
+        const settingsExtension = {
+            ...extension("builtin.settings", async (context) => {
+                context.settings.register({
+                    id: "settings.theme",
+                    label: "Theme",
+                    defaultValue: "system",
+                })
+                activations += 1
+                if (activations === 1) await context.settings.setValue("settings.theme", "dark")
+                else values.push(await context.settings.getValue("settings.theme"))
+            }),
+            manifest: {
+                ...extension("builtin.settings", () => undefined).manifest,
+                permissions: ["settings", "storage"],
+            },
+        } satisfies AppExtension
+        const host = new ExtensionHost({ extensions: [settingsExtension], storage })
+
+        await host.activate("builtin.settings")
+        await host.disable("builtin.settings")
+        await host.enable("builtin.settings")
+        await host.activate("builtin.settings")
+
+        expect(values).toEqual(["dark"])
+    })
+
     it("registers document contributions in the core document service", async () => {
         const documentService = new DocumentService()
         const registeringExtension = {
@@ -39,6 +95,7 @@ describe("extension host lifecycle", () => {
             }),
             manifest: {
                 ...extension("builtin.viewer", () => undefined).manifest,
+                permissions: ["commands", "documents"],
                 contributes: { adapters: [adapter] },
             },
         } satisfies AppExtension
