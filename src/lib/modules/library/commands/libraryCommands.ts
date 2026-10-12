@@ -4,8 +4,6 @@ import { relinkLibraryNode } from "./libraryRelinkExecution"
 import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
 import { localizedPath } from "$lib/modules/settings"
-import { PDFDocument } from "$lib/modules/pdf"
-import { settingsStore } from "$lib/modules/settings"
 import { vfsStore } from "$lib/modules/documents"
 import type { FolderNode } from "$lib/modules/documents"
 import { defineCommands } from "$lib/modules/commands"
@@ -210,18 +208,10 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                 const expectedGeneration = vfsStore.getContentGeneration(node.id)
                 let total = node.metadata.totalPages
                 if (!total) {
-                    const url = await vfsStore.getFileUrl(node.id, false, "temporary")
-                    if (url) {
-                        const doc = new PDFDocument(url)
-                        try {
-                            await doc.load(settingsStore.scale)
-                            total = await doc.getPageNumber()
-                        } catch (error) {
-                            console.error("Failed to read the PDF page count:", error)
-                        } finally {
-                            await doc.close()
-                            vfsStore.releaseTemporaryFileUrl(node.id, url)
-                        }
+                    try {
+                        total = (await vfsStore.getFilePageCount(node.id)) ?? undefined
+                    } catch (error) {
+                        console.error("Failed to read the document page count:", error)
                     }
                 }
                 if (!vfsStore.isCurrentContent(node.id, expectedGeneration)) return

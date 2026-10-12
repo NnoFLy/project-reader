@@ -12,6 +12,7 @@ const {
     pdfRenderBounds,
     pdfClose,
     pdfFileSize,
+    createPdfDocument,
 } = vi.hoisted(() => ({
     pdfConstructed: vi.fn(),
     pdfLoad: vi.fn(),
@@ -24,43 +25,68 @@ const {
     pdfRenderBounds: vi.fn(),
     pdfClose: vi.fn(),
     pdfFileSize: vi.fn(),
+    createPdfDocument: () => {
+        pdfConstructed()
+        return {
+            load: (...args: unknown[]) => pdfLoad(...args),
+            getPageNumber: () => pdfPageCount(),
+            getAuthor: () => pdfAuthor(),
+            getTitle: () => pdfTitle(),
+            getPage: (pageNumber: number) => pdfPage(pageNumber),
+            getCanvasPage: (page: unknown) => pdfCanvas(page),
+            getAllPageDimensions: () => pdfDimensions(),
+            validateRenderBounds: () => pdfRenderBounds(),
+            close: async () => pdfClose(),
+        }
+    },
 }))
+
+pdfConstructed.mockName("pdfConstructed")
 
 vi.mock("$app/environment", () => ({ browser: true }))
 vi.mock("$lib/modules/pdf", () => ({
-    PDFResourceLimitError: class PDFResourceLimitError extends Error {},
+    PDFResourceLimitError: class PDFResourceLimitError extends Error {
+        constructor(message: string) {
+            super(message)
+            this.name = "PDFResourceLimitError"
+        }
+    },
     assertPdfFileSize: pdfFileSize,
     PDFDocument: class {
         constructor() {
-            pdfConstructed()
+            return createPdfDocument()
         }
-        load(...args: unknown[]) {
-            return pdfLoad(...args)
-        }
-        getPageNumber() {
-            return pdfPageCount()
-        }
-        getAuthor() {
-            return pdfAuthor()
-        }
-        getTitle() {
-            return pdfTitle()
-        }
-        getPage(pageNumber: number) {
-            return pdfPage(pageNumber)
-        }
-        getCanvasPage(page: unknown) {
-            return pdfCanvas(page)
-        }
-        getAllPageDimensions() {
-            return pdfDimensions()
-        }
-        validateRenderBounds() {
-            return pdfRenderBounds()
-        }
-        async close() {
-            return pdfClose()
-        }
+    },
+}))
+vi.mock("$lib/extensions/builtin/pdf", () => ({
+    pdfDocumentAdapter: {
+        id: "test.pdf",
+        extensions: ["pdf"],
+        mimeTypes: ["application/pdf"],
+        probe: vi.fn(async () => ({ supported: true, confidence: 1 })),
+        open: vi.fn(async () => {
+            const legacy = createPdfDocument() as any
+            await legacy.load()
+            const pageCount = await legacy.getPageNumber()
+            const author = await legacy.getAuthor()
+            const title = await legacy.getTitle()
+            return {
+                kind: "paged",
+                capabilities: new Set(),
+                metadata: { title, author, pageCount },
+                pageCount,
+                getPage: (pageNumber: number) => legacy.getPage(pageNumber),
+                renderPage: async (pageNumber: number) => ({
+                    pageNumber,
+                    url: await legacy.getCanvasPage(await legacy.getPage(pageNumber)),
+                    width: 600,
+                    height: 800,
+                    mimeType: "image/fake",
+                }),
+                validateRenderBounds: () => legacy.validateRenderBounds(),
+                close: () => legacy.close(),
+            }
+        }),
     },
 }))
 
