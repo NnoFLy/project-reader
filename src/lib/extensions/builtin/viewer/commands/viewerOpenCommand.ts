@@ -7,6 +7,7 @@ import { viewerStore } from "../stores/viewerStore.svelte"
 import type { ViewerPayload } from "./viewerCommandPayloads"
 import { fileNodeToBook } from "../stores/viewerStore.types"
 import * as m from "$lib/paraglide/messages"
+import { getViewerDocumentErrorDiagnostic } from "../viewerDocument"
 
 export interface ViewerOpenFailure {
     bookId: string
@@ -109,7 +110,13 @@ export function createViewerOpenCommand(options: {
                             }
                             continue
                         }
-                        console.error("[Viewer] Failed to restore file access:", error)
+                        console.error(
+                            "[Viewer] Failed to restore file access:",
+                            getViewerDocumentErrorDiagnostic(
+                                error,
+                                "Unable to access document file",
+                            ),
+                        )
                         await options.onFileAccessFailure({ bookId: payload.bookId, error })
                         releaseAllFileUrls(acquiredLeases)
                         return
@@ -196,7 +203,10 @@ export function createViewerOpenCommand(options: {
                 } catch (error) {
                     releaseAllFileUrls(acquiredLeases)
                     if (generation !== openGeneration) return
-                    console.error("[Viewer] Unexpected book open failure:", error)
+                    console.error(
+                        "[Viewer] Unexpected book open failure:",
+                        getViewerDocumentErrorDiagnostic(error),
+                    )
                     const publishedBook = viewerStore.getCurrentBook()
                     const publishedBookMatchesAttempt =
                         publishedBook?.id === payload.bookId &&
@@ -207,7 +217,10 @@ export function createViewerOpenCommand(options: {
                         } catch (cleanupError) {
                             console.error(
                                 "[Viewer] Failed to clear the rejected book:",
-                                cleanupError,
+                                getViewerDocumentErrorDiagnostic(
+                                    cleanupError,
+                                    "Unable to clear the rejected document",
+                                ),
                             )
                         }
                     }

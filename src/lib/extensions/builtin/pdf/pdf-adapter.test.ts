@@ -48,11 +48,29 @@ describe("built-in PDF adapter boundary", () => {
         )
 
         expect(document.capabilities).toEqual(new Set(["text", "search", "outline", "thumbnails"]))
+        expect(document).not.toHaveProperty("getAnnotations")
     })
 
     it("enforces the PDF file boundary", () => {
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes)).not.toThrow()
         expect(() => assertPdfFileSize(PDF_RESOURCE_LIMITS.maxFileBytes + 1)).toThrow("byte limit")
+    })
+
+    it("keeps source failure details internal when loading a PDF", async () => {
+        const sourceError = new Error("private source URL and parser details")
+        const document = new PagedPdfDocument(
+            createBoundedDocumentSource({
+                id: "pdf-load-failure",
+                name: "sample.pdf",
+                size: 1,
+                reader: { read: async () => Promise.reject(sourceError) },
+            }),
+        )
+
+        await expect(document.load()).rejects.toMatchObject({
+            message: "Failed to parse PDF document",
+            cause: sourceError,
+        })
     })
 
     it("closes its source once when close is called repeatedly", async () => {

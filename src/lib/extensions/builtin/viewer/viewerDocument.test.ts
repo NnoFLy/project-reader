@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { OpenedDocument } from "$lib/document-model"
 import {
+    getViewerDocumentErrorDiagnostic,
     getViewerDocumentLoader,
     installViewerDocumentService,
     type ViewerDocumentService,
@@ -48,6 +49,16 @@ afterEach(() => {
 })
 
 describe("viewer document loading", () => {
+    it("sanitizes adapter diagnostics without exposing the original exception", () => {
+        const error = new Error("secret source URL and parser details")
+
+        expect(getViewerDocumentErrorDiagnostic(error)).toEqual({
+            name: "DocumentError",
+            message: "Unable to open document",
+        })
+        expect(JSON.stringify(getViewerDocumentErrorDiagnostic(error))).not.toContain(error.message)
+    })
+
     it("loads and closes documents through the host-provided service", async () => {
         const loaded = await getViewerDocumentLoader().open({
             id: "book",

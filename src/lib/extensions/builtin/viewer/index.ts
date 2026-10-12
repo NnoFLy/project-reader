@@ -13,6 +13,7 @@ import {
 import { bookmarksStore } from "./stores/bookmarksStore.svelte"
 import { notesStore } from "./stores/notesStore.svelte"
 import { searchStore } from "./stores/searchStore.svelte"
+import { getViewerDocumentErrorDiagnostic } from "./viewerDocument"
 
 export { ViewerPage }
 export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
@@ -55,7 +56,10 @@ export function activateViewer(
     void viewerStore.configureStorage(viewerStorage)
     const openCommand = createViewerOpenCommand({
         onFileAccessFailure: ({ bookId, error }) => {
-            console.error("[Viewer] Unable to open document", { bookId, error })
+            console.error("[Viewer] Unable to open document", {
+                bookId,
+                error: getViewerDocumentErrorDiagnostic(error),
+            })
             context.notifications.error("Unable to open document")
         },
     })

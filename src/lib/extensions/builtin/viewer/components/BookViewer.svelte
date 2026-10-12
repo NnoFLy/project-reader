@@ -9,7 +9,7 @@
         ViewerPagedDocument,
         ViewerReflowDocument,
     } from "../viewerDocument"
-    import { getViewerDocumentLoader } from "../viewerDocument"
+    import { getViewerDocumentErrorDiagnostic, getViewerDocumentLoader } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import * as m from "$lib/paraglide/messages"
@@ -740,7 +740,7 @@
                 } catch (err) {
                     loadedDoc = loadedDoc === doc ? null : loadedDoc
                     await closeDoc()
-                    console.error("Failed to load PDF:", err)
+                    console.error("Failed to load PDF:", getViewerDocumentErrorDiagnostic(err))
                     if (
                         !canceled &&
                         viewerStore.getCurrentBook()?.id === loadingBookId &&
@@ -902,7 +902,10 @@
                     })
                 } catch (err: any) {
                     if (err.message?.startsWith("Rendering cancelled")) {
-                        console.error("Failed to render page(s):", err)
+                        console.error(
+                            "Failed to render page(s):",
+                            getViewerDocumentErrorDiagnostic(err, "Unable to render document page"),
+                        )
                     }
                     if (!controller.signal.aborted) {
                         isPageLoading = false
@@ -994,7 +997,10 @@
                         })
                     }
                 } catch (err) {
-                    console.error("Failed to load outline:", err)
+                    console.error(
+                        "Failed to load outline:",
+                        getViewerDocumentErrorDiagnostic(err, "Unable to load document outline"),
+                    )
                     if (!canceled) {
                         untrack(() => {
                             outlineList = null

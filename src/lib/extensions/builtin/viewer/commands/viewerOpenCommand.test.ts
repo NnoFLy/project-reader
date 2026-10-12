@@ -305,12 +305,22 @@ describe("viewer.open integration", () => {
         nodes.book = { id: "book", type: "file", name: "Book", url: "old", isLocked: true }
         restoreFileAccess.mockRejectedValue(error)
         const onFileAccessFailure = vi.fn()
+        const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {})
 
         await expect(
             createViewerOpenCommand({ onFileAccessFailure }).run({ bookId: "book" }),
         ).resolves.toBeUndefined()
 
         expect(onFileAccessFailure).toHaveBeenCalledWith({ bookId: "book", error })
+        expect(diagnostic).toHaveBeenCalledWith("[Viewer] Failed to restore file access:", {
+            name: "DocumentError",
+            message: "Unable to access document file",
+        })
+        expect(diagnostic).not.toHaveBeenCalledWith(
+            "[Viewer] Failed to restore file access:",
+            error,
+        )
+        diagnostic.mockRestore()
         expect(setCurrentBook).not.toHaveBeenCalled()
         expect(viewerFileCapability.clearForwardHistory).not.toHaveBeenCalled()
         expect(goto).not.toHaveBeenCalled()

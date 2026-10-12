@@ -111,9 +111,9 @@ export class PagedPdfDocument implements PagedDocument {
     async load(signal?: AbortSignal): Promise<this> {
         this.assertOpen()
         assertPdfFileSize(this.source.size)
-        const data = await this.readSource(signal)
-        throwIfAborted(signal)
         try {
+            const data = await this.readSource(signal)
+            throwIfAborted(signal)
             this.loadingTask = pdfjs.getDocument({ data })
             this.pdfDoc = await this.loadingTask.promise
             this.loadingTask = null
@@ -136,9 +136,9 @@ export class PagedPdfDocument implements PagedDocument {
         } catch (error) {
             if (error instanceof PDFResourceLimitError) throw error
             if (signal?.aborted) throw signal.reason ?? abortError("Loading PDF was cancelled")
-            throw new Error(
-                `Failed to parse PDF document: ${error instanceof Error ? error.message : error}`,
-            )
+            const documentError = new Error("Failed to parse PDF document", { cause: error })
+            documentError.name = "PDFDocumentError"
+            throw documentError
         }
     }
 
@@ -243,12 +243,6 @@ export class PagedPdfDocument implements PagedDocument {
         return entries
     }
 
-    async getAnnotations(pageNumber: number): Promise<readonly unknown[]> {
-        return (await this.getPageProxy(pageNumber).then((page) =>
-            page.getAnnotations(),
-        )) as unknown[]
-    }
-
     async getCanvasPage(pageNumber: number, quality = 1, signal?: AbortSignal): Promise<string> {
         this.assertOpen()
         assertPageNumber(pageNumber, this._pageCount)
@@ -315,11 +309,10 @@ export class PagedPdfDocument implements PagedDocument {
         } catch (error) {
             if (signal?.aborted || (error as { name?: string })?.name === "AbortError") throw error
             if ((error as { name?: string })?.name === "RenderingCancelledException") throw error
-            throw error instanceof PDFResourceLimitError
-                ? error
-                : new Error(
-                      `Failed to render page visual: ${error instanceof Error ? error.message : error}`,
-                  )
+            if (error instanceof PDFResourceLimitError) throw error
+            const renderError = new Error("Failed to render page visual", { cause: error })
+            renderError.name = "PDFRenderError"
+            throw renderError
         }
     }
 

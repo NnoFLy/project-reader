@@ -10,6 +10,43 @@ import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/
 
 export type ViewerTextItem = { readonly text: string }
 
+export interface ViewerDocumentErrorDiagnostic {
+    readonly name: string
+    readonly message: string
+}
+
+const SAFE_DOCUMENT_ERROR_NAMES = new Set([
+    "AbortError",
+    "DocumentOpenError",
+    "DocumentSourceLimitError",
+    "PDFDocumentError",
+    "PDFRenderError",
+    "PDFResourceLimitError",
+    "UnsupportedDocumentError",
+])
+
+/** Returns a safe diagnostic without exposing adapter messages, URLs, or document content. */
+export function getViewerDocumentErrorDiagnostic(
+    error: unknown,
+    fallback = "Unable to open document",
+): ViewerDocumentErrorDiagnostic {
+    if (!(error instanceof Error)) return { name: "DocumentError", message: fallback }
+    const name = SAFE_DOCUMENT_ERROR_NAMES.has(error.name) ? error.name : "DocumentError"
+    const message =
+        error.name === "AbortError"
+            ? "Document operation was cancelled"
+            : error.name === "UnsupportedDocumentError"
+              ? "This document format is not supported"
+              : error.name === "DocumentSourceLimitError" || error.name === "PDFResourceLimitError"
+                ? "Document exceeds a configured resource limit"
+                : error.name === "PDFDocumentError"
+                  ? "Unable to read the PDF document"
+                  : error.name === "PDFRenderError"
+                    ? "Unable to render the document page"
+                    : fallback
+    return { name, message }
+}
+
 export interface ViewerPageLayerTarget {
     readonly textContainer: HTMLElement
     readonly annotationContainer: HTMLDivElement | null
