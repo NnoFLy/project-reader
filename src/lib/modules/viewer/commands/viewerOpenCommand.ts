@@ -187,7 +187,7 @@ export function createViewerOpenCommand(options: {
                     const publishedBook = viewerStore.getCurrentBook()
                     const publishedBookMatchesAttempt =
                         publishedBook?.id === payload.bookId &&
-                        publishedBook.url === attemptedBookUrl
+                        publishedBook?.url === attemptedBookUrl
                     if (!publishedBookMatchesAttempt) {
                         try {
                             await viewerStore.setCurrentBook(null)
