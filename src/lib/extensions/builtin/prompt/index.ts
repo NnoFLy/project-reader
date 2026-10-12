@@ -1,11 +1,30 @@
+export { default as KeymapHelp } from "./components/KeymapHelp.svelte"
+export { default as Prompt } from "./components/Prompt.svelte"
+export { default as PromptItemComponent } from "./components/PromptItem.svelte"
+export { openCommandPalette } from "./commands/commandPalette"
+export { getPromptCommandRegistry, setPromptCommandRegistry } from "./commandRegistry"
+export { buildKeymapHelpItems, filterKeymapHelpItems } from "./keymapHelp"
+export { createPromptCommands } from "./promptCommands"
+export type { KeymapHelpItem, KeymapHelpSource } from "./keymapHelp"
+export type {
+    PromptItem,
+    PromptItemPresentation,
+    PromptItems,
+    PromptRequest,
+    PromptSelectionBehavior,
+    PromptSelectionControls,
+    PromptService,
+    PromptSnapshot,
+} from "./prompt.types"
+export type { PromptCommandActions } from "./promptCommands"
+export { promptStore } from "./stores/promptStore.svelte"
+
 import type { ExtensionContext } from "$lib/extension-api"
 import { isSerializablePayload, serializablePayload } from "$lib/modules/commands"
-import {
-    openCommandPalette,
-    Prompt,
-    setPromptCommandRegistry,
-    promptStore,
-} from "$lib/modules/prompt"
+import { openCommandPalette } from "./commands/commandPalette"
+import Prompt from "./components/Prompt.svelte"
+import { setPromptCommandRegistry } from "./commandRegistry"
+import { promptStore } from "./stores/promptStore.svelte"
 
 export const PROMPT_VIEW_ID = "prompt.palette"
 

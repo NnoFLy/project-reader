@@ -6,7 +6,7 @@ import {
     type Lifecycle,
     type ViewRegistry,
 } from "$lib/extension-api"
-import { activatePrompt } from "./index"
+import { activatePrompt, openCommandPalette, promptStore } from "./index"
 
 function createPromptContext() {
     const commands = new CommandRegistryImpl("builtin.prompt")
@@ -53,6 +53,15 @@ describe("builtin.prompt activation", () => {
         await expect(
             context.commands.execute("prompt.open", { initialQuery: 1 }),
         ).rejects.toBeInstanceOf(InvalidCommandPayloadError)
+
+        const palette = openCommandPalette()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(promptStore.snapshot?.items.map(({ id }) => id)).toEqual([
+            "prompt.open",
+            "prompt.close",
+        ])
+        promptStore.close()
+        await palette
 
         await dispose()
         expect(context.commands.list()).toEqual([])
