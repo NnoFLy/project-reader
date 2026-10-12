@@ -2,7 +2,12 @@ import type { AnyCommandDefinition } from "./commands/commands.types"
 import type { CommandContribution, ExtensionContext } from "$lib/extension-api"
 import LibraryPage from "./LibraryPage.svelte"
 import { createLibraryCommands } from "./commands/libraryCommands"
-import { configureLibraryUIStorage, LibraryUIController } from "./state/libraryUI.svelte"
+import {
+    configureLibraryUIController,
+    configureLibraryUIStorage,
+    LibraryUIController,
+} from "./state/libraryUI.svelte"
+import { configurePromptStorage } from "./commands/promptStore.svelte"
 import { libraryStore } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 
@@ -19,11 +24,14 @@ export function activateLibrary(context: ExtensionContext): void {
     const libraryStorage = context.storage.namespace("library")
     libraryStore.configureStorage(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
+    configurePromptStorage(libraryStorage)
     configureLibraryNotifications((message, level = "info") => {
         context.notifications[level](message)
     })
 
-    const commands = createLibraryCommands(new LibraryUIController())
+    const libraryUI = new LibraryUIController()
+    configureLibraryUIController(libraryUI)
+    const commands = createLibraryCommands(libraryUI)
     const registrations = Object.values(commands).map((value) => {
         const command = value as AnyCommandDefinition
         const contribution: CommandContribution = {
@@ -41,6 +49,8 @@ export function activateLibrary(context: ExtensionContext): void {
     })
     context.lifecycle.onDispose(() => {
         for (const registration of registrations) registration.dispose()
+        configureLibraryUIController(undefined)
+        configurePromptStorage(undefined)
     })
 
     context.views.registerNative({

@@ -15,6 +15,10 @@ export function configureLibraryUIStorage(storage: StorageNamespace): void {
 
 let libraryUIController: LibraryUIController | undefined
 
+export function configureLibraryUIController(controller: LibraryUIController | undefined): void {
+    libraryUIController = controller
+}
+
 export function parseLibraryCardSizeLevel(value: string | null): number {
     if (value === null || value.trim() === "") return DEFAULT_LIBRARY_CARD_SIZE_LEVEL
     const level = Number(value)
@@ -35,10 +39,6 @@ export class LibraryUIController {
     nodeToEditMetadataId = $state<string | null>(null)
     isRenameFolderModalOpen = $state(false)
     folderToRenameId = $state<string | null>(null)
-
-    constructor() {
-        libraryUIController = this
-    }
 
     get cardSizeLevel(): number {
         return this.#cardSizeLevel
@@ -97,7 +97,8 @@ export class LibraryUIController {
 const [getLibraryUIContext, setLibraryUIContext] = createContext<LibraryUIController>()
 
 export function mountLibraryUI(): LibraryUIController {
-    const controller = new LibraryUIController()
+    const controller = libraryUIController ?? new LibraryUIController()
+    libraryUIController = controller
     setLibraryUIContext(controller)
     return controller
 }

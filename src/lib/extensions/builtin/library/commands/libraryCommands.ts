@@ -10,8 +10,19 @@ import { defineCommands } from "./commands.types"
 import { commandsStore } from "./commandsStore.svelte"
 import type { PromptItem } from "./promptStore.svelte"
 import { promptStore } from "./promptStore.svelte"
+import { executeLibraryHostCommand, getLibraryPrompt } from "../state/libraryHostBridge"
 import PromptBookPreview from "../components/PromptBookPreview.svelte"
 import * as m from "$lib/paraglide/messages"
+
+function libraryPrompt() {
+    return getLibraryPrompt() ?? promptStore
+}
+
+function executeHostCommand(commandId: string, payload?: unknown) {
+    return getLibraryPrompt()
+        ? executeLibraryHostCommand(commandId, payload)
+        : commandsStore.execute(commandId as never, payload as never)
+}
 
 function folderUrl(folderId: string | null): string {
     if (folderId === null) return localizedPath("/")
@@ -144,13 +155,13 @@ export const libraryBookOpenCommand = defineCommands({
         run: async (payload) => {
             let bookId = payload?.bookId
             if (!bookId) {
-                bookId = await promptStore.choose({
+                bookId = await libraryPrompt().choose({
                     id: "library-books",
                     items: () => bookItems(false),
                     filter: "fuzzy",
                 })
             }
-            if (bookId) await commandsStore.execute("viewer.open", { bookId })
+            if (bookId) await executeHostCommand("viewer.open", { bookId })
         },
     },
 })["library.book.open"]
@@ -166,13 +177,13 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
             run: async (payload) => {
                 let bookId = payload?.bookId
                 if (!bookId) {
-                    bookId = await promptStore.choose({
+                    bookId = await libraryPrompt().choose({
                         id: "library-books",
                         items: () => bookItems(false),
                         filter: "fuzzy",
                     })
                 }
-                if (bookId) await commandsStore.execute("viewer.open", { bookId })
+                if (bookId) await executeHostCommand("viewer.open", { bookId })
             },
         },
         "library.book.open-recursive": {
@@ -183,10 +194,10 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
             category: "menu",
             run: async (payload) => {
                 if (payload?.bookId) {
-                    await commandsStore.execute("viewer.open", { bookId: payload.bookId })
+                    await executeHostCommand("viewer.open", { bookId: payload.bookId })
                     return
                 }
-                const bookId = await promptStore.choose({
+                const bookId = await libraryPrompt().choose({
                     id: "library-books-recursive",
                     items: () => bookItems(true),
                     filter: "fuzzy",
@@ -243,7 +254,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                     await goto(resolve(folderUrl(payload.folderId) as any))
                     return
                 }
-                const folderId = await promptStore.choose({
+                const folderId = await libraryPrompt().choose({
                     id: "library-folders",
                     items: folderItems,
                     filter: "fuzzy",
@@ -296,7 +307,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
             disabled: () => !vfsStore.activeFileId || libraryUI.isPickingMode,
             run: async () => {
                 if (vfsStore.activeFileId) {
-                    await commandsStore.execute("viewer.open", { bookId: vfsStore.activeFileId })
+                    await executeHostCommand("viewer.open", { bookId: vfsStore.activeFileId })
                 }
             },
         },
@@ -380,7 +391,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                 if (nodeIds.length === 0) return
                 let targetFolderId = payload?.targetFolderId
                 if (!payload || !("targetFolderId" in payload)) {
-                    targetFolderId = await promptStore.choose({
+                    targetFolderId = await libraryPrompt().choose({
                         id: "library-move-target",
                         items: () => moveTargetItems(nodeIds),
                         filter: "fuzzy",
@@ -423,7 +434,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                 const nodeId = payload.nodeId
                 let targetFolderId = payload.targetFolderId
                 if (!("targetFolderId" in payload)) {
-                    targetFolderId = await promptStore.choose({
+                    targetFolderId = await libraryPrompt().choose({
                         id: "library-move-target",
                         items: () => moveTargetItems([nodeId]),
                         filter: "fuzzy",
@@ -501,9 +512,9 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                 if (!payload?.nodeId) return
                 if (!payload.fileSource) {
                     requestLibraryRelink(payload.nodeId, () =>
-                        commandsStore
-                            .execute("viewer.open", { bookId: payload.nodeId })
-                            .then(() => undefined),
+                        executeHostCommand("viewer.open", { bookId: payload.nodeId }).then(
+                            () => undefined,
+                        ),
                     )
                     return
                 }

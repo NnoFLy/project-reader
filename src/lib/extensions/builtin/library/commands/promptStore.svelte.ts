@@ -1,8 +1,39 @@
 import Fuse from "fuse.js"
+import type { StorageNamespace } from "$lib/extension-api"
 import type { PromptItem, PromptRequest, PromptService, PromptSnapshot } from "./prompt.types"
 
 const MAX_QUERY_HISTORY = 50
+const QUERY_HISTORY_STORAGE_KEY = "prompt.query-history"
 import * as m from "$lib/paraglide/messages"
+
+type PersistedQueryHistory = {
+    lastQuery?: unknown
+    retainedQueries?: unknown
+}
+
+let promptStorage: StorageNamespace | undefined
+
+export function configurePromptStorage(storage: StorageNamespace | undefined): void {
+    promptStorage = storage
+    if (!storage) return
+    void storage.get<PersistedQueryHistory>(QUERY_HISTORY_STORAGE_KEY).then((stored) => {
+        if (!stored || typeof stored !== "object") return
+        if (typeof stored.lastQuery === "string")
+            promptStore.setLastQueryFromStorage(stored.lastQuery)
+        if (!stored.retainedQueries || typeof stored.retainedQueries !== "object") return
+        for (const [requestId, queries] of Object.entries(stored.retainedQueries)) {
+            if (!Array.isArray(queries)) continue
+            const validQueries = queries.filter(
+                (query): query is string => typeof query === "string" && query !== "",
+            )
+            if (validQueries.length > 0)
+                promptStore.setRetainedQueriesFromStorage(
+                    requestId,
+                    validQueries.slice(-MAX_QUERY_HISTORY),
+                )
+        }
+    })
+}
 
 const PROMPT_FUSE_OPTIONS = {
     keys: [
@@ -51,9 +82,25 @@ class PromptStore implements PromptService {
         this.restoreQueryHistory()
     }
 
-    private restoreQueryHistory(): void {}
+    private restoreQueryHistory(): void {
+        // Storage is configured by the library extension after activation.
+    }
 
-    private persistQueryHistory(): void {}
+    setLastQueryFromStorage(query: string): void {
+        this.lastQuery = query
+    }
+
+    setRetainedQueriesFromStorage(requestId: string, queries: string[]): void {
+        this.retainedQueries.set(requestId, queries)
+    }
+
+    private persistQueryHistory(): void {
+        if (!promptStorage) return
+        void promptStorage.set(QUERY_HISTORY_STORAGE_KEY, {
+            lastQuery: this.lastQuery,
+            retainedQueries: Object.fromEntries(this.retainedQueries),
+        })
+    }
 
     setLastQuery(query: string): void {
         this.lastQuery = query

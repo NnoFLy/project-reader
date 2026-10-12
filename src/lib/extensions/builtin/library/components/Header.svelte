@@ -19,8 +19,8 @@
         COMMANDS_CONTEXT_KEY,
         type CommandScope,
         getShortcutHint,
-        commandsStore,
     } from "../commands/commandsStore.svelte"
+    import { executeLibraryHostCommand } from "../state/libraryHostBridge"
 
     const THEMES = [
         { value: "light", label: () => m.light(), Icon: SunIcon },
@@ -53,7 +53,7 @@
                     variant="action"
                     class="search-prompt-button"
                     square
-                    onclick={() => void commandsNode.execute("prompt.open")}
+                    onclick={() => void executeLibraryHostCommand("prompt.open")}
                     aria-label={m.keymap_prompt()}
                     tooltip={`${m.keymap_prompt()}${getShortcutHint(commandsNode, "prompt.open")}`}
                 >
@@ -65,7 +65,7 @@
                 <Button
                     variant="action"
                     class="continue-btn"
-                    onclick={() => void commandsStore.execute("library.continue-reading")}
+                    onclick={() => void commandsNode.execute("library.continue-reading")}
                     aria-label={m.continue_reading()}
                     tooltip={`${m.continue_reading()}${getShortcutHint(commandsNode, "library.continue-reading")}`}
                 >
@@ -77,7 +77,7 @@
                 <Button
                     variant="action"
                     class="settings-trigger"
-                    onclick={() => void commandsStore.execute("settings.theme")}
+                    onclick={() => void executeLibraryHostCommand("settings.theme")}
                     aria-label={m.select_theme()}
                     tooltip={m.select_theme()}
                 >
@@ -88,7 +88,7 @@
                 <Button
                     variant="action"
                     class="settings-trigger"
-                    onclick={() => void commandsStore.execute("settings.language")}
+                    onclick={() => void executeLibraryHostCommand("settings.language")}
                     aria-label={m.language_switcher()}
                     tooltip={m.language_switcher()}
                 >

@@ -43,6 +43,7 @@
     import { settingsStore } from "../state/librarySettings"
     import { createLibraryDashboardInteractionCommands } from "../commands/libraryDashboardInteractionCommands"
     import { mergeLibraryEntries } from "../utils/libraryEntries"
+    import { executeLibraryHostCommand } from "../state/libraryHostBridge"
 
     const libraryCommands = createLibraryCommands(libraryUI)
 
@@ -496,7 +497,7 @@
         <div class="mobile-controls-container">
             <button
                 class="mobile-prompt-btn"
-                onclick={() => void libraryCommandScope.execute("prompt.open")}
+                onclick={() => void executeLibraryHostCommand("prompt.open")}
                 aria-label={m.keymap_prompt()}
                 title={m.keymap_prompt()}
             >
