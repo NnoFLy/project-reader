@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { browser } from "$app/environment"
 import { SvelteSet } from "svelte/reactivity"
 import type {
@@ -213,7 +212,7 @@ export class VFSStore {
     currentFolderId = $state<string | null>(null)
     forwardHistory = $state<string[]>([])
     initialized = $state<boolean>(false)
-    db: any
+    db: LibraryStorage
     importJobs = $state<ImportJob[]>([])
 
     activeImportCount = $derived(this.importJobs.filter((job) => job.stage !== "failed").length)
