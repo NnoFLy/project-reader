@@ -10,6 +10,7 @@ import {
 import { configurePromptStorage } from "./commands/promptStore.svelte"
 import { libraryStore } from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
+import { migrateLegacyDatabaseToLibrary } from "$lib/modules/documents"
 
 export { LibraryPage }
 export { default as LibraryRelinkHost } from "./components/LibraryRelinkHost.svelte"
@@ -20,8 +21,9 @@ export type * from "./state/libraryStore.types"
 
 export const LIBRARY_VIEW_ID = "library.page"
 
-export function activateLibrary(context: ExtensionContext): void {
+export async function activateLibrary(context: ExtensionContext): Promise<void> {
     const libraryStorage = context.storage.namespace("library")
+    await migrateLegacyDatabaseToLibrary(libraryStorage)
     libraryStore.configureStorage(libraryStorage)
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)

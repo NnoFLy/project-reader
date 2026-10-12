@@ -8,6 +8,7 @@ import type {
     UserNote,
     Bookmark,
 } from "../vfs/vfsStore.types"
+import type { StorageNamespace } from "$lib/extension-api"
 
 export type TableName =
     | "books"
@@ -51,6 +52,7 @@ interface IDBBookPreviews {
     bulkPut(previews: BookPreview[]): Promise<string>
     delete(id: string): Promise<void>
     bulkDelete(ids: string[]): Promise<void>
+    getAll(): Promise<BookPreview[]>
 }
 
 interface IDBFileContents {
@@ -69,6 +71,7 @@ interface IDBIndexedTexts {
     delete(id: string): Promise<void>
     bulkDelete(ids: string[]): Promise<void>
     getByBookId(bookId: string): Promise<IndexedText[]>
+    getAll(): Promise<IndexedText[]>
     deleteByBookId(bookId: string): Promise<void>
 }
 
@@ -89,6 +92,7 @@ interface IDBUserNotes {
     delete(id: string): Promise<void>
     bulkDelete(ids: string[]): Promise<void>
     getByBookId(bookId: string): Promise<UserNote[]>
+    getAll(): Promise<UserNote[]>
     deleteByBookId(bookId: string): Promise<void>
 }
 
@@ -112,6 +116,180 @@ export interface IDatabase {
     userNotes: IDBUserNotes
     bookmarks: IDBBookmarks
     transaction<T>(mode: "r" | "rw", tables: TableName[], callback: () => Promise<T>): Promise<T>
+}
+
+export const LEGACY_LIBRARY_MIGRATION_VERSION = 1
+export const LEGACY_LIBRARY_MIGRATION_MARKER = "legacy-dexie-migration"
+
+type LegacyMigrationMarker = {
+    version: number
+    completed: boolean
+}
+
+type LegacyTable = {
+    name: TableName
+    storagePrefix: string
+    read: (database: IDatabase) => Promise<unknown[]>
+}
+
+const LEGACY_TABLES: readonly LegacyTable[] = [
+    { name: "books", storagePrefix: "books", read: (database) => database.files.getAll() },
+    {
+        name: "previews",
+        storagePrefix: "previews",
+        read: (database) => database.previews.getAll(),
+    },
+    { name: "folders", storagePrefix: "folders", read: (database) => database.folders.getAll() },
+    {
+        name: "fileContents",
+        storagePrefix: "fileContents",
+        read: (database) => database.fileContents.getAll(),
+    },
+    {
+        name: "indexedTexts",
+        storagePrefix: "indexedTexts",
+        read: (database) => database.indexedTexts.getAll(),
+    },
+    {
+        name: "userNotes",
+        storagePrefix: "userNotes",
+        read: (database) => database.userNotes.getAll(),
+    },
+    {
+        name: "bookmarks",
+        storagePrefix: "bookmarks",
+        read: (database) => database.bookmarks.getAll(),
+    },
+]
+
+const legacyMigrationPromises = new WeakMap<object, Promise<void>>()
+
+/**
+ * Copy the old application-owned Dexie records into the Library extension namespace.
+ * The source is read-only throughout: a failed copy can leave destination retries, but never
+ * destroys the only copy of a user's data. The optional database is used by tests and migration
+ * tooling; normal activation opens the shared legacy database when IndexedDB is available.
+ */
+export function migrateLegacyDatabaseToLibrary(
+    storage: StorageNamespace,
+    legacyDatabase?: IDatabase,
+): Promise<void> {
+    const existing = legacyMigrationPromises.get(storage)
+    if (existing) return existing
+    if (!legacyDatabase && typeof indexedDB === "undefined") return Promise.resolve()
+
+    const ownsDatabase = !legacyDatabase
+    const database = legacyDatabase ?? new Database()
+    const migration = (async () => {
+        try {
+            const marker = await storage.get<LegacyMigrationMarker>(LEGACY_LIBRARY_MIGRATION_MARKER)
+            if (marker?.completed && marker.version >= LEGACY_LIBRARY_MIGRATION_VERSION) return
+
+            await storage.set(LEGACY_LIBRARY_MIGRATION_MARKER, {
+                version: LEGACY_LIBRARY_MIGRATION_VERSION,
+                completed: false,
+            } satisfies LegacyMigrationMarker)
+
+            const records = await database.transaction(
+                "r",
+                LEGACY_TABLES.map((table) => table.name),
+                async () => {
+                    const result = new Map<string, unknown[]>()
+                    for (const table of LEGACY_TABLES) {
+                        result.set(table.name, await table.read(database))
+                    }
+                    return result
+                },
+            )
+
+            for (const table of LEGACY_TABLES) {
+                for (const record of records.get(table.name) ?? []) {
+                    if (!isRecordWithId(record)) continue
+                    const copy = cloneIfPossible(record)
+                    const key = `${table.storagePrefix}.${record.id}`
+                    await storage.set(key, copy)
+                    const persisted = await storage.get<unknown>(key)
+                    if (!(await equivalentCloneableValue(copy, persisted))) {
+                        throw new Error(`Legacy library migration verification failed for ${key}`)
+                    }
+                }
+            }
+
+            await storage.set(LEGACY_LIBRARY_MIGRATION_MARKER, {
+                version: LEGACY_LIBRARY_MIGRATION_VERSION,
+                completed: true,
+            } satisfies LegacyMigrationMarker)
+        } finally {
+            if (ownsDatabase) (database as Database).close()
+        }
+    })()
+    legacyMigrationPromises.set(storage, migration)
+    void migration.catch(() => {
+        if (legacyMigrationPromises.get(storage) === migration)
+            legacyMigrationPromises.delete(storage)
+    })
+    return migration
+}
+
+function isRecordWithId(value: unknown): value is Record<string, unknown> & { id: string } {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as { id?: unknown }).id === "string"
+    )
+}
+
+function cloneIfPossible<T>(value: T): T {
+    if (typeof structuredClone !== "function") return value
+    try {
+        return structuredClone(value)
+    } catch {
+        // Some browser versions expose FileSystemHandle without structured clone support. The
+        // destination backend still gets the original capability and can decide whether it can
+        // persist it, rather than silently dropping the handle.
+        return value
+    }
+}
+
+async function equivalentCloneableValue(left: unknown, right: unknown): Promise<boolean> {
+    if (Object.is(left, right)) return true
+    if (typeof Blob !== "undefined" && left instanceof Blob && right instanceof Blob) {
+        if (left.size !== right.size || left.type !== right.type) return false
+        const [leftBytes, rightBytes] = await Promise.all([left.arrayBuffer(), right.arrayBuffer()])
+        return new Uint8Array(leftBytes).every(
+            (byte, index) => byte === new Uint8Array(rightBytes)[index],
+        )
+    }
+    if (Array.isArray(left) && Array.isArray(right)) {
+        return (
+            left.length === right.length &&
+            (
+                await Promise.all(
+                    left.map((value, index) => equivalentCloneableValue(value, right[index])),
+                )
+            ).every(Boolean)
+        )
+    }
+    if (isPlainRecord(left) && isPlainRecord(right)) {
+        const leftKeys = Object.keys(left)
+        const rightKeys = Object.keys(right)
+        if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !(key in right)))
+            return false
+        return (
+            await Promise.all(
+                leftKeys.map((key) => equivalentCloneableValue(left[key], right[key])),
+            )
+        ).every(Boolean)
+    }
+    return false
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        (typeof Blob === "undefined" || !(value instanceof Blob))
+    )
 }
 
 let activeDatabaseOwners = 0
@@ -209,6 +387,9 @@ class DBBookPreviews implements IDBBookPreviews {
     bulkDelete(ids: string[]): Promise<void> {
         return db.previews.bulkDelete(ids)
     }
+    getAll(): Promise<BookPreview[]> {
+        return db.previews.toArray()
+    }
 }
 
 class DBFileContents implements IDBFileContents {
@@ -251,6 +432,9 @@ class DBIndexedTexts implements IDBIndexedTexts {
     getByBookId(bookId: string): Promise<IndexedText[]> {
         return db.indexedTexts.where("bookId").equals(bookId).toArray()
     }
+    getAll(): Promise<IndexedText[]> {
+        return db.indexedTexts.toArray()
+    }
     async deleteByBookId(bookId: string): Promise<void> {
         await db.indexedTexts.where("bookId").equals(bookId).delete()
     }
@@ -274,6 +458,9 @@ class DBUserNotes implements IDBUserNotes {
     }
     getByBookId(bookId: string): Promise<UserNote[]> {
         return db.userNotes.where("bookId").equals(bookId).toArray()
+    }
+    getAll(): Promise<UserNote[]> {
+        return db.userNotes.toArray()
     }
     async deleteByBookId(bookId: string): Promise<void> {
         await db.userNotes.where("bookId").equals(bookId).delete()

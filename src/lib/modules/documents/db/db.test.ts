@@ -37,7 +37,30 @@ vi.mock("dexie", () => {
     return { Dexie: MockDexie }
 })
 
-import { Database, migrateVersion2 } from "./db"
+import {
+    Database,
+    LEGACY_LIBRARY_MIGRATION_MARKER,
+    migrateLegacyDatabaseToLibrary,
+    migrateVersion2,
+    type IDatabase,
+} from "./db"
+import type { StorageNamespace } from "$lib/extension-api"
+
+function createTestStorage(): StorageNamespace {
+    const values = new Map<string, unknown>()
+    return {
+        get: async <T>(key: string) => values.get(key) as T | undefined,
+        set: async <T>(key: string, value: T) => {
+            values.set(key, value)
+        },
+        delete: async (key: string) => {
+            values.delete(key)
+        },
+        has: async (key: string) => values.has(key),
+        keys: async () => [...values.keys()],
+        clear: async () => values.clear(),
+    }
+}
 
 beforeEach(() => {
     vi.stubGlobal("indexedDB", {})
@@ -92,6 +115,84 @@ describe("Version 2 migration", () => {
             file: "legacy content",
             handle: "legacy handle",
         })
+    })
+})
+
+describe("Legacy Library migration", () => {
+    it("copies every legacy table without changing source records and records completion", async () => {
+        const sourceRecords = {
+            books: [{ id: "book", name: "Book" }],
+            previews: [{ id: "book", data: new Blob(["preview"]) }],
+            folders: [{ id: "folder", name: "Folder" }],
+            fileContents: [
+                { id: "book", file: new Blob(["content"]), handle: { name: "book.pdf" } },
+            ],
+            indexedTexts: [{ id: "text", bookId: "book", pageNumber: 1, text: "text" }],
+            userNotes: [{ id: "note", bookId: "book", pageNumber: 1 }],
+            bookmarks: [{ id: "bookmark", bookId: "book", pageNumber: 1 }],
+        }
+        const table = <T>(name: keyof typeof sourceRecords) => ({
+            getAll: vi.fn(async () => sourceRecords[name] as T[]),
+        })
+        const source = {
+            files: table("books"),
+            previews: table("previews"),
+            folders: table("folders"),
+            fileContents: table("fileContents"),
+            indexedTexts: table("indexedTexts"),
+            userNotes: table("userNotes"),
+            bookmarks: table("bookmarks"),
+            transaction: vi.fn(
+                async (_mode: unknown, _tables: unknown, callback: () => Promise<unknown>) =>
+                    callback(),
+            ),
+        } as unknown as IDatabase
+        const storage = createTestStorage()
+
+        await migrateLegacyDatabaseToLibrary(storage, source)
+
+        expect(await storage.get("books.book")).toEqual(sourceRecords.books[0])
+        expect(await storage.get("previews.book")).toEqual(sourceRecords.previews[0])
+        expect(await storage.get("fileContents.book")).toEqual(sourceRecords.fileContents[0])
+        expect(await storage.get(LEGACY_LIBRARY_MIGRATION_MARKER)).toEqual({
+            version: 1,
+            completed: true,
+        })
+        expect(sourceRecords.fileContents[0].file).toBeInstanceOf(Blob)
+        await migrateLegacyDatabaseToLibrary(storage, source)
+        expect(source.transaction).toHaveBeenCalledOnce()
+    })
+
+    it("leaves the source intact and retries after a destination failure", async () => {
+        const sourceBook = { id: "book", name: "Book" }
+        const source = {
+            files: { getAll: vi.fn(async () => [sourceBook]) },
+            previews: { getAll: vi.fn(async () => []) },
+            folders: { getAll: vi.fn(async () => []) },
+            fileContents: { getAll: vi.fn(async () => []) },
+            indexedTexts: { getAll: vi.fn(async () => []) },
+            userNotes: { getAll: vi.fn(async () => []) },
+            bookmarks: { getAll: vi.fn(async () => []) },
+            transaction: vi.fn(
+                async (_mode: unknown, _tables: unknown, callback: () => Promise<unknown>) =>
+                    callback(),
+            ),
+        } as unknown as IDatabase
+        const storage = createTestStorage()
+        const originalSet = storage.set.bind(storage)
+        let fail = true
+        storage.set = async (key, value) => {
+            if (fail && key === "books.book") {
+                fail = false
+                throw new Error("copy failed")
+            }
+            return originalSet(key, value)
+        }
+
+        await expect(migrateLegacyDatabaseToLibrary(storage, source)).rejects.toThrow("copy failed")
+        expect(sourceBook).toEqual({ id: "book", name: "Book" })
+        await migrateLegacyDatabaseToLibrary(storage, source)
+        expect(await storage.get("books.book")).toEqual(sourceBook)
     })
 })
 

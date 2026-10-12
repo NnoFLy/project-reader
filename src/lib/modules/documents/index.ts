@@ -1,4 +1,9 @@
 export { ContentSupersededError, usePreviewUrl, vfsStore } from "./vfs/vfsStore.svelte"
+export {
+    LEGACY_LIBRARY_MIGRATION_MARKER,
+    LEGACY_LIBRARY_MIGRATION_VERSION,
+    migrateLegacyDatabaseToLibrary,
+} from "./db/db"
 export { FolderNameError } from "./vfs/vfsStore.types"
 export type {
     Bookmark,
