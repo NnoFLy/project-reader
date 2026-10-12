@@ -1,4 +1,4 @@
-import { useCommands } from "$lib/modules/commands"
+import { useCommands } from "./commandsStore.svelte"
 import { createLibraryCardCommands, type LibraryCardCommandContext } from "./cardEntityCommands"
 
 export function useLibraryCardCommands(context: LibraryCardCommandContext) {

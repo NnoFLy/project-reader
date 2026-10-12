@@ -1,8 +1,12 @@
 <script lang="ts">
     import { onMount, tick } from "svelte"
     import * as m from "$lib/paraglide/messages"
-    import { commandsStore, defineCommands, useModalCommands } from "$lib/modules/commands"
-    import { FolderNameError, vfsStore } from "$lib/modules/documents"
+    import {
+        commandsStore,
+        defineCommands,
+        useModalCommands,
+    } from "../commands/commandsStore.svelte"
+    import { FolderNameError, vfsStore } from "../state/libraryStore.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"

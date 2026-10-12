@@ -4,12 +4,12 @@
     import Button from "$lib/shared/ui/Button.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
     import { relinkRequest } from "../state/relinkRequest.svelte"
-    import { vfsStore } from "$lib/modules/documents"
-    import type { FileNode } from "$lib/modules/documents"
+    import { vfsStore } from "../state/libraryStore.svelte"
+    import type { FileNode } from "../state/libraryStore.svelte"
     import { relinkLibraryNode } from "../commands/libraryRelinkExecution"
-    import { commandsStore } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
+    import { commandsStore } from "../commands/commandsStore.svelte"
+    import { defineCommands } from "../commands/commandsStore.svelte"
+    import { useModalCommands } from "../commands/commandsStore.svelte"
 
     let fileInput = $state<HTMLInputElement | null>(null)
     let locateButton = $state<HTMLButtonElement | null>(null)

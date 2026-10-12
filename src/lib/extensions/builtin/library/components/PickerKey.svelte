@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { settingsStore } from "$lib/modules/settings"
+    import { settingsStore } from "../state/librarySettings"
     import { fade, scale } from "svelte/transition"
     import { backOut } from "svelte/easing"
 

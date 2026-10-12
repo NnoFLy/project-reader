@@ -5,8 +5,8 @@
     import * as m from "$lib/paraglide/messages"
     import BookOpenIcon from "$lib/shared/icons/BookOpenIcon.svelte"
     import CheckCircleIcon from "$lib/shared/icons/CheckCircleIcon.svelte"
-    import { vfsStore, usePreviewUrl } from "$lib/modules/documents"
-    import type { VFSNode, FileNode, ImportJob } from "$lib/modules/documents"
+    import { vfsStore, usePreviewUrl } from "../state/libraryStore.svelte"
+    import type { VFSNode, FileNode, ImportJob } from "../state/libraryStore.svelte"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
     import NavigationIcon from "$lib/shared/icons/NavigationIcon.svelte"
     import MoreVerticalIcon from "$lib/shared/icons/MoreVerticalIcon.svelte"
@@ -16,10 +16,14 @@
     import EditIcon from "$lib/shared/icons/EditIcon.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Dropdown from "$lib/shared/ui/Dropdown.svelte"
-    import { commandsStore, getShortcutHint, type CommandScope } from "$lib/modules/commands"
+    import {
+        commandsStore,
+        getShortcutHint,
+        type CommandScope,
+    } from "../commands/commandsStore.svelte"
     import { useLibraryCardCommands } from "../commands/useLibraryCardCommands.svelte"
     import { requestLibraryNodeDelete } from "../commands/libraryNodeExecution"
-    import { settingsStore } from "$lib/modules/settings"
+    import { settingsStore } from "../state/librarySettings"
     import { resolveBookTitle } from "../utils/bookTitle"
     import { formatBookProgress } from "../utils/bookProgress"
 

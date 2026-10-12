@@ -1,4 +1,4 @@
-import type { ImportJob, VFSNode } from "$lib/modules/documents"
+import type { ImportJob, VFSNode } from "../state/libraryStore.types"
 
 export interface LibraryEntry {
     id: string

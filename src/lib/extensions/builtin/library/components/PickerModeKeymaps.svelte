@@ -1,7 +1,7 @@
 <script lang="ts">
     const libraryUI = useLibraryUI()
     import { useLibraryUI } from "../state/libraryUI.svelte"
-    import type { VFSNode } from "$lib/modules/documents"
+    import type { VFSNode } from "../state/libraryStore.svelte"
     import { onMount } from "svelte"
 
     interface Props {

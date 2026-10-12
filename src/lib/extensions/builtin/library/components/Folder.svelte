@@ -2,7 +2,7 @@
     import * as m from "$lib/paraglide/messages"
     import FolderIcon from "$lib/shared/icons/FolderIcon.svelte"
     import NewFolderIcon from "$lib/shared/icons/NewFolderIcon.svelte"
-    import { commandsStore } from "$lib/modules/commands"
+    import { commandsStore } from "../commands/commandsStore.svelte"
 
     interface Props {
         type?: "new-folder" | "folder"

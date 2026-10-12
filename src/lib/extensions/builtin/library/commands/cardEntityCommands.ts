@@ -1,5 +1,5 @@
 import { tick } from "svelte"
-import { defineCommands } from "$lib/modules/commands"
+import { defineCommands } from "./commands.types"
 import * as m from "$lib/paraglide/messages"
 import {
     type LibraryBookReadStateTogglePayload,

@@ -6,10 +6,10 @@
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
-    import { vfsStore } from "$lib/modules/documents"
-    import { commandsStore } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
+    import { vfsStore } from "../state/libraryStore.svelte"
+    import { commandsStore } from "../commands/commandsStore.svelte"
+    import { useModalCommands } from "../commands/commandsStore.svelte"
+    import { defineCommands } from "../commands/commandsStore.svelte"
     import { updateLibraryBookMetadata } from "../commands/libraryMetadataExecution"
 
     interface Props {

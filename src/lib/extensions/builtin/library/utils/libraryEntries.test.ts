@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { FileNode, ImportJob } from "$lib/modules/documents"
+import type { FileNode, ImportJob } from "../state/libraryStore.types"
 import { mergeLibraryEntries } from "./libraryEntries"
 
 const node = (id: string, parentId: string | null): FileNode => ({

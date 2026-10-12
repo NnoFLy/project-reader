@@ -6,9 +6,9 @@
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
-    import { commandsStore } from "$lib/modules/commands"
-    import { useModalCommands } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
+    import { commandsStore } from "../commands/commandsStore.svelte"
+    import { useModalCommands } from "../commands/commandsStore.svelte"
+    import { defineCommands } from "../commands/commandsStore.svelte"
 
     interface Props {
         onCreate?: (name: string) => void | Promise<void>

@@ -1,9 +1,19 @@
 import { createContext } from "svelte"
-import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
+import type { StorageNamespace } from "$lib/extension-api"
 
 export const LIBRARY_CARD_SIZE_LEVELS = [9, 11, 13, 15] as const
 export const DEFAULT_LIBRARY_CARD_SIZE_LEVEL = 1
-const LIBRARY_CARD_SIZE_STORAGE_KEY = "vfs.library-card-size-level"
+const LIBRARY_CARD_SIZE_STORAGE_KEY = "card-size-level"
+let libraryStorage: StorageNamespace | undefined
+
+export function configureLibraryUIStorage(storage: StorageNamespace): void {
+    libraryStorage = storage
+    void storage.get<string>(LIBRARY_CARD_SIZE_STORAGE_KEY).then((value) => {
+        if (value !== undefined) libraryUIController?.setCardSizeLevel(Number(value))
+    })
+}
+
+let libraryUIController: LibraryUIController | undefined
 
 export function parseLibraryCardSizeLevel(value: string | null): number {
     if (value === null || value.trim() === "") return DEFAULT_LIBRARY_CARD_SIZE_LEVEL
@@ -27,9 +37,7 @@ export class LibraryUIController {
     folderToRenameId = $state<string | null>(null)
 
     constructor() {
-        this.#cardSizeLevel = parseLibraryCardSizeLevel(
-            safeStorageGet(LIBRARY_CARD_SIZE_STORAGE_KEY),
-        )
+        libraryUIController = this
     }
 
     get cardSizeLevel(): number {
@@ -56,11 +64,11 @@ export class LibraryUIController {
         this.setCardSizeLevel(this.#cardSizeLevel + 1)
     }
 
-    private setCardSizeLevel(level: number): void {
+    setCardSizeLevel(level: number): void {
         const nextLevel = Math.max(0, Math.min(LIBRARY_CARD_SIZE_LEVELS.length - 1, level))
         if (nextLevel === this.#cardSizeLevel) return
         this.#cardSizeLevel = nextLevel
-        safeStorageSet(LIBRARY_CARD_SIZE_STORAGE_KEY, String(nextLevel))
+        void libraryStorage?.set(LIBRARY_CARD_SIZE_STORAGE_KEY, String(nextLevel))
     }
 
     get isSelectionMode(): boolean {

@@ -3,11 +3,11 @@
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
     import * as m from "$lib/paraglide/messages"
-    import { vfsStore } from "$lib/modules/documents"
-    import { useCommands } from "$lib/modules/commands"
-    import { defineCommands } from "$lib/modules/commands"
-    import { publishNotification } from "$lib/modules/notifications"
-    import type { ImportInput } from "$lib/modules/documents"
+    import { vfsStore } from "../state/libraryStore.svelte"
+    import { useCommands } from "../commands/commandsStore.svelte"
+    import { defineCommands } from "../commands/commandsStore.svelte"
+    import { publishNotification } from "../state/libraryNotifications"
+    import type { ImportInput } from "../state/libraryStore.svelte"
 
     interface Props {
         onimport?: (book: { url: string; name: string }) => void

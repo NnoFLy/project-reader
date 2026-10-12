@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { FileNode } from "$lib/modules/documents"
+import type { FileNode } from "../state/libraryStore.types"
 import { resolveBookTitle } from "./bookTitle"
 
 const book: FileNode = {

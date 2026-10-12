@@ -11,7 +11,7 @@ const { nodes, relinkFile, complete, vfsStore } = vi.hoisted(() => {
     }
 })
 
-vi.mock("$lib/modules/documents", () => ({ vfsStore }))
+vi.mock("../state/libraryStore.svelte", () => ({ vfsStore }))
 vi.mock("../state/relinkRequest.svelte", () => ({
     relinkRequest: { complete },
 }))

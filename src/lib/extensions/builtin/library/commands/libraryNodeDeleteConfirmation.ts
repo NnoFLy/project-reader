@@ -1,4 +1,4 @@
-import type { CommandScope } from "$lib/modules/commands"
+import type { CommandScope } from "./commandsStore.svelte"
 
 export async function confirmLibraryNodeDelete(
     scope: CommandScope | null | undefined,

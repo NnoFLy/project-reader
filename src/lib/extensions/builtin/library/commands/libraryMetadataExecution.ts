@@ -1,4 +1,4 @@
-import { commandsStore } from "$lib/modules/commands"
+import { commandsStore } from "./commandsStore.svelte"
 
 export async function updateLibraryBookMetadata(payload: {
     nodeId: string

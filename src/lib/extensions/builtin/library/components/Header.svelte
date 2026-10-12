@@ -5,13 +5,13 @@
     import SystemIcon from "$lib/shared/icons/SystemIcon.svelte"
     import GlobeIcon from "$lib/shared/icons/GlobeIcon.svelte"
     import { getLocale } from "$lib/paraglide/runtime"
-    import { settingsStore } from "$lib/modules/settings"
+    import { settingsStore } from "../state/librarySettings"
     import * as m from "$lib/paraglide/messages"
 
-    import { getLanguageName } from "$lib/modules/settings"
+    import { getLanguageName } from "../state/librarySettings"
     import AppUpdateButton from "$lib/shared/ui/AppUpdateButton.svelte"
     import TerminalIcon from "$lib/shared/icons/TerminalIcon.svelte"
-    import { vfsStore } from "$lib/modules/documents"
+    import { vfsStore } from "../state/libraryStore.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import BookOpenIcon from "$lib/shared/icons/BookOpenIcon.svelte"
     import { getContext } from "svelte"
@@ -20,7 +20,7 @@
         type CommandScope,
         getShortcutHint,
         commandsStore,
-    } from "$lib/modules/commands"
+    } from "../commands/commandsStore.svelte"
 
     const THEMES = [
         { value: "light", label: () => m.light(), Icon: SunIcon },

@@ -1,4 +1,4 @@
-import { type CommandScope, commandsStore } from "$lib/modules/commands"
+import { type CommandScope, commandsStore } from "./commandsStore.svelte"
 
 export async function moveLibraryNodeFromScope(
     scope: CommandScope | null | undefined,

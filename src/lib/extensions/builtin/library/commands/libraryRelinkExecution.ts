@@ -1,4 +1,4 @@
-import { vfsStore } from "$lib/modules/documents"
+import { vfsStore } from "../state/libraryStore.svelte"
 import { relinkRequest } from "../state/relinkRequest.svelte"
 import * as m from "$lib/paraglide/messages"
 

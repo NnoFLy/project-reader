@@ -1,9 +1,9 @@
 <script lang="ts">
     import * as m from "$lib/paraglide/messages"
-    import { vfsStore } from "$lib/modules/documents"
+    import { vfsStore } from "../state/libraryStore.svelte"
     import { goto } from "$app/navigation"
     import { resolve } from "$app/paths"
-    import { localizedPath } from "$lib/modules/settings"
+    import { localizedPath } from "../state/librarySettings"
 
     interface Props {
         breadcrumbs: {

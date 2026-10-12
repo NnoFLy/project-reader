@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { vfsStore } from "$lib/modules/documents"
-import type { VFSNodes } from "$lib/modules/documents"
+import { vfsStore } from "../state/libraryStore.svelte"
+import type { VFSNodes } from "../state/libraryStore.svelte"
 import { createLibraryCommands } from "./libraryCommands"
 import { LibraryUIController } from "../state/libraryUI.svelte"
 import { createLibraryCardCommands } from "./cardEntityCommands"
-import { CommandScope, commandsStore } from "$lib/modules/commands"
-import { promptStore } from "$lib/modules/prompt"
+import { CommandScope, commandsStore } from "./commandsStore.svelte"
+import { promptStore } from "./promptStore.svelte"
 import * as m from "$lib/paraglide/messages"
 
 const libraryUI = new LibraryUIController()
