@@ -55,7 +55,7 @@
                 textContainer,
                 annotationContainer,
                 signal,
-                onNavigate: () => undefined,
+                onNavigate: (targetPage) => viewerStore.goToPage?.(targetPage, { isJump: true }),
             })
             if (signal?.aborted) return
             cachedSpanRanges = buildSpanRanges(textContainer)

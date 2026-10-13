@@ -47,8 +47,18 @@ describe("built-in PDF adapter boundary", () => {
             }),
         )
 
-        expect(document.capabilities).toEqual(new Set(["text", "search", "outline", "thumbnails"]))
-        expect(document).not.toHaveProperty("getAnnotations")
+        expect(document.capabilities).toEqual(
+            new Set([
+                "text",
+                "search",
+                "outline",
+                "annotations",
+                "links",
+                "selection",
+                "thumbnails",
+            ]),
+        )
+        expect(document).toHaveProperty("getAnnotations")
     })
 
     it("enforces the PDF file boundary", () => {

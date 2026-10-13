@@ -60,7 +60,11 @@ describe("built-in contributions", () => {
             "settings.animations.toggle",
             "settings.pdf-title.toggle",
             "viewer.open",
+            "viewer.bookmark.open",
         ])
+        expect(
+            host.commands.listKeybindings().find(({ commandId }) => commandId === "viewer.open"),
+        ).toMatchObject({ keybinding: "shift+o" })
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
 
         await host.dispose()

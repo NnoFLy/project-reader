@@ -9,6 +9,7 @@ export type { PromptItem, PromptService } from "$lib/extension-api"
 
 export type ViewerPromptCapability = PromptHostCapability
 export type ViewerSettingsCapability = SettingsCapability
+export type ViewerCommandExecutor = (commandId: string, payload?: unknown) => Promise<unknown>
 
 export interface ViewerLibraryCapability {
     readonly nodes: Readonly<Record<string, ViewerFileNode | undefined>>
@@ -119,6 +120,7 @@ let viewerStorage: StorageNamespace | undefined
 let installedPrompt: ViewerPromptCapability | undefined
 let installedSettings: ViewerSettingsCapability | undefined
 let installedHost: HostContext | undefined
+let installedCommandExecutor: ViewerCommandExecutor = async () => ({ status: "unavailable" })
 
 export const viewerFileCapability = new Proxy(unavailable, {
     get: (_, key: keyof ViewerFileCapability) => installed[key],
@@ -155,6 +157,11 @@ export function getViewerLibraryMutationCapability(): ViewerLibraryMutationCapab
     return installedLibraryMutations
 }
 
+/** Execute a viewer command through the host command registry. */
+export function executeViewerCommand(commandId: string, payload?: unknown): Promise<unknown> {
+    return installedCommandExecutor(commandId, payload)
+}
+
 /** Injects host file access, library state, and namespaced storage at activation time. */
 export const viewerPromptCapability = new Proxy({} as ViewerPromptCapability, {
     get: (_, key: keyof ViewerPromptCapability) => {
@@ -172,6 +179,7 @@ export function installViewerHostCapabilities(capabilities: {
     prompt?: ViewerPromptCapability
     settings?: ViewerSettingsCapability
     host?: HostContext
+    commandExecutor?: ViewerCommandExecutor
 }): void {
     installed = capabilities.files ?? unavailable
     installedLibrary = capabilities.library
@@ -180,6 +188,8 @@ export function installViewerHostCapabilities(capabilities: {
     installedPrompt = capabilities.prompt
     installedSettings = capabilities.settings
     installedHost = capabilities.host
+    installedCommandExecutor =
+        capabilities.commandExecutor ?? (async () => ({ status: "unavailable" }))
 }
 
 export const promptStore = new Proxy({} as ViewerPromptCapability["promptStore"], {

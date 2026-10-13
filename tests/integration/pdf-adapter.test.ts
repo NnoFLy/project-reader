@@ -52,7 +52,17 @@ describe("PDF adapter integration", () => {
             author: null,
             pageCount: 1,
         })
-        expect(document.capabilities).toEqual(new Set(["text", "search", "outline", "thumbnails"]))
+        expect(document.capabilities).toEqual(
+            new Set([
+                "text",
+                "search",
+                "outline",
+                "annotations",
+                "links",
+                "selection",
+                "thumbnails",
+            ]),
+        )
         await expect(document.getPage(1)).resolves.toMatchObject({
             pageNumber: 1,
             width: 612,

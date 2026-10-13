@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { OpenedDocument } from "$lib/document-model"
 import {
     getViewerDocumentErrorDiagnostic,
     getViewerDocumentLoader,
     installViewerDocumentService,
+    renderViewerPageLayers,
     type ViewerDocumentService,
 } from "./viewerDocument"
 
@@ -101,6 +104,66 @@ describe("viewer document loading", () => {
         expect(loaded.getText).toBeUndefined()
         await loaded.close()
         expect(service.close).toHaveBeenCalledWith(renderOnly)
+    })
+
+    it("renders positioned text and rejects unsafe annotation URLs", async () => {
+        const textContainer = globalThis.document.createElement("div")
+        const annotationContainer = globalThis.document.createElement("div")
+        const paged = {
+            getText: vi.fn(async () => [{ text: "Hello", x: 12, y: 24, width: 30, height: 10 }]),
+            getAnnotations: vi.fn(async () => [
+                {
+                    type: "link",
+                    rect: { x: 1, y: 2, width: 3, height: 4 },
+                    url: "javascript:alert(1)",
+                },
+                {
+                    type: "link",
+                    rect: { x: 5, y: 6, width: 7, height: 8 },
+                    url: "https://example.com/",
+                },
+                { type: "link", rect: { x: 9, y: 10, width: 11, height: 12 }, pageNumber: 2 },
+            ]),
+        } as any
+
+        await renderViewerPageLayers(paged, 1, {
+            textContainer,
+            annotationContainer,
+            onNavigate: vi.fn(),
+        })
+
+        expect(textContainer.querySelector("span")?.textContent).toBe("Hello")
+        expect(textContainer.querySelector("span")?.style.left).toBe("12px")
+        expect(annotationContainer.querySelectorAll("section")).toHaveLength(2)
+        expect(annotationContainer.querySelector("a[href]")?.getAttribute("href")).toBe(
+            "https://example.com/",
+        )
+        expect(annotationContainer.querySelector("a")?.getAttribute("href")).not.toBe(
+            "javascript:alert(1)",
+        )
+    })
+
+    it("clears stale layers when an aborted layer load completes", async () => {
+        const textContainer = globalThis.document.createElement("div")
+        const annotationContainer = globalThis.document.createElement("div")
+        textContainer.append(globalThis.document.createElement("span"))
+        annotationContainer.append(globalThis.document.createElement("section"))
+        let finish!: () => void
+        const pending = new Promise<readonly any[]>((resolve) => {
+            finish = () => resolve([{ text: "stale", x: 0, y: 0, width: 1, height: 1 }])
+        })
+        const controller = new AbortController()
+        const render = renderViewerPageLayers({ getText: () => pending } as any, 1, {
+            textContainer,
+            annotationContainer,
+            onNavigate: vi.fn(),
+            signal: controller.signal,
+        })
+        controller.abort()
+        finish()
+        await render
+        expect(textContainer.childElementCount).toBe(0)
+        expect(annotationContainer.childElementCount).toBe(0)
     })
 
     it("preserves reflow sections instead of treating them as paged data", async () => {

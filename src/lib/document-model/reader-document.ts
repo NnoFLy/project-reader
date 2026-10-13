@@ -48,9 +48,40 @@ export interface DocumentOutlineEntry {
     readonly pageNumber?: number
 }
 
-export interface DocumentText {
-    readonly items: readonly { readonly text: string }[]
+export interface DocumentTextItem {
+    readonly text: string
+    /** Position and size in the page's unscaled coordinate space. */
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+    readonly fontSize?: number
+    readonly fontFamily?: string
+    readonly hasEOL?: boolean
 }
+
+export interface DocumentText {
+    readonly items: readonly DocumentTextItem[]
+}
+
+export interface DocumentAnnotationRect {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+}
+
+export interface DocumentLinkAnnotation {
+    readonly type: "link"
+    readonly rect: DocumentAnnotationRect
+    /** An external URL already validated by the document adapter. */
+    readonly url?: string
+    /** A destination within this document. */
+    readonly pageNumber?: number
+    readonly label?: string
+}
+
+export type DocumentAnnotation = DocumentLinkAnnotation
 
 export interface BaseReaderDocument {
     readonly kind: "paged" | "reflowable"
@@ -66,6 +97,13 @@ export interface PagedDocument extends BaseReaderDocument {
     readonly pageCount: number
     getPage(pageNumber: number): Promise<ReaderPage>
     renderPage(pageNumber: number, options?: RenderOptions): Promise<RenderedPage>
+    getText?(pageNumber: number, signal?: AbortSignal): Promise<readonly DocumentTextItem[]>
+    getAnnotations?(
+        pageNumber: number,
+        signal?: AbortSignal,
+    ): Promise<readonly DocumentAnnotation[]>
+    getOutline?(): Promise<readonly DocumentOutlineEntry[] | null>
+    validateRenderBounds?(quality?: number, signal?: AbortSignal): Promise<void>
 }
 
 export interface ReflowableDocument extends BaseReaderDocument {

@@ -116,7 +116,8 @@
                     textContainer,
                     annotationContainer,
                     signal: controller.signal,
-                    onNavigate: () => undefined,
+                    onNavigate: (targetPage) =>
+                        viewerStore.goToPage?.(targetPage, { isJump: true }),
                 })
                 if (controller.signal.aborted) return
                 cachedSpanRanges = buildSpanRanges(textContainer)

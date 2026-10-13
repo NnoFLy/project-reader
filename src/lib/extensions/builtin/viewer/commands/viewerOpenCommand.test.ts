@@ -362,7 +362,10 @@ describe("viewer.open integration", () => {
     })
 
     it("delegates missing book selection to the Library command", async () => {
-        await createViewerOpenCommand({ onFileAccessFailure: vi.fn() }).run(undefined)
+        await createViewerOpenCommand({
+            onFileAccessFailure: vi.fn(),
+            executeCommand: onLibraryBookOpen,
+        }).run(undefined)
 
         expect(onLibraryBookOpen).toHaveBeenCalledWith("library.book.open")
         expect(goto).not.toHaveBeenCalled()

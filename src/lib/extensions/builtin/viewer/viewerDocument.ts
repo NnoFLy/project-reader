@@ -1,5 +1,7 @@
 import type {
+    DocumentAnnotation,
     DocumentOutlineEntry,
+    DocumentTextItem,
     OpenedDocument,
     PagedDocument,
     ReflowableDocument,
@@ -8,7 +10,7 @@ import type {
 } from "$lib/document-model"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
 
-export type ViewerTextItem = { readonly text: string }
+export type ViewerTextItem = DocumentTextItem
 
 export interface ViewerDocumentErrorDiagnostic {
     readonly name: string
@@ -54,17 +56,8 @@ export interface ViewerPageLayerTarget {
     readonly signal?: AbortSignal
 }
 
-/** Optional, format-neutral capabilities attached by a paged adapter. */
-export interface ViewerPagedExtras {
-    /** Text extraction is optional; rendering must not depend on it. */
-    getText?: (pageNumber: number) => Promise<readonly ViewerTextItem[]>
-    getOutline?(): Promise<readonly DocumentOutlineEntry[] | null>
-    validateRenderBounds?(quality?: number, signal?: AbortSignal): Promise<void>
-    renderPageLayers?(pageNumber: number, target: ViewerPageLayerTarget): Promise<void>
-}
-
 /** A paged document as consumed by the bitmap viewer. */
-export type ViewerPagedDocument = PagedDocument & ViewerPagedExtras
+export type ViewerPagedDocument = PagedDocument
 
 /** A reflowable document retains sections and never exposes paged-only fields. */
 export type ViewerReflowDocument = ReflowableDocument
@@ -119,7 +112,6 @@ function asViewerDocument(
         }
     }
 
-    const candidate = document as PagedDocument & ViewerPagedExtras
     return {
         kind: "paged",
         metadata: document.metadata,
@@ -127,13 +119,15 @@ function asViewerDocument(
         pageCount: document.pageCount,
         getPage: (pageNumber) => document.getPage(pageNumber),
         renderPage: (pageNumber, options) => document.renderPage(pageNumber, options),
-        getText: candidate.getText ? (pageNumber) => candidate.getText!(pageNumber) : undefined,
-        getOutline: candidate.getOutline ? () => candidate.getOutline!() : undefined,
-        validateRenderBounds: candidate.validateRenderBounds
-            ? (quality, signal) => candidate.validateRenderBounds!(quality, signal)
+        getText: document.getText
+            ? (pageNumber, signal) => document.getText!(pageNumber, signal)
             : undefined,
-        renderPageLayers: candidate.renderPageLayers
-            ? (pageNumber, target) => candidate.renderPageLayers!(pageNumber, target)
+        getAnnotations: document.getAnnotations
+            ? (pageNumber, signal) => document.getAnnotations!(pageNumber, signal)
+            : undefined,
+        getOutline: document.getOutline ? () => document.getOutline!() : undefined,
+        validateRenderBounds: document.validateRenderBounds
+            ? (quality, signal) => document.validateRenderBounds!(quality, signal)
             : undefined,
         close: () => service.close(document),
     }
@@ -212,19 +206,71 @@ export async function renderViewerPageLayers(
     pageNumber: number,
     target: ViewerPageLayerTarget,
 ): Promise<void> {
-    if (document.renderPageLayers) {
-        await document.renderPageLayers(pageNumber, target)
-        return
-    }
-
     target.textContainer.replaceChildren()
-    if (!document.getText) return
-    const items = await document.getText(pageNumber)
+    target.annotationContainer?.replaceChildren()
+    if (!document.getText && !document.getAnnotations) return
+
+    const [items, annotations] = await Promise.all([
+        document.getText?.(pageNumber, target.signal) ?? Promise.resolve([]),
+        document.getAnnotations?.(pageNumber, target.signal) ?? Promise.resolve([]),
+    ])
+    if (target.signal?.aborted) return
+    const ownerDocument = target.textContainer.ownerDocument
     for (const item of items) {
         if (target.signal?.aborted) return
-        const span = globalThis.document.createElement("span")
+        const span = ownerDocument.createElement("span")
         span.textContent = item.text
+        span.style.left = `${item.x}px`
+        span.style.top = `${item.y}px`
+        span.style.width = `${Math.max(0, item.width)}px`
+        span.style.height = `${Math.max(0, item.height)}px`
+        if (item.fontSize) span.style.fontSize = `${item.fontSize}px`
+        if (item.fontFamily) span.style.fontFamily = item.fontFamily
+        if (item.hasEOL) span.dataset.eol = "true"
         target.textContainer.append(span)
+    }
+
+    const annotationContainer = target.annotationContainer
+    if (!annotationContainer) return
+    for (const annotation of annotations as readonly DocumentAnnotation[]) {
+        if (target.signal?.aborted || annotation.type !== "link") return
+        const section = ownerDocument.createElement("section")
+        section.className = "linkAnnotation"
+        section.style.left = `${annotation.rect.x}px`
+        section.style.top = `${annotation.rect.y}px`
+        section.style.width = `${Math.max(0, annotation.rect.width)}px`
+        section.style.height = `${Math.max(0, annotation.rect.height)}px`
+        const link = ownerDocument.createElement("a")
+        link.setAttribute("aria-label", annotation.label ?? "Document link")
+        if (annotation.url) {
+            try {
+                const url = new URL(annotation.url)
+                if (["http:", "https:", "mailto:"].includes(url.protocol)) {
+                    link.href = url.toString()
+                    link.target = "_blank"
+                    link.rel = "noreferrer noopener"
+                }
+            } catch {
+                continue
+            }
+            if (!link.href) continue
+        } else if (annotation.pageNumber !== undefined) {
+            link.role = "link"
+            link.tabIndex = 0
+            const navigate = (event: Event) => {
+                event.preventDefault()
+                target.onNavigate(annotation.pageNumber!)
+            }
+            link.addEventListener("click", navigate)
+            link.addEventListener("keydown", (event) => {
+                const keyboardEvent = event as KeyboardEvent
+                if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") navigate(event)
+            })
+        } else {
+            continue
+        }
+        section.append(link)
+        annotationContainer.append(section)
     }
 }
 

@@ -60,7 +60,7 @@
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
-    import { viewerPromptCapability } from "../viewerHost"
+    import { executeViewerCommand, viewerPromptCapability } from "../viewerHost"
     const { getPromptCommandRegistry, openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
@@ -184,10 +184,10 @@
             open: async (bookmarkId) => {
                 const bookmark = bookmarksStore.bookmarks.find(({ id }) => id === bookmarkId)
                 if (!bookmark) return
-                const result = await commandsStore.execute("viewer.open", {
+                const result = await executeViewerCommand("viewer.open", {
                     bookId: bookmark.bookId,
                 })
-                if (result.status === "executed") {
+                if ((result as { status?: string }).status === "executed") {
                     viewerStore.goToPage?.(bookmark.pageNumber, { isJump: true })
                 }
             },

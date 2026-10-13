@@ -12,6 +12,7 @@
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
     import { viewerStore } from "../stores/viewerStore.svelte"
     import { bookmarksStore } from "../stores/bookmarksStore.svelte"
+    import { executeViewerCommand } from "../viewerHost"
     import type { Bookmark } from "$lib/core/documents"
     import type { ViewerBookmarkEditPayload } from "../commands/viewerCommandPayloads"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
@@ -87,7 +88,7 @@
             await tick()
         }
 
-        void commandsStore.execute("viewer.bookmark.open", { bookmarkId: bookmark.id })
+        void executeViewerCommand("viewer.bookmark.open", { bookmarkId: bookmark.id })
     }
 
     let selectedIndex = $derived(

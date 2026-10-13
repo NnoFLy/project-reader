@@ -2,9 +2,11 @@ import * as pdfjs from "pdfjs-dist"
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import type { TextContent } from "pdfjs-dist/types/src/display/api"
 import type {
+    DocumentAnnotation,
     DocumentCapability,
     DocumentMetadata,
     DocumentOutlineEntry,
+    DocumentTextItem,
     DocumentSource,
     PagedDocument,
     RenderOptions,
@@ -82,6 +84,9 @@ export class PagedPdfDocument implements PagedDocument {
         "text",
         "search",
         "outline",
+        "annotations",
+        "links",
+        "selection",
         "thumbnails",
     ])
     private documentMetadata: DocumentMetadata = { title: null, author: null }
@@ -217,11 +222,74 @@ export class PagedPdfDocument implements PagedDocument {
         return page.getTextContent()
     }
 
-    async getText(pageNumber: number): Promise<readonly { readonly text: string }[]> {
-        const text = await this.getTextContent(pageNumber)
-        return text.items.map((item) => ({
-            text: "str" in item && typeof item.str === "string" ? item.str : "",
-        }))
+    async getText(pageNumber: number, signal?: AbortSignal): Promise<readonly DocumentTextItem[]> {
+        throwIfAborted(signal)
+        const page = await this.getPageProxy(pageNumber)
+        const [text, dimensions] = await Promise.all([
+            page.getTextContent(),
+            this.getPageDimension(pageNumber),
+        ])
+        throwIfAborted(signal)
+        return text.items.flatMap((item) => {
+            if (!("str" in item) || typeof item.str !== "string" || !item.str) return []
+            const transform =
+                "transform" in item && Array.isArray(item.transform)
+                    ? item.transform
+                    : [1, 0, 0, 1, 0, 0]
+            const width = typeof item.width === "number" ? item.width : 0
+            const height =
+                typeof item.height === "number" ? item.height : Math.abs(Number(transform[3]) || 0)
+            const x = Number(transform[4]) || 0
+            const baseline = Number(transform[5]) || 0
+            return [
+                {
+                    text: item.str,
+                    x,
+                    y: Math.max(0, dimensions.height - baseline - height),
+                    width,
+                    height,
+                    fontSize: Math.abs(Number(transform[3]) || 0) || undefined,
+                    hasEOL: "hasEOL" in item && item.hasEOL === true,
+                },
+            ]
+        })
+    }
+
+    async getAnnotations(
+        pageNumber: number,
+        signal?: AbortSignal,
+    ): Promise<readonly DocumentAnnotation[]> {
+        throwIfAborted(signal)
+        const page = await this.getPageProxy(pageNumber)
+        const [annotations, dimensions] = await Promise.all([
+            page.getAnnotations({ intent: "display" }),
+            this.getPageDimension(pageNumber),
+        ])
+        throwIfAborted(signal)
+        const mapped: DocumentAnnotation[] = []
+        for (const annotation of annotations) {
+            throwIfAborted(signal)
+            if (annotation.subtype !== "Link" || !Array.isArray(annotation.rect)) continue
+            const [left, bottom, right, top] = annotation.rect
+            const x = Math.min(left, right)
+            const width = Math.abs(right - left)
+            const y = Math.max(0, dimensions.height - Math.max(top, bottom))
+            const height = Math.abs(top - bottom)
+            const url = this.sanitizeExternalUrl(annotation.url ?? annotation.unsafeUrl)
+            let pageNumberForDestination: number | undefined
+            if (!url && annotation.dest) {
+                pageNumberForDestination = await this.resolveDestinationToPage(annotation.dest)
+                throwIfAborted(signal)
+            }
+            if (!url && pageNumberForDestination === undefined) continue
+            mapped.push({
+                type: "link",
+                rect: { x, y, width, height },
+                ...(url ? { url } : { pageNumber: pageNumberForDestination }),
+                label: typeof annotation.title === "string" ? annotation.title : undefined,
+            })
+        }
+        return mapped
     }
 
     async getOutline(): Promise<readonly DocumentOutlineEntry[] | null> {
@@ -383,6 +451,23 @@ export class PagedPdfDocument implements PagedDocument {
                 0.9,
             )
         })
+    }
+
+    private sanitizeExternalUrl(value: unknown): string | undefined {
+        if (typeof value !== "string" || !value.trim()) return undefined
+        try {
+            const url = new URL(value)
+            if (
+                url.protocol !== "http:" &&
+                url.protocol !== "https:" &&
+                url.protocol !== "mailto:"
+            ) {
+                return undefined
+            }
+            return url.toString()
+        } catch {
+            return undefined
+        }
     }
 
     private async resolveDestinationToPage(dest: string | unknown[]): Promise<number | undefined> {

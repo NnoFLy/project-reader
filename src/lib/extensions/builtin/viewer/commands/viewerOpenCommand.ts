@@ -1,6 +1,6 @@
 import { goto } from "$app/navigation"
 import { resolve } from "$app/paths"
-import { commandsStore, defineCommands } from "$lib/core/commands"
+import { defineCommands } from "$lib/core/commands"
 import { viewerFileCapability, type ViewerFileNode } from "../viewerHost"
 import { localizedPath } from "$lib/core/settings"
 import { viewerStore } from "../stores/viewerStore.svelte"
@@ -16,6 +16,7 @@ export interface ViewerOpenFailure {
 
 export function createViewerOpenCommand(options: {
     onFileAccessFailure: (failure: ViewerOpenFailure) => void | Promise<void>
+    executeCommand?: (commandId: string, payload?: unknown) => Promise<unknown>
 }) {
     let openGeneration = 0
     const pendingFileUrlRefs = new Map<string, number>()
@@ -59,7 +60,7 @@ export function createViewerOpenCommand(options: {
             category: "navigation",
             run: async (payload: ViewerPayload<"viewer.open">) => {
                 if (!payload?.bookId) {
-                    await commandsStore.execute("library.book.open")
+                    await options.executeCommand?.("library.book.open")
                     return
                 }
 
