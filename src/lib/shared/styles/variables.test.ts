@@ -46,7 +46,7 @@ const boundaryPairs = [
     ["--color-focus", "--color-surface"],
 ] as const
 
-describe.each([":root", "html.dark"])("%s semantic contrast", (selector) => {
+describe.each([":root", ":global(html.dark)"])("%s semantic contrast", (selector) => {
     const tokens = declarations(selector)
 
     it.each(textPairs)("keeps %s readable on %s", (foreground, background) => {

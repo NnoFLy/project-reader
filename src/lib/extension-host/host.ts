@@ -248,12 +248,27 @@ export class ExtensionHost {
                 runtime.permissions,
                 runtime.storage,
             )
+            const hostContext = this.hostContext
             const context: ExtensionContext = {
                 extension: extensionInfo(manifest),
                 permissions: runtime.permissions,
                 host: {
-                    ...this.hostContext,
+                    ...hostContext,
                     contextualStatus: this.contextualStatus.forExtension(manifest.id),
+                    // Forward mutable services to the shared host, including late installation
+                    // and disposal, without sharing the extension-scoped status publisher.
+                    get prompt() {
+                        return hostContext.prompt
+                    },
+                    set prompt(value: HostContext["prompt"]) {
+                        hostContext.prompt = value
+                    },
+                    get settings() {
+                        return hostContext.settings
+                    },
+                    set settings(value: HostContext["settings"]) {
+                        hostContext.settings = value
+                    },
                 },
                 commands: registries.commands,
                 views: registries.views,

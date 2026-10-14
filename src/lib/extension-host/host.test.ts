@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest"
-import type { AppExtension, DocumentAdapter, ExtensionContext } from "../extension-api"
+import type {
+    AppExtension,
+    DocumentAdapter,
+    ExtensionContext,
+    PromptHostCapability,
+    SettingsCapability,
+} from "../extension-api"
 import { DocumentService } from "../core/documents"
 import { MemoryStorageBackend } from "../core/storage"
 import { ExtensionHost } from "./host"
 
-const extension = (id: string, activate: AppExtension["activate"]): AppExtension => ({
+const extension = (
+    id: string,
+    activate: AppExtension["activate"],
+    dependencies?: Record<string, string>,
+): AppExtension => ({
     manifest: {
         id,
         name: id,
@@ -13,6 +23,7 @@ const extension = (id: string, activate: AppExtension["activate"]): AppExtension
         entry: id,
         activationEvents: [{ type: "startup" }],
         permissions: ["commands"],
+        dependencies,
     },
     activate,
 })
@@ -32,6 +43,95 @@ const adapter: DocumentAdapter = {
 }
 
 describe("extension host lifecycle", () => {
+    it("shares mutable host capabilities between dependent extensions", async () => {
+        const prompt = {} as PromptHostCapability
+        const settings = {} as SettingsCapability
+        let viewerPrompt: PromptHostCapability | undefined
+        let viewerSettings: SettingsCapability | undefined
+        const host = new ExtensionHost({
+            extensions: [
+                extension("builtin.prompt", (context) => {
+                    context.host!.prompt = prompt
+                }),
+                extension("builtin.settings", (context) => {
+                    context.host!.settings = settings
+                }),
+                extension(
+                    "builtin.viewer",
+                    (context) => {
+                        viewerPrompt = context.host?.prompt
+                        viewerSettings = context.host?.settings
+                    },
+                    { "builtin.prompt": "*", "builtin.settings": "*" },
+                ),
+            ],
+        })
+
+        await host.start()
+
+        expect(viewerPrompt).toBe(prompt)
+        expect(viewerSettings).toBe(settings)
+        await host.dispose()
+    })
+
+    it("keeps existing contexts in sync with service installation and disposal", async () => {
+        const prompt = {} as PromptHostCapability
+        const settings = {} as SettingsCapability
+        let viewerContext: ExtensionContext | undefined
+        let providerContext: ExtensionContext | undefined
+        const host = new ExtensionHost({
+            extensions: [
+                extension("builtin.viewer", (context) => {
+                    viewerContext = context
+                }),
+                extension("builtin.provider", (context) => {
+                    providerContext = context
+                    context.host!.prompt = prompt
+                    context.host!.settings = settings
+                    context.lifecycle.onDispose(() => {
+                        context.host!.prompt = undefined
+                        context.host!.settings = undefined
+                    })
+                }),
+            ],
+        })
+        const otherHost = new ExtensionHost({
+            extensions: [
+                extension("builtin.viewer", (context) => {
+                    expect(context.host?.prompt).toBeUndefined()
+                    expect(context.host?.settings).toBeUndefined()
+                }),
+            ],
+        })
+
+        try {
+            await host.activate("builtin.viewer")
+            expect(viewerContext?.host?.prompt).toBeUndefined()
+            expect(viewerContext?.host?.settings).toBeUndefined()
+
+            await host.activate("builtin.provider")
+            expect(viewerContext?.host?.prompt).toBe(prompt)
+            expect(viewerContext?.host?.settings).toBe(settings)
+            expect(viewerContext?.host?.contextualStatus).not.toBe(
+                providerContext?.host?.contextualStatus,
+            )
+            viewerContext?.host?.contextualStatus?.publish({
+                line1: "Viewer",
+                line2: "Active",
+                priority: 1,
+            })
+            providerContext?.host?.contextualStatus?.clear()
+            expect(host.contextualStatus.current?.line1).toBe("Viewer")
+
+            await otherHost.activate("builtin.viewer")
+            await host.disable("builtin.provider")
+            expect(viewerContext?.host?.prompt).toBeUndefined()
+            expect(viewerContext?.host?.settings).toBeUndefined()
+        } finally {
+            await Promise.all([host.dispose(), otherHost.dispose()])
+        }
+    })
+
     it("derives and enforces manifest permissions on the real context", async () => {
         let context: ExtensionContext | undefined
         const restricted = {

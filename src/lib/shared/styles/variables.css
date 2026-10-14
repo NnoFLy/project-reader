@@ -133,7 +133,7 @@
     --z-tooltip: 100000;
 }
 
-html.dark {
+:global(html.dark) {
     --color-canvas: #000000;
     --color-surface: #09090b;
     --color-surface-raised: #111113;

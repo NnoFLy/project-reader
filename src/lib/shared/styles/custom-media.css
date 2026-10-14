@@ -16,6 +16,5 @@
     (pointer: coarse) and (orientation: landscape) and (max-height: 480px);
 @custom-media --tablet (max-width: 800px),
     (pointer: coarse) and (orientation: landscape) and (max-height: 480px);
-@custom-media --desktop (max-width: 800px),
-    (pointer: coarse) and (orientation: landscape) and (max-height: 480px);
+@custom-media --desktop (min-width: 801px);
 @custom-media --large-desktop (max-width: 1199px);
