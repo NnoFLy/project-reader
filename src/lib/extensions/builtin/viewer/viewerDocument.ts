@@ -219,7 +219,20 @@ export async function renderViewerPageLayers(
     for (const item of items) {
         if (target.signal?.aborted) return
         const span = ownerDocument.createElement("span")
-        span.textContent = item.text
+        if (item.angle) {
+            const text = ownerDocument.createElement("em")
+            text.textContent = item.text
+            text.style.display = "inline-block"
+            text.style.position = "absolute"
+            text.style.left = "50%"
+            text.style.top = "50%"
+            text.style.fontStyle = "normal"
+            text.style.transformOrigin = "center"
+            text.style.transform = `translate(-50%, -50%) rotate(${item.angle}deg)`
+            span.append(text)
+        } else {
+            span.textContent = item.text
+        }
         span.style.left = `${item.x}px`
         span.style.top = `${item.y}px`
         span.style.width = `${Math.max(0, item.width)}px`

@@ -86,7 +86,7 @@ describe("built-in contributions", () => {
             host.commands.listKeybindings().find(({ commandId }) => commandId === "viewer.open"),
         ).toMatchObject({ keybinding: "shift+o" })
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
-        host.contextualStatus.publish("test.status", {
+        host.contextualStatus.forExtension("builtin.test").publish({
             line1: "1",
             line2: "TEST",
             priority: 1,

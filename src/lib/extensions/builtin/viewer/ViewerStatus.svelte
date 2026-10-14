@@ -1,13 +1,12 @@
 <script lang="ts">
-    import type { ContextualStatus, ContextualStatusService } from "$lib/extension-api"
+    import type { ContextualStatus, ContextualStatusPublisher } from "$lib/extension-api"
     import { page } from "$app/state"
     import * as m from "$lib/paraglide/messages"
     import { searchStore } from "./stores/searchStore.svelte"
 
-    const SOURCE = "builtin.viewer.contextual-status"
     const PRIORITY_SEARCH = 2
 
-    let { contextualStatus }: { contextualStatus: ContextualStatusService<ContextualStatus> } =
+    let { contextualStatus }: { contextualStatus: ContextualStatusPublisher<ContextualStatus> } =
         $props()
 
     $effect(() => {
@@ -22,7 +21,7 @@
                   }
                 : null
 
-        const publication = contextualStatus.publish(SOURCE, status)
+        const publication = contextualStatus.publish(status)
         return () => publication.dispose()
     })
 </script>

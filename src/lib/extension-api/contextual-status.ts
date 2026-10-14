@@ -8,11 +8,16 @@ export interface ContextualStatus {
     readonly priority: number
 }
 
-/** Host-owned, source-scoped status publication and subscription capability. */
+/** Extension-owned status publication bound to one validated extension ID. */
+export interface ContextualStatusPublisher<T extends ContextualStatus = ContextualStatus> {
+    publish(status: T | null): Disposable
+    clear(): void
+}
+
+/** Host-owned status resolution, subscription, and extension publisher factory. */
 export interface ContextualStatusService<T extends ContextualStatus = ContextualStatus> {
     readonly current: T | null
-    publish(source: string, status: T | null): Disposable
-    clear(source: string): void
+    forExtension(extensionId: string): ContextualStatusPublisher<T>
     subscribe(listener: (status: T | null) => void): Disposable
     reset(): void
 }

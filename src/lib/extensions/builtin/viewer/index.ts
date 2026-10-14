@@ -18,6 +18,7 @@ import { searchStore } from "./stores/searchStore.svelte"
 import { getViewerDocumentErrorDiagnostic } from "./viewerDocument"
 import { installViewerRelinkHost } from "./viewerRelinkHost"
 import { buildBookmarkItems } from "./commands/viewerPromptItems"
+import { openViewerBookmark } from "./commands/viewerBookmarkCommandFactory"
 import * as m from "$lib/paraglide/messages"
 
 export { ViewerPage }
@@ -66,7 +67,7 @@ export async function activateViewer(
         notesStore.dispose()
         bookmarksStore.dispose()
         viewerStore.dispose()
-        context.host?.contextualStatus?.clear("builtin.viewer.contextual-status")
+        context.host?.contextualStatus?.clear()
         installViewerHostCapabilities({})
         installViewerRelinkHost(undefined)
     })
@@ -118,10 +119,11 @@ export async function activateViewer(
             if (!bookmarkId) return
             const bookmark = bookmarksStore.bookmarks.find(({ id }) => id === bookmarkId)
             if (!bookmark) return
-            const result = await executeHostCommand("viewer.open", { bookId: bookmark.bookId })
-            if ((result as { status?: string })?.status === "executed") {
-                viewerStore.goToPage?.(bookmark.pageNumber, { isJump: true })
-            }
+            await openViewerBookmark({
+                open: () => executeHostCommand("viewer.open", { bookId: bookmark.bookId }),
+                pageNumber: bookmark.pageNumber,
+                goToPage: (pageNumber, options) => viewerStore.goToPage?.(pageNumber, options),
+            })
         },
         validatePayload: isViewerBookmarkOpenPayload,
     })

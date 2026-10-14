@@ -1,6 +1,7 @@
 import {
     assertNamespacedId,
     type ContextualStatus,
+    type ContextualStatusPublisher,
     type ContextualStatusService,
     type Disposable,
 } from "$lib/extension-api"
@@ -24,8 +25,15 @@ export class ContextualStatusServiceImpl<
         return this.resolved
     }
 
-    publish(source: string, status: T | null): Disposable {
-        assertNamespacedId(source, "contextual status source")
+    forExtension(extensionId: string): ContextualStatusPublisher<T> {
+        assertNamespacedId(extensionId, "extension")
+        return {
+            publish: (status) => this.publish(extensionId, status),
+            clear: () => this.clear(extensionId),
+        }
+    }
+
+    private publish(source: string, status: T | null): Disposable {
         const token = Symbol(source)
         if (status === null) this.publications.delete(source)
         else {
@@ -50,8 +58,7 @@ export class ContextualStatusServiceImpl<
         }
     }
 
-    clear(source: string): void {
-        assertNamespacedId(source, "contextual status source")
+    private clear(source: string): void {
         if (!this.publications.delete(source)) return
         this.notify()
     }

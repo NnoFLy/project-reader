@@ -74,6 +74,39 @@ function abortError(message: string): DOMException {
     return new DOMException(message, "AbortError")
 }
 
+type PdfTransform = readonly [number, number, number, number, number, number]
+
+function multiplyTransforms(left: PdfTransform, right: PdfTransform): PdfTransform {
+    return [
+        left[0] * right[0] + left[2] * right[1],
+        left[1] * right[0] + left[3] * right[1],
+        left[0] * right[2] + left[2] * right[3],
+        left[1] * right[2] + left[3] * right[3],
+        left[0] * right[4] + left[2] * right[5] + left[4],
+        left[1] * right[4] + left[3] * right[5] + left[5],
+    ]
+}
+
+function transformPoint(transform: PdfTransform, x: number, y: number): [number, number] {
+    return [
+        transform[0] * x + transform[2] * y + transform[4],
+        transform[1] * x + transform[3] * y + transform[5],
+    ]
+}
+
+function boundingRect(points: readonly [number, number][]): {
+    x: number
+    y: number
+    width: number
+    height: number
+} {
+    const xs = points.map(([x]) => x)
+    const ys = points.map(([, y]) => y)
+    const x = Math.min(...xs)
+    const y = Math.min(...ys)
+    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }
+}
+
 if (typeof window !== "undefined" && !pdfjs.GlobalWorkerOptions.workerSrc) {
     pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
 }
@@ -96,6 +129,7 @@ export class PagedPdfDocument implements PagedDocument {
 
     private pdfDoc: pdfjs.PDFDocumentProxy | null = null
     private loadingTask: pdfjs.PDFDocumentLoadingTask | null = null
+    private loadPromise: Promise<this> | null = null
     private closePromise: Promise<void> | null = null
     private closed = false
     private _pageCount = 0
@@ -103,6 +137,7 @@ export class PagedPdfDocument implements PagedDocument {
     private readonly pageCache = new Map<number, string>()
     private readonly pagePromises = new Map<number, Promise<pdfjs.PDFPageProxy>>()
     private readonly pages = new Map<number, pdfjs.PDFPageProxy>()
+    private readonly renderTasks = new Set<pdfjs.RenderTask>()
     private outlineCache: readonly DocumentOutlineEntry[] | null = null
     private renderedQuality: number | null = null
     private renderGeneration = 0
@@ -113,20 +148,34 @@ export class PagedPdfDocument implements PagedDocument {
         return this._pageCount
     }
 
-    async load(signal?: AbortSignal): Promise<this> {
+    load(signal?: AbortSignal): Promise<this> {
         this.assertOpen()
         assertPdfFileSize(this.source.size)
+        if (this.loadPromise) return this.loadPromise
+        const promise = this.loadInternal(signal)
+        this.loadPromise = promise
+        return promise
+    }
+
+    private async loadInternal(signal?: AbortSignal): Promise<this> {
         try {
             const data = await this.readSource(signal)
+            this.assertOpen()
             throwIfAborted(signal)
-            this.loadingTask = pdfjs.getDocument({ data })
-            this.pdfDoc = await this.loadingTask.promise
+            const loadingTask = pdfjs.getDocument({ data })
+            this.loadingTask = loadingTask
+            const pdfDoc = await loadingTask.promise
             this.loadingTask = null
-            this._pageCount = this.pdfDoc.numPages
+            if (this.closed) {
+                await pdfDoc.destroy()
+                throw abortError("Loading PDF was cancelled")
+            }
+            this.pdfDoc = pdfDoc
+            this._pageCount = pdfDoc.numPages
             assertPageCount(this._pageCount)
             if (this._pageCount > 0) await this.getPageDimension(1)
             try {
-                const metadata = await this.pdfDoc.getMetadata()
+                const metadata = await pdfDoc.getMetadata()
                 const info = metadata.info as Record<string, unknown> | undefined
                 this.documentMetadata = {
                     title: typeof info?.Title === "string" ? info.Title : null,
@@ -137,10 +186,13 @@ export class PagedPdfDocument implements PagedDocument {
             } catch {
                 this.documentMetadata = { title: null, author: null, pageCount: this._pageCount }
             }
+            this.assertOpen()
             return this
         } catch (error) {
+            this.loadingTask = null
             if (error instanceof PDFResourceLimitError) throw error
             if (signal?.aborted) throw signal.reason ?? abortError("Loading PDF was cancelled")
+            if (this.closed && error instanceof Error && error.name === "AbortError") throw error
             const documentError = new Error("Failed to parse PDF document", { cause: error })
             documentError.name = "PDFDocumentError"
             throw documentError
@@ -225,30 +277,40 @@ export class PagedPdfDocument implements PagedDocument {
     async getText(pageNumber: number, signal?: AbortSignal): Promise<readonly DocumentTextItem[]> {
         throwIfAborted(signal)
         const page = await this.getPageProxy(pageNumber)
-        const [text, dimensions] = await Promise.all([
+        const [text, viewport] = await Promise.all([
             page.getTextContent(),
-            this.getPageDimension(pageNumber),
+            Promise.resolve(page.getViewport({ scale: 1 })),
         ])
+        assertPageDimensions(viewport.width, viewport.height)
         throwIfAborted(signal)
+        const viewportTransform = viewport.transform as unknown as PdfTransform
         return text.items.flatMap((item) => {
             if (!("str" in item) || typeof item.str !== "string" || !item.str) return []
-            const transform =
+            const itemTransform: PdfTransform =
                 "transform" in item && Array.isArray(item.transform)
-                    ? item.transform
+                    ? (item.transform as unknown as PdfTransform)
                     : [1, 0, 0, 1, 0, 0]
+            const transform = multiplyTransforms(viewportTransform, itemTransform)
             const width = typeof item.width === "number" ? item.width : 0
             const height =
-                typeof item.height === "number" ? item.height : Math.abs(Number(transform[3]) || 0)
-            const x = Number(transform[4]) || 0
-            const baseline = Number(transform[5]) || 0
+                typeof item.height === "number"
+                    ? item.height
+                    : Math.hypot(itemTransform[2], itemTransform[3])
+            const itemScaleX = Math.hypot(itemTransform[0], itemTransform[1]) || 1
+            const itemScaleY = Math.hypot(itemTransform[2], itemTransform[3]) || 1
+            const points = [
+                transformPoint(transform, 0, 0),
+                transformPoint(transform, width / itemScaleX, 0),
+                transformPoint(transform, width / itemScaleX, height / itemScaleY),
+                transformPoint(transform, 0, height / itemScaleY),
+            ] as const
+            const rect = boundingRect(points)
             return [
                 {
                     text: item.str,
-                    x,
-                    y: Math.max(0, dimensions.height - baseline - height),
-                    width,
-                    height,
-                    fontSize: Math.abs(Number(transform[3]) || 0) || undefined,
+                    ...rect,
+                    fontSize: Math.hypot(transform[2], transform[3]) || undefined,
+                    angle: (Math.atan2(transform[1], transform[0]) * 180) / Math.PI,
                     hasEOL: "hasEOL" in item && item.hasEOL === true,
                 },
             ]
@@ -261,20 +323,23 @@ export class PagedPdfDocument implements PagedDocument {
     ): Promise<readonly DocumentAnnotation[]> {
         throwIfAborted(signal)
         const page = await this.getPageProxy(pageNumber)
-        const [annotations, dimensions] = await Promise.all([
+        const [annotations, viewport] = await Promise.all([
             page.getAnnotations({ intent: "display" }),
-            this.getPageDimension(pageNumber),
+            Promise.resolve(page.getViewport({ scale: 1 })),
         ])
+        assertPageDimensions(viewport.width, viewport.height)
         throwIfAborted(signal)
         const mapped: DocumentAnnotation[] = []
         for (const annotation of annotations) {
             throwIfAborted(signal)
             if (annotation.subtype !== "Link" || !Array.isArray(annotation.rect)) continue
-            const [left, bottom, right, top] = annotation.rect
-            const x = Math.min(left, right)
-            const width = Math.abs(right - left)
-            const y = Math.max(0, dimensions.height - Math.max(top, bottom))
-            const height = Math.abs(top - bottom)
+            const [firstX, firstY, secondX, secondY] = viewport.convertToViewportRectangle(
+                annotation.rect,
+            )
+            const rect = boundingRect([
+                [firstX, firstY],
+                [secondX, secondY],
+            ])
             const url = this.sanitizeExternalUrl(annotation.url ?? annotation.unsafeUrl)
             let pageNumberForDestination: number | undefined
             if (!url && annotation.dest) {
@@ -284,7 +349,7 @@ export class PagedPdfDocument implements PagedDocument {
             if (!url && pageNumberForDestination === undefined) continue
             mapped.push({
                 type: "link",
-                rect: { x, y, width, height },
+                rect,
                 ...(url ? { url } : { pageNumber: pageNumberForDestination }),
                 label: typeof annotation.title === "string" ? annotation.title : undefined,
             })
@@ -325,6 +390,7 @@ export class PagedPdfDocument implements PagedDocument {
         if (cached) return cached
 
         const page = await this.getPageProxy(pageNumber)
+        this.assertOpen()
         let renderTask: pdfjs.RenderTask | undefined
         try {
             const viewport = page.getViewport({ scale: quality })
@@ -343,19 +409,28 @@ export class PagedPdfDocument implements PagedDocument {
             context.imageSmoothingEnabled = true
             context.imageSmoothingQuality = "high"
             renderTask = page.render({ canvasContext: context, viewport })
+            this.renderTasks.add(renderTask)
             const onAbort = () => renderTask?.cancel()
             signal?.addEventListener("abort", onAbort)
             try {
                 await renderTask.promise
             } finally {
                 signal?.removeEventListener("abort", onAbort)
+                if (renderTask) this.renderTasks.delete(renderTask)
             }
             throwIfAborted(signal)
+            if (this.closed) throw abortError("Rendering was cancelled")
             if (generation !== this.renderGeneration || this.renderedQuality !== quality) {
                 throw abortError("Rendering was superseded")
             }
+            if (this.closed) throw abortError("Rendering was cancelled")
             const blob = await this.canvasToBlob(canvas, signal)
+            if (this.closed) throw abortError("Rendering was cancelled")
             const url = URL.createObjectURL(blob)
+            if (this.closed) {
+                URL.revokeObjectURL(url)
+                throw abortError("Rendering was cancelled")
+            }
             if (generation !== this.renderGeneration || this.renderedQuality !== quality) {
                 URL.revokeObjectURL(url)
                 throw abortError("Rendering was superseded")
@@ -397,6 +472,19 @@ export class PagedPdfDocument implements PagedDocument {
                 }
             }
 
+            const pendingLoadingTask = this.loadingTask
+            await attempt(() => pendingLoadingTask?.destroy())
+            this.loadingTask = null
+            try {
+                if (this.loadPromise) await this.loadPromise
+            } catch {
+                // Closing a document cancels an in-flight load. Its parse error is
+                // already delivered to the load caller and must not fail cleanup.
+            }
+            for (const renderTask of this.renderTasks) {
+                await attempt(() => renderTask.cancel())
+            }
+            this.renderTasks.clear()
             await attempt(() => this.clearPageCache())
             for (const page of this.pages.values()) {
                 await attempt(() => {
@@ -405,11 +493,8 @@ export class PagedPdfDocument implements PagedDocument {
             }
             this.pages.clear()
             this.pagePromises.clear()
-            const loadingTask = this.loadingTask
             const pdfDoc = this.pdfDoc
-            this.loadingTask = null
             this.pdfDoc = null
-            await attempt(async () => loadingTask?.destroy())
             await attempt(async () => pdfDoc?.destroy())
             // Source cleanup is independent from PDF.js cleanup. In particular,
             // a failed destroy must not leak a file handle or object URL.

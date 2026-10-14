@@ -99,7 +99,7 @@ export async function activateLibrary(
         configureLibraryHostBridge(undefined)
         configurePromptStorage(undefined)
         configureLibraryNotifications(undefined)
-        context.host?.contextualStatus?.clear("builtin.library.contextual-status")
+        context.host?.contextualStatus?.clear()
         installDocumentService(undefined)
         onDispose?.()
         await store.dispose()

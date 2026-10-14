@@ -1,14 +1,13 @@
 <script lang="ts">
-    import type { ContextualStatus, ContextualStatusService } from "$lib/extension-api"
+    import type { ContextualStatus, ContextualStatusPublisher } from "$lib/extension-api"
     import { page } from "$app/state"
     import * as m from "$lib/paraglide/messages"
     import { vfsStore } from "./state/libraryStore.svelte"
 
-    const SOURCE = "builtin.library.contextual-status"
     const PRIORITY_SELECTION = 3
     const PRIORITY_IMPORT = 1
 
-    let { contextualStatus }: { contextualStatus: ContextualStatusService<ContextualStatus> } =
+    let { contextualStatus }: { contextualStatus: ContextualStatusPublisher<ContextualStatus> } =
         $props()
 
     $effect(() => {
@@ -30,7 +29,7 @@
                     }
                   : null
 
-        const publication = contextualStatus.publish(SOURCE, status)
+        const publication = contextualStatus.publish(status)
         return () => publication.dispose()
     })
 </script>

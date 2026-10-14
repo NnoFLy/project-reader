@@ -143,6 +143,30 @@ describe("viewer document loading", () => {
         )
     })
 
+    it("rotates text inside its already-transformed bounds", async () => {
+        const textContainer = globalThis.document.createElement("div")
+        if (document.kind !== "paged") throw new Error("expected paged document")
+        const paged = {
+            ...document,
+            getText: async () => [
+                { text: "Rotated", x: 20, y: 10, width: 10, height: 30, angle: 90 },
+            ],
+        }
+        await renderViewerPageLayers(paged, 1, {
+            textContainer,
+            annotationContainer: null,
+            onNavigate: vi.fn(),
+        })
+        const bounds = textContainer.querySelector("span")!
+        expect(bounds.style.width).toBe("10px")
+        expect(bounds.style.height).toBe("30px")
+        expect(bounds.style.transform).toBe("")
+        expect(bounds.firstElementChild?.textContent).toBe("Rotated")
+        expect((bounds.firstElementChild as HTMLElement).style.transform).toBe(
+            "translate(-50%, -50%) rotate(90deg)",
+        )
+    })
+
     it("clears stale layers when an aborted layer load completes", async () => {
         const textContainer = globalThis.document.createElement("div")
         const annotationContainer = globalThis.document.createElement("div")

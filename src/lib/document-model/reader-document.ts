@@ -50,12 +50,14 @@ export interface DocumentOutlineEntry {
 
 export interface DocumentTextItem {
     readonly text: string
-    /** Position and size in the page's unscaled coordinate space. */
+    /** Axis-aligned bounds in the page's unscaled, display-oriented coordinate space. */
     readonly x: number
     readonly y: number
     readonly width: number
     readonly height: number
     readonly fontSize?: number
+    /** Clockwise text orientation within the bounds; do not rotate the bounds themselves. */
+    readonly angle?: number
     readonly fontFamily?: string
     readonly hasEOL?: boolean
 }

@@ -8,6 +8,25 @@ import * as m from "$lib/paraglide/messages"
 
 type PromptChooser = Pick<PromptService, "choose" | "close" | "snapshot">
 
+type BookmarkPageNavigation = (pageNumber: number, options: { isJump: boolean }) => void
+
+/** Opens a bookmark's book before navigating to its saved page. */
+export async function openViewerBookmark(options: {
+    open: () => Promise<unknown>
+    pageNumber: number
+    goToPage: BookmarkPageNavigation
+}): Promise<void> {
+    const result = await options.open()
+    const isSuccessfulResult =
+        result === undefined ||
+        (typeof result === "object" &&
+            result !== null &&
+            "status" in result &&
+            result.status === "executed")
+    if (!isSuccessfulResult) return
+    options.goToPage(options.pageNumber, { isJump: true })
+}
+
 export function createViewerBookmarkCommands(dependencies: {
     prompt: PromptChooser
     scope: Pick<CommandScope, "onDestroy">

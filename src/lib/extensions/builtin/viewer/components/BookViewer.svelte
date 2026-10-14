@@ -64,7 +64,10 @@
     const { openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
-    import { createViewerBookmarkCommands } from "../commands/viewerBookmarkCommandFactory"
+    import {
+        createViewerBookmarkCommands,
+        openViewerBookmark,
+    } from "../commands/viewerBookmarkCommandFactory"
     import { getViewerTapAction } from "../commands/viewerTapNavigation"
     import { createPageRenderPlan, getPageTarget, type PageLayout } from "./pageSliderPolicy"
     import { renderBookViewerBitmaps } from "./bookViewerPreload"
@@ -184,12 +187,11 @@
             open: async (bookmarkId) => {
                 const bookmark = bookmarksStore.bookmarks.find(({ id }) => id === bookmarkId)
                 if (!bookmark) return
-                const result = await executeViewerCommand("viewer.open", {
-                    bookId: bookmark.bookId,
+                await openViewerBookmark({
+                    open: () => executeViewerCommand("viewer.open", { bookId: bookmark.bookId }),
+                    pageNumber: bookmark.pageNumber,
+                    goToPage: (pageNumber, options) => viewerStore.goToPage?.(pageNumber, options),
                 })
-                if ((result as { status?: string }).status === "executed") {
-                    viewerStore.goToPage?.(bookmark.pageNumber, { isJump: true })
-                }
             },
             isToggleBlocked: () =>
                 viewerUIStore.isBookmarkAddModalOpen || viewerUIStore.bookmarkToDeleteId !== null,

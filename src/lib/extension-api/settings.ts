@@ -1,5 +1,5 @@
 import type { CommandRegistry } from "./commands"
-import type { ContextualStatusService } from "./contextual-status"
+import type { ContextualStatusPublisher } from "./contextual-status"
 import type { Disposable, SettingContribution } from "./contracts"
 
 export interface RegisteredSetting<T = unknown> extends SettingContribution<T> {
@@ -78,8 +78,8 @@ export interface PromptHostCapability {
 export interface HostContext {
     /** Host-wide command discovery and execution for cross-extension UI surfaces. */
     commands?: Pick<CommandRegistry, "get" | "list" | "listKeybindings" | "execute">
-    /** Host-owned contextual status publication for extension-owned status views. */
-    contextualStatus?: ContextualStatusService
+    /** Status publication bound to this extension's ID. */
+    contextualStatus?: ContextualStatusPublisher
     prompt?: PromptHostCapability
     settings?: SettingsCapability
 }

@@ -3,7 +3,7 @@ import type { PromptRequest, PromptService, PromptSnapshot } from "$lib/modules/
 import { createViewerNavigationCommands } from "./viewerNavigationCommands"
 import { createViewerSearchCommands, type ViewerSearchPort } from "./viewerSearchCommands"
 import { createViewerDisplayCommands } from "./viewerDisplayCommands"
-import { createViewerBookmarkCommands } from "./viewerBookmarkCommandFactory"
+import { createViewerBookmarkCommands, openViewerBookmark } from "./viewerBookmarkCommandFactory"
 import * as m from "$lib/paraglide/messages"
 
 function promptService(): PromptService & { snapshot: PromptSnapshot | null } {
@@ -183,6 +183,40 @@ describe("viewer command modules", () => {
         }
         createViewerDisplayCommands(display)["viewer.toolbar.toggle"].run()
         expect(display.toggleToolbar).toHaveBeenCalledOnce()
+    })
+
+    it("navigates to a bookmark page after a successful undefined-result open", async () => {
+        const goToPage = vi.fn()
+        await openViewerBookmark({
+            open: vi.fn(async () => undefined),
+            pageNumber: 17,
+            goToPage,
+        })
+
+        expect(goToPage).toHaveBeenCalledWith(17, { isJump: true })
+
+        for (const result of [
+            { status: "unavailable" },
+            { status: "disabled" },
+            null,
+            {},
+            1,
+            "ok",
+        ]) {
+            await openViewerBookmark({
+                open: vi.fn(async () => result),
+                pageNumber: 18,
+                goToPage,
+            })
+        }
+        expect(goToPage).toHaveBeenCalledTimes(1)
+
+        await openViewerBookmark({
+            open: vi.fn(async () => ({ status: "executed" })),
+            pageNumber: 19,
+            goToPage,
+        })
+        expect(goToPage).toHaveBeenLastCalledWith(19, { isJump: true })
     })
 
     it("uses matching add/remove bookmark labels", () => {

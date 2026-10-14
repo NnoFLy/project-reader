@@ -6,27 +6,40 @@ const status = (line1: string, priority: number) => ({ line1, line2: line1, prio
 describe("ContextualStatusServiceImpl", () => {
     it("resolves publications by priority and replaces each source", () => {
         const service = new ContextualStatusServiceImpl()
-        service.publish("builtin.library", status("selection", 3))
-        service.publish("builtin.viewer", status("search", 2))
+        service.forExtension("builtin.library").publish(status("selection", 3))
+        service.forExtension("builtin.viewer").publish(status("search", 2))
         expect(service.current?.line1).toBe("selection")
 
-        service.publish("builtin.library", status("import", 1))
+        service.forExtension("builtin.library").publish(status("import", 1))
         expect(service.current?.line1).toBe("search")
 
-        service.clear("builtin.viewer")
+        service.forExtension("builtin.viewer").clear()
         expect(service.current?.line1).toBe("import")
     })
 
     it("does not let an old publication clear a source replacement", () => {
         const service = new ContextualStatusServiceImpl()
-        const oldPublication = service.publish("builtin.library", status("old", 1))
-        service.publish("builtin.library", status("new", 1))
+        const oldPublication = service.forExtension("builtin.library").publish(status("old", 1))
+        service.forExtension("builtin.library").publish(status("new", 1))
 
         oldPublication.dispose()
         expect(service.current?.line1).toBe("new")
 
-        service.clear("builtin.library")
+        service.forExtension("builtin.library").clear()
         expect(service.current).toBeNull()
+    })
+
+    it("binds publication and clearing to the requested extension", () => {
+        const service = new ContextualStatusServiceImpl()
+        const library = service.forExtension("builtin.library")
+        const viewer = service.forExtension("builtin.viewer")
+
+        library.publish(status("library", 1))
+        viewer.publish(status("viewer", 2))
+        library.clear()
+
+        expect(service.current?.line1).toBe("viewer")
+        expect(() => service.forExtension("not-namespaced")).toThrow("extension")
     })
 
     it("notifies subscribers immediately and on lifecycle reset", () => {
@@ -35,13 +48,13 @@ describe("ContextualStatusServiceImpl", () => {
         const subscription = service.subscribe(listener)
         expect(listener).toHaveBeenLastCalledWith(null)
 
-        service.publish("builtin.library", status("active", 1))
+        service.forExtension("builtin.library").publish(status("active", 1))
         service.reset()
         expect(listener).toHaveBeenLastCalledWith(null)
         expect(listener).toHaveBeenCalledTimes(3)
 
         subscription.dispose()
-        service.publish("builtin.library", status("ignored", 1))
+        service.forExtension("builtin.library").publish(status("ignored", 1))
         expect(listener).toHaveBeenCalledTimes(3)
     })
 })

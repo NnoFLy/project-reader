@@ -68,7 +68,6 @@ export class ExtensionHost {
         this.hostContext = {
             ...options.hostContext,
             commands: this.commands,
-            contextualStatus: this.contextualStatus,
         }
         const validated = options.extensions.map((extension) => ({
             extension,
@@ -183,6 +182,7 @@ export class ExtensionHost {
             runtime.state = "disabled"
             runtime.lifecycle.setState("disabled")
             await runtime.lifecycle.dispose()
+            this.contextualStatus.forExtension(extensionId).clear()
             this.contributions.disposeExtension(extensionId)
         })
     }
@@ -211,6 +211,7 @@ export class ExtensionHost {
                     this.enqueue(runtime, async () => {
                         runtime.state = "disposed"
                         await runtime.lifecycle.dispose()
+                        this.contextualStatus.forExtension(runtime.extension.manifest.id).clear()
                         this.contributions.disposeExtension(runtime.extension.manifest.id)
                     }),
                 ),
@@ -250,7 +251,10 @@ export class ExtensionHost {
             const context: ExtensionContext = {
                 extension: extensionInfo(manifest),
                 permissions: runtime.permissions,
-                host: this.hostContext,
+                host: {
+                    ...this.hostContext,
+                    contextualStatus: this.contextualStatus.forExtension(manifest.id),
+                },
                 commands: registries.commands,
                 views: registries.views,
                 settings: registries.settings,
@@ -272,6 +276,7 @@ export class ExtensionHost {
             runtime.state = "failed"
             runtime.lifecycle.setState("failed")
             await runtime.lifecycle.dispose()
+            this.contextualStatus.forExtension(manifest.id).clear()
             this.contributions.disposeExtension(manifest.id)
             this.notifications.error(`Extension ${manifest.name} failed to activate.`)
             throw runtime.error

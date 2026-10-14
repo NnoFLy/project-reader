@@ -146,6 +146,18 @@
         ready ? hostContext.application.host.contributions.listViews("host.status") : [],
     )
     let contextualStatus = $state<ContextualStatus | null>(null)
+    const contextualStatusPublishers = new Map<
+        string,
+        ReturnType<typeof hostContext.application.host.contextualStatus.forExtension>
+    >()
+    const statusPublisherFor = (extensionId: string) => {
+        let publisher = contextualStatusPublishers.get(extensionId)
+        if (!publisher) {
+            publisher = hostContext.application.host.contextualStatus.forExtension(extensionId)
+            contextualStatusPublishers.set(extensionId, publisher)
+        }
+        return publisher
+    }
     let notifications = $state<Notification[]>([])
 
     afterNavigate(({ to }) => {
@@ -200,6 +212,7 @@
         })
         return () => {
             statusSubscription.dispose()
+            contextualStatusPublishers.clear()
             subscription.dispose()
             for (const timer of notificationTimers.values()) window.clearTimeout(timer)
             notificationTimers.clear()
@@ -214,7 +227,7 @@
         {#each statusViews as view (view.id)}
             {@const View = view.component as Component}
             {#if View}
-                <View contextualStatus={hostContext.application.host.contextualStatus} />
+                <View contextualStatus={statusPublisherFor(view.extensionId)} />
             {/if}
         {/each}
 
