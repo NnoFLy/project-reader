@@ -5,6 +5,7 @@ import {
     InvalidCommandPayloadError,
     UnknownCommandError,
     type CommandContribution,
+    type CommandKeybinding,
     type CommandRegistry,
     type Disposable,
     type KeybindingContribution,
@@ -19,11 +20,8 @@ export interface HostCommandMetadata {
     readonly isEnabled?: (context?: unknown) => boolean | Promise<boolean>
 }
 
-export interface HostKeybinding extends HostCommandMetadata {
-    readonly commandId: string
-    readonly keybinding: string
+export interface HostKeybinding extends HostCommandMetadata, CommandKeybinding {
     readonly when?: (context?: unknown) => boolean
-    readonly extensionId: string
 }
 
 export interface HostCommandFacade {

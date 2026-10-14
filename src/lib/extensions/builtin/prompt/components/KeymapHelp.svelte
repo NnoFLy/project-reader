@@ -1,28 +1,37 @@
 <script lang="ts">
-    import { commandsStore, KeyboardHandler } from "$lib/core/commands"
-    import { useModalCommands } from "$lib/core/commands"
+    import { KeyboardHandler, normalizeKeybinding } from "$lib/core/commands"
     import * as m from "$lib/paraglide/messages"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
+    import { getPromptCommandRegistry } from "../commandRegistry"
     import { buildKeymapHelpItems, filterKeymapHelpItems } from "../keymapHelp"
+    import { promptStore } from "../stores/promptStore.svelte"
 
     interface Props {
         animations?: boolean
-        onClose: () => void
+        onClose?: () => void
     }
 
-    let { animations = true, onClose }: Props = $props()
+    let { animations = true, onClose = () => promptStore.closeHelp() }: Props = $props()
 
-    const activeNodeBeforeOpen = commandsStore.activeScope
-    useModalCommands([], activeNodeBeforeOpen)
+    const commandRegistry = getPromptCommandRegistry()
+    const keymaps = commandRegistry?.listKeybindings
+        ? buildKeymapHelpItems(
+              commandRegistry.listKeybindings().map((binding) => {
+                  const command = commandRegistry.get(binding.commandId)
+                  const label = command?.label
+                  return {
+                      label: typeof label === "function" ? label() : (label ?? binding.commandId),
+                      keymap: binding.keybinding,
+                  }
+              }),
+              normalizeKeybinding,
+          )
+        : []
 
     let contentElement = $state<HTMLElement | null>(null)
     let searchQuery = $state("")
     let searchInputRef = $state<HTMLInputElement | null>(null)
-
-    const keymaps = activeNodeBeforeOpen
-        ? buildKeymapHelpItems(activeNodeBeforeOpen.listActive(), KeyboardHandler.normalize)
-        : []
 
     let filteredKeymaps = $derived(filterKeymapHelpItems(keymaps, searchQuery))
 
@@ -43,6 +52,7 @@
     }
 
     function handleKeydown(event: KeyboardEvent) {
+        if (!promptStore.helpOpen) return
         const target = event.target as HTMLElement | null
         const isInput =
             target?.tagName === "INPUT" ||
@@ -100,83 +110,85 @@
 
 <svelte:window onkeydowncapture={handleKeydown} />
 
-<Modal
-    variant="default"
-    type="float"
-    size="small"
-    placement="center"
-    onClose={() => onClose()}
-    title={m.keymap_modal_title()}
-    closeLabel={m.close()}
-    initialFocus={() => searchInputRef}
-    mobileFooter="fixed"
-    draggable
->
-    {#if keymaps.length > 0}
-        <div class="modal-search">
-            <Input
-                unstyled
-                bind:ref={searchInputRef}
-                type="text"
-                bind:value={searchQuery}
-                placeholder="{m.keymap_search_shortcuts()} (/)"
-                class="search-input"
-                onkeydown={handleSearchKeydown}
-            />
-            {#if searchQuery}
-                <button
-                    class="clear-search-btn"
-                    onclick={() => {
-                        searchQuery = ""
-                        searchInputRef?.focus()
-                    }}
-                    aria-label={m.clear_search_aria()}
-                >
-                    &times;
-                </button>
-            {/if}
-        </div>
-    {/if}
-
-    <div class="modal-content" {@attach captureContent}>
-        {#if filteredKeymaps.length === 0}
-            <div class="empty-state">
+{#if promptStore.helpOpen}
+    <Modal
+        variant="default"
+        type="float"
+        size="small"
+        placement="center"
+        onClose={() => onClose()}
+        title={m.keymap_modal_title()}
+        closeLabel={m.close()}
+        initialFocus={() => searchInputRef}
+        mobileFooter="fixed"
+        draggable
+    >
+        {#if keymaps.length > 0}
+            <div class="modal-search">
+                <Input
+                    unstyled
+                    bind:ref={searchInputRef}
+                    type="text"
+                    bind:value={searchQuery}
+                    placeholder="{m.keymap_search_shortcuts()} (/)"
+                    class="search-input"
+                    onkeydown={handleSearchKeydown}
+                />
                 {#if searchQuery}
-                    {m.keymap_no_matching_shortcuts()}
-                {:else}
-                    {m.keymap_no_shortcuts()}
+                    <button
+                        class="clear-search-btn"
+                        onclick={() => {
+                            searchQuery = ""
+                            searchInputRef?.focus()
+                        }}
+                        aria-label={m.clear_search_aria()}
+                    >
+                        &times;
+                    </button>
                 {/if}
             </div>
-        {:else}
-            <div class="shortcuts-grid">
-                {#each filteredKeymaps as keymap (`${keymap.description}:${getShortcutsArray(keymap.keys).join(",")}`)}
-                    <div class="shortcut-row">
-                        <div class="key-combo">
-                            {#each getShortcutsArray(keymap.keys) as shortcut, idx (shortcut)}
-                                {#if idx > 0}
-                                    <span class="shortcut-separator">/</span>
-                                {/if}
-                                {#each formatKeys(shortcut) as key, keyIndex (`${key}:${keyIndex}`)}
-                                    <kbd class="key-badge">{key}</kbd>
-                                {/each}
-                            {/each}
-                        </div>
-                        <span class="shortcut-desc">
-                            {keymap.description}
-                            {#if keymap.englishDescription && keymap.englishDescription !== keymap.description}
-                                ({keymap.englishDescription})
-                            {/if}
-                        </span>
-                    </div>
-                {/each}
-            </div>
         {/if}
-    </div>
 
-    {#snippet footer()}
-        <span class="footer-hint">{m.keymap_modal_close_hint()}</span>
-    {/snippet}
-</Modal>
+        <div class="modal-content" {@attach captureContent}>
+            {#if filteredKeymaps.length === 0}
+                <div class="empty-state">
+                    {#if searchQuery}
+                        {m.keymap_no_matching_shortcuts()}
+                    {:else}
+                        {m.keymap_no_shortcuts()}
+                    {/if}
+                </div>
+            {:else}
+                <div class="shortcuts-grid">
+                    {#each filteredKeymaps as keymap (`${keymap.description}:${getShortcutsArray(keymap.keys).join(",")}`)}
+                        <div class="shortcut-row">
+                            <div class="key-combo">
+                                {#each getShortcutsArray(keymap.keys) as shortcut, idx (shortcut)}
+                                    {#if idx > 0}
+                                        <span class="shortcut-separator">/</span>
+                                    {/if}
+                                    {#each formatKeys(shortcut) as key, keyIndex (`${key}:${keyIndex}`)}
+                                        <kbd class="key-badge">{key}</kbd>
+                                    {/each}
+                                {/each}
+                            </div>
+                            <span class="shortcut-desc">
+                                {keymap.description}
+                                {#if keymap.englishDescription && keymap.englishDescription !== keymap.description}
+                                    ({keymap.englishDescription})
+                                {/if}
+                            </span>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+
+        {#snippet footer()}
+            <span class="footer-hint">{m.keymap_modal_close_hint()}</span>
+        {/snippet}
+    </Modal>
+{/if}
 
 <style>
     .modal-content {

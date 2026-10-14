@@ -14,6 +14,11 @@ describe("built-in contributions", () => {
                 component: expect.anything(),
             }),
             expect.objectContaining({
+                id: "prompt.help",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
                 id: "prompt.palette",
                 kind: "native",
                 component: expect.anything(),
@@ -50,6 +55,7 @@ describe("built-in contributions", () => {
             "library.node.relink",
             "prompt.open",
             "prompt.close",
+            "prompt.help.toggle",
             "settings.theme",
             "settings.layout",
             "settings.language",

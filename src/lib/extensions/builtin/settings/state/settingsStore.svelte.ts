@@ -1,5 +1,6 @@
 import { browser } from "$app/environment"
 import type { SettingsRegistry, StorageNamespace } from "$lib/extension-api"
+import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 
 export type Theme = "light" | "dark" | "system"
 export type Layout = "single" | "split" | "scroll"
@@ -41,6 +42,38 @@ export const DEFAULT_SETTINGS: Settings = {
     preferPdfTitle: true,
 }
 
+const THEME_BOOTSTRAP_STORAGE_KEY = "settings"
+
+function persistThemeBootstrap(theme: Theme): void {
+    const stored = safeStorageGet(THEME_BOOTSTRAP_STORAGE_KEY)
+    let bootstrap: Record<string, unknown> = {}
+
+    if (stored) {
+        try {
+            const parsed: unknown = JSON.parse(stored)
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                bootstrap = { ...(parsed as Record<string, unknown>) }
+            }
+        } catch {
+            // Replace invalid bootstrap data with the next valid theme value.
+        }
+    }
+
+    bootstrap.theme = theme
+    safeStorageSet(THEME_BOOTSTRAP_STORAGE_KEY, JSON.stringify(bootstrap))
+}
+
+function readLegacySettings(): Partial<Settings> {
+    const stored = safeStorageGet(THEME_BOOTSTRAP_STORAGE_KEY)
+    if (!stored) return {}
+
+    try {
+        return sanitizeSettings(JSON.parse(stored))
+    } catch {
+        return {}
+    }
+}
+
 export const SETTING_IDS = {
     theme: "settings.theme",
     layout: "settings.layout",
@@ -63,6 +96,7 @@ export function sanitizeSettings(parsed: unknown): Partial<Settings> {
     }
     if (
         typeof value.scale === "number" &&
+        Number.isFinite(value.scale) &&
         value.scale >= CONSTANTS.minScale &&
         value.scale <= CONSTANTS.maxScale
     ) {
@@ -80,6 +114,7 @@ export function sanitizeSettings(parsed: unknown): Partial<Settings> {
     }
     if (
         typeof value.quality === "number" &&
+        Number.isInteger(value.quality) &&
         value.quality >= CONSTANTS.minQuality &&
         value.quality <= CONSTANTS.maxQuality
     ) {
@@ -134,6 +169,7 @@ class SettingsStore {
 
     updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
         this.settings[key] = value
+        if (key === "theme") persistThemeBootstrap(value as Theme)
         const id = SETTING_IDS[key]
         if (this.registry && this.storage && this.isRegistered(id)) {
             void this.persist(id, value).catch(() => undefined)
@@ -261,12 +297,27 @@ class SettingsStore {
         registry: SettingsRegistry,
         storage: StorageNamespace,
     ): Promise<void> {
+        const legacySettings = readLegacySettings()
         for (const [key, id] of Object.entries(SETTING_IDS) as [keyof Settings, SettingId][]) {
             const setting = registry.get(id)
             if (!setting) continue
             const stored = await storage.get<unknown>(id)
             if (!registry.get(id)) return
-            const value = stored === undefined ? await registry.getValue(id) : stored
+
+            let value: unknown
+            if (stored === undefined && legacySettings[key] !== undefined) {
+                const migrated = legacySettings[key]
+                if (!setting.validate || setting.validate(migrated)) {
+                    value = migrated
+                    await registry.setValue(id, migrated)
+                    await storage.set(id, migrated)
+                } else {
+                    value = await registry.getValue(id)
+                }
+            } else {
+                value = stored === undefined ? await registry.getValue(id) : stored
+            }
+
             if (setting.validate && !setting.validate(value)) continue
             this.settings[key] = value as never
             if (key === "animations") {
@@ -277,7 +328,10 @@ class SettingsStore {
                     document.documentElement.lang = value as Settings["language"]
                     document.documentElement.dir = "ltr"
                 }
-            } else if (key === "theme") this.updateDOM()
+            } else if (key === "theme") {
+                persistThemeBootstrap(value as Theme)
+                this.updateDOM()
+            }
         }
         this.updateDOM()
     }

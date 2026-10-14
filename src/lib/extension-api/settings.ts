@@ -65,7 +65,9 @@ export interface SettingsCapability {
 
 export interface PromptHostCapability {
     readonly promptStore: PromptService
-    readonly getPromptCommandRegistry: () => CommandRegistry | undefined
+    readonly getPromptCommandRegistry: () =>
+        | Pick<CommandRegistry, "get" | "list" | "listKeybindings" | "execute">
+        | undefined
     readonly openCommandPalette: (
         source?: CommandRegistry | import("$lib/core/commands").CommandScope,
         initialQuery?: string,
@@ -73,6 +75,8 @@ export interface PromptHostCapability {
 }
 
 export interface HostContext {
+    /** Host-wide command discovery and execution for cross-extension UI surfaces. */
+    commands?: Pick<CommandRegistry, "get" | "list" | "listKeybindings" | "execute">
     prompt?: PromptHostCapability
     settings?: SettingsCapability
 }

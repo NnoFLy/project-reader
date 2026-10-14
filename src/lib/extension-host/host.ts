@@ -58,11 +58,11 @@ export class ExtensionHost {
     constructor(options: ExtensionHostOptions) {
         this.storage = options.storage ?? new MemoryStorageBackend()
         this.migration = options.migration
-        this.hostContext = options.hostContext ?? {}
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
         this.commands = this.contributions.globalCommands
+        this.hostContext = { ...options.hostContext, commands: this.commands }
         const validated = options.extensions.map((extension) => ({
             extension,
             permissions: validateManifest(extension.manifest),

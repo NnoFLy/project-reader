@@ -61,7 +61,7 @@
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
     import { executeViewerCommand, viewerPromptCapability } from "../viewerHost"
-    const { getPromptCommandRegistry, openCommandPalette, promptStore } = viewerPromptCapability
+    const { openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
     import { createViewerBookmarkCommands } from "../commands/viewerBookmarkCommandFactory"
@@ -1458,7 +1458,7 @@
                                             class="viewer-fab-btn fab-prompt"
                                             onclick={(event) => {
                                                 event.stopPropagation()
-                                                void openCommandPalette(getPromptCommandRegistry())
+                                                void openCommandPalette()
                                             }}
                                             aria-label={m.keymap_prompt()}
                                             tooltip={`${m.keymap_prompt()}${getShortcutHint(commandsNode, "prompt.open")}`}

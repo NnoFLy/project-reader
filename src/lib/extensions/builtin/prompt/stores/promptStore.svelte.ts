@@ -37,6 +37,7 @@ type PromptFrame = {
 
 class PromptStore implements PromptService {
     snapshot = $state.raw<PromptSnapshot | null>(null)
+    helpOpen = $state(false)
     private session: Session | null = null
     private suspendedFrames: PromptFrame[] = []
     private selectingSessions = new Set<Session>()
@@ -105,6 +106,14 @@ class PromptStore implements PromptService {
         return this.snapshot !== null
     }
 
+    toggleHelp(): void {
+        this.helpOpen = !this.helpOpen
+    }
+
+    closeHelp(): void {
+        this.helpOpen = false
+    }
+
     get canNavigateBack() {
         return this.suspendedFrames.length > 0 && this.query === ""
     }
@@ -169,6 +178,7 @@ class PromptStore implements PromptService {
     /** Clear active prompt work so a disposed extension cannot retain providers or sessions. */
     reset(): void {
         this.requestVersion += 1
+        this.helpOpen = false
         const session = this.session
         this.session = null
         this.snapshot = null

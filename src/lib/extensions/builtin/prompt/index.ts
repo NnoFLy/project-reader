@@ -22,6 +22,7 @@ export { promptStore } from "./stores/promptStore.svelte"
 import type { ExtensionContext } from "$lib/extension-api"
 import { isSerializablePayload, serializablePayload } from "$lib/core/commands"
 import { openCommandPalette } from "./commands/commandPalette"
+import KeymapHelp from "./components/KeymapHelp.svelte"
 import Prompt from "./components/Prompt.svelte"
 import { getPromptCommandRegistry, setPromptCommandRegistry } from "./commandRegistry"
 import { promptStore } from "./stores/promptStore.svelte"
@@ -49,7 +50,7 @@ export function activatePrompt(context: ExtensionContext): void {
             openCommandPalette,
         }
     }
-    setPromptCommandRegistry(context.commands)
+    setPromptCommandRegistry(context.host?.commands ?? context.commands)
     context.lifecycle.onDispose(() => {
         promptStore.reset()
         setPromptCommandRegistry(undefined)
@@ -72,11 +73,24 @@ export function activatePrompt(context: ExtensionContext): void {
         label: "Close prompt",
         execute: () => promptStore.close(),
     })
+    context.commands.register({
+        id: "prompt.help.toggle",
+        label: "Toggle keyboard shortcuts help",
+        keybinding: ["?"],
+        execute: () => promptStore.toggleHelp(),
+    })
     context.views.registerNative({
         id: PROMPT_VIEW_ID,
         slot: "prompt.result",
         title: "Command palette",
         kind: "native",
         component: Prompt,
+    })
+    context.views.registerNative({
+        id: "prompt.help",
+        slot: "prompt.result",
+        title: "Keyboard shortcuts",
+        kind: "native",
+        component: KeymapHelp,
     })
 }

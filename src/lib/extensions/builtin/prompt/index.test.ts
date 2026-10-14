@@ -49,7 +49,19 @@ describe("builtin.prompt activation", () => {
         const { context, dispose } = createPromptContext()
         activatePrompt(context)
 
-        expect(context.commands.list().map(({ id }) => id)).toEqual(["prompt.open", "prompt.close"])
+        expect(context.commands.list().map(({ id }) => id)).toEqual([
+            "prompt.open",
+            "prompt.close",
+            "prompt.help.toggle",
+        ])
+        expect(context.commands.listKeybindings?.()).toEqual([
+            expect.objectContaining({ commandId: "prompt.open", keybinding: "ctrl+k" }),
+            expect.objectContaining({ commandId: "prompt.open", keybinding: "meta+k" }),
+            expect.objectContaining({ commandId: "prompt.help.toggle", keybinding: "?" }),
+        ])
+        await context.commands.execute("prompt.help.toggle")
+        expect(promptStore.helpOpen).toBe(true)
+        promptStore.closeHelp()
         await expect(
             context.commands.execute("prompt.open", { initialQuery: 1 }),
         ).rejects.toBeInstanceOf(InvalidCommandPayloadError)
@@ -59,6 +71,7 @@ describe("builtin.prompt activation", () => {
         expect(promptStore.snapshot?.items.map(({ id }) => id)).toEqual([
             "prompt.open",
             "prompt.close",
+            "prompt.help.toggle",
         ])
         promptStore.close()
         await palette

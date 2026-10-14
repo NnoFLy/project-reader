@@ -1,12 +1,17 @@
 import type { CommandRegistry } from "$lib/extension-api"
 
-let injectedRegistry: CommandRegistry | undefined
+export type PromptCommandRegistry = Pick<
+    CommandRegistry,
+    "get" | "list" | "listKeybindings" | "execute"
+>
 
-/** Inject the core registry owned by the active Prompt extension. */
-export function setPromptCommandRegistry(registry: CommandRegistry | undefined): void {
+let injectedRegistry: PromptCommandRegistry | undefined
+
+/** Inject the host registry used by prompt-owned command discovery. */
+export function setPromptCommandRegistry(registry: PromptCommandRegistry | undefined): void {
     injectedRegistry = registry
 }
 
-export function getPromptCommandRegistry(): CommandRegistry | undefined {
+export function getPromptCommandRegistry(): PromptCommandRegistry | undefined {
     return injectedRegistry
 }

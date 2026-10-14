@@ -1,11 +1,11 @@
 import { tick } from "svelte"
-import type { CommandRegistry, RegisteredCommand } from "$lib/extension-api"
+import type { RegisteredCommand } from "$lib/extension-api"
 import { commandsStore, formatKeyString, type CommandScope } from "$lib/core/commands"
-import { getPromptCommandRegistry } from "../commandRegistry"
+import { getPromptCommandRegistry, type PromptCommandRegistry } from "../commandRegistry"
 import { promptStore, type PromptItem } from "../index"
 import * as m from "$lib/paraglide/messages"
 
-type CommandSource = CommandScope | CommandRegistry
+type CommandSource = CommandScope | PromptCommandRegistry
 
 type PaletteChoice = {
     id: string
@@ -17,11 +17,11 @@ type PaletteChoice = {
     execute: () => Promise<void>
 }
 
-function isCoreRegistry(source: CommandSource): source is CommandRegistry {
+function isCoreRegistry(source: CommandSource): source is PromptCommandRegistry {
     return !("listPaletteCommands" in source)
 }
 
-function corePaletteCommands(registry: CommandRegistry): PaletteChoice[] {
+function corePaletteCommands(registry: PromptCommandRegistry): PaletteChoice[] {
     return registry.list().map((command: RegisteredCommand) => {
         const label = typeof command.label === "function" ? command.label() : command.label
         const formattedKeymap = command.keybinding?.map((key) => formatKeyString(key))
@@ -71,7 +71,7 @@ export async function openCommandPalette(
                       value: choice,
                   }
               })
-            : corePaletteCommands(source as CommandRegistry).map((choice) => ({
+            : corePaletteCommands(source as PromptCommandRegistry).map((choice) => ({
                   ...choice,
                   presentation: { kind: choice.category },
                   value: choice,

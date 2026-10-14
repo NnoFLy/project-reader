@@ -256,6 +256,11 @@ class PermissionedCommandRegistry implements CommandRegistry {
         )
     }
 
+    listKeybindings() {
+        this.permissions.require("commands")
+        return this.hostCommands?.listKeybindings() ?? this.delegate.listKeybindings?.() ?? []
+    }
+
     dispose(): void {
         this.delegate.dispose()
     }

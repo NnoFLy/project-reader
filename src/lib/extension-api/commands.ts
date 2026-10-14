@@ -1,5 +1,11 @@
 import type { CommandContribution, Disposable } from "./contracts"
 
+export interface CommandKeybinding {
+    readonly commandId: string
+    readonly keybinding: string
+    readonly extensionId: string
+}
+
 export interface RegisteredCommand extends CommandContribution {
     readonly extensionId: string
 }
@@ -10,6 +16,7 @@ export interface CommandRegistry {
     get(commandId: string): RegisteredCommand | undefined
     list(): readonly RegisteredCommand[]
     execute(commandId: string, payload?: unknown, context?: unknown): Promise<unknown>
+    readonly listKeybindings?: () => readonly CommandKeybinding[]
 }
 
 export class UnknownCommandError extends Error {
