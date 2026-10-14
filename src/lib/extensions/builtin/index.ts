@@ -147,16 +147,27 @@ const activatePdf = (context: Parameters<AppExtension["activate"]>[0]): void => 
 
 export const BUILTIN_MANIFESTS = [
     manifest("builtin.library", "Library", [{ type: "startup" }], {
-        views: [{ id: "library.page", slot: "workbench.panel", title: "Library" }],
+        views: [
+            { id: "library.page", slot: "workbench.panel", title: "Library" },
+            { id: "library.status", slot: "host.status", title: "Library status" },
+        ],
     }),
     manifest("builtin.prompt", "Prompt", [{ type: "startup" }], {
-        views: [{ id: "prompt.palette", slot: "prompt.result", title: "Command palette" }],
+        views: [
+            { id: "prompt.palette", slot: "prompt.result", title: "Command palette" },
+            { id: "prompt.help", slot: "prompt.result", title: "Keyboard shortcuts" },
+        ],
     }),
     manifest(
         "builtin.viewer",
         "Viewer",
         [{ type: "startup" }],
-        { views: [{ id: "viewer.reader", slot: "viewer.toolbar", title: "Viewer" }] },
+        {
+            views: [
+                { id: "viewer.reader", slot: "viewer.toolbar", title: "Viewer" },
+                { id: "viewer.status", slot: "host.status", title: "Viewer status" },
+            ],
+        },
         { "builtin.library": "*" },
     ),
     manifest("builtin.settings", "Settings", [{ type: "startup" }], {

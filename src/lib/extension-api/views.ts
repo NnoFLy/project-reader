@@ -6,6 +6,7 @@ export type ViewSlot =
     | "viewer.toolbar"
     | "viewer.sidebar"
     | "prompt.result"
+    | "host.status"
 
 export interface NativeViewContribution extends ViewContribution {
     readonly kind: "native"

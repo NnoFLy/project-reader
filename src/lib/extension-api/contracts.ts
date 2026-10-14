@@ -31,6 +31,7 @@ export function extensionNamespace(extensionId: string): string {
 export function belongsToExtension(id: string, extensionId: string): boolean {
     if (!isNamespacedId(id)) return false
     if (id.startsWith(`${extensionId}.`)) return true
+    if (extensionId === "builtin.prompt" && id.startsWith("help.")) return true
     return (
         hostOwnedBuiltinIds.has(extensionId) && id.startsWith(`${extensionNamespace(extensionId)}.`)
     )

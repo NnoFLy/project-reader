@@ -2,6 +2,7 @@ import type { AnyCommandDefinition } from "./commands/commands.types"
 import type { HostCommandMetadata } from "$lib/core/commands"
 import type { CommandContribution, ExtensionContext } from "$lib/extension-api"
 import LibraryPage from "./LibraryPage.svelte"
+import LibraryStatus from "./LibraryStatus.svelte"
 import { createLibraryCommands } from "./commands/libraryCommands"
 import {
     configureLibraryUIController,
@@ -98,6 +99,7 @@ export async function activateLibrary(
         configureLibraryHostBridge(undefined)
         configurePromptStorage(undefined)
         configureLibraryNotifications(undefined)
+        context.host?.contextualStatus?.clear("builtin.library.contextual-status")
         installDocumentService(undefined)
         onDispose?.()
         await store.dispose()
@@ -109,5 +111,12 @@ export async function activateLibrary(
         title: "Library",
         kind: "native",
         component: LibraryPage,
+    })
+    context.views.registerNative({
+        id: "library.status",
+        slot: "host.status",
+        title: "Library status",
+        kind: "native",
+        component: LibraryStatus,
     })
 }

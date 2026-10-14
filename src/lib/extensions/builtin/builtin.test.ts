@@ -7,9 +7,18 @@ describe("built-in contributions", () => {
 
         await host.start()
 
+        expect(host.contributions.listViews("host.status")).toEqual([
+            expect.objectContaining({ id: "library.status", slot: "host.status" }),
+            expect.objectContaining({ id: "viewer.status", slot: "host.status" }),
+        ])
         expect(host.contributions.listViews()).toEqual([
             expect.objectContaining({
                 id: "library.page",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
+                id: "library.status",
                 kind: "native",
                 component: expect.anything(),
             }),
@@ -30,6 +39,11 @@ describe("built-in contributions", () => {
             }),
             expect.objectContaining({
                 id: "viewer.reader",
+                kind: "native",
+                component: expect.anything(),
+            }),
+            expect.objectContaining({
+                id: "viewer.status",
                 kind: "native",
                 component: expect.anything(),
             }),
@@ -72,9 +86,16 @@ describe("built-in contributions", () => {
             host.commands.listKeybindings().find(({ commandId }) => commandId === "viewer.open"),
         ).toMatchObject({ keybinding: "shift+o" })
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
+        host.contextualStatus.publish("test.status", {
+            line1: "1",
+            line2: "TEST",
+            priority: 1,
+        })
+        expect(host.contextualStatus.current?.line1).toBe("1")
 
         await host.dispose()
 
+        expect(host.contextualStatus.current).toBeNull()
         expect(host.contributions.listViews()).toEqual([])
         expect(host.record("builtin.library")?.state).toBe("disposed")
     })

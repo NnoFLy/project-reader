@@ -18,6 +18,7 @@ import {
 import { DocumentService } from "../core/documents"
 import { normalizeKeybinding, type HostCommandFacade } from "../core/commands"
 import { NotificationServiceImpl } from "../core/notifications"
+import { ContextualStatusServiceImpl } from "../core/contextual-status"
 import { createExtensionStorage, MemoryStorageBackend, type StorageBackend } from "../core/storage"
 import { ContributionRegistry } from "./contribution-registry"
 import { resolveDependencies } from "./dependency-resolution"
@@ -48,6 +49,7 @@ export class ExtensionHost {
     /** Shared host-owned command discovery and execution facade. */
     readonly commands: HostCommandFacade
     readonly notifications: NotificationServiceImpl
+    readonly contextualStatus: ContextualStatusServiceImpl
     readonly documentService: DocumentService
     private readonly runtimes = new Map<string, ExtensionRuntime>()
     private readonly storage: StorageBackend
@@ -59,10 +61,15 @@ export class ExtensionHost {
         this.storage = options.storage ?? new MemoryStorageBackend()
         this.migration = options.migration
         this.notifications = options.notifications ?? new NotificationServiceImpl()
+        this.contextualStatus = new ContextualStatusServiceImpl()
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
         this.commands = this.contributions.globalCommands
-        this.hostContext = { ...options.hostContext, commands: this.commands }
+        this.hostContext = {
+            ...options.hostContext,
+            commands: this.commands,
+            contextualStatus: this.contextualStatus,
+        }
         const validated = options.extensions.map((extension) => ({
             extension,
             permissions: validateManifest(extension.manifest),
@@ -209,6 +216,7 @@ export class ExtensionHost {
                 ),
             ),
         ]).then((results) => {
+            this.contextualStatus.reset()
             this.contributions.dispose()
             const rejected = results.find(
                 (result): result is PromiseRejectedResult => result.status === "rejected",

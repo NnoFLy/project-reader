@@ -1,7 +1,7 @@
 <script lang="ts">
     import { getContext, onMount } from "svelte"
     import type { Component } from "svelte"
-    import type { Notification } from "$lib/extension-api"
+    import type { ContextualStatus, Notification } from "$lib/extension-api"
     import { version } from "$app/environment"
     import { updated } from "$app/state"
     import { afterNavigate } from "$app/navigation"
@@ -142,6 +142,10 @@
     let promptViews = $derived(
         ready ? hostContext.application.host.contributions.listViews("prompt.result") : [],
     )
+    let statusViews = $derived(
+        ready ? hostContext.application.host.contributions.listViews("host.status") : [],
+    )
+    let contextualStatus = $state<ContextualStatus | null>(null)
     let notifications = $state<Notification[]>([])
 
     afterNavigate(({ to }) => {
@@ -161,6 +165,10 @@
         appUpdate.initialize()
         if (updated.current) appUpdate.markAvailable()
 
+        const contextualStatusService = hostContext.application.host.contextualStatus
+        const statusSubscription = contextualStatusService.subscribe((status) => {
+            contextualStatus = status
+        })
         const notificationService = hostContext.application.host.notifications
         const notificationTimers = new Map<string, number>()
         const removeFromView = (id: string) => {
@@ -191,6 +199,7 @@
             notifications = notifications.filter((current) => current.id !== notification.id)
         })
         return () => {
+            statusSubscription.dispose()
             subscription.dispose()
             for (const timer of notificationTimers.values()) window.clearTimeout(timer)
             notificationTimers.clear()
@@ -201,6 +210,24 @@
 <div id="app-root">
     <div class="app">
         {@render children()}
+
+        {#each statusViews as view (view.id)}
+            {@const View = view.component as Component}
+            {#if View}
+                <View contextualStatus={hostContext.application.host.contextualStatus} />
+            {/if}
+        {/each}
+
+        {#if contextualStatus}
+            <section
+                class="host-contextual-status"
+                aria-label={contextualStatus.line2}
+                role="status"
+            >
+                <strong>{contextualStatus.line1}</strong>
+                <span>{contextualStatus.line2}</span>
+            </section>
+        {/if}
 
         {#each promptViews as view (view.id)}
             {@const View = view.component as Component}
@@ -230,6 +257,35 @@
     @import "$lib/shared/styles/variables.css";
     @import "$lib/shared/styles/typography.css";
     @import "$lib/shared/styles/global.css";
+
+    .host-contextual-status {
+        position: fixed;
+        z-index: 999;
+        inset: auto auto 1.25rem 1.25rem;
+        display: grid;
+        gap: 0.1rem;
+        min-width: 5.5rem;
+        padding: 0.6rem 0.85rem;
+        border: 1px solid hsl(220 20% 35% / 0.8);
+        border-radius: 0.75rem;
+        color: hsl(210 30% 96%);
+        background: hsl(222 26% 15% / 0.96);
+        box-shadow: 0 0.75rem 2rem hsl(220 40% 4% / 0.32);
+        font: 0.875rem/1.25 var(--font-sans, sans-serif);
+        text-align: center;
+        pointer-events: none;
+    }
+
+    .host-contextual-status strong {
+        font-size: 1.05rem;
+    }
+
+    .host-contextual-status span {
+        color: hsl(210 20% 76%);
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
 
     .host-notifications {
         position: fixed;

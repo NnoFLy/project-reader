@@ -1,6 +1,7 @@
 import type { Component } from "svelte"
 import type { CommandContribution, Disposable, ExtensionContext } from "$lib/extension-api"
 import ViewerPage from "./ViewerPage.svelte"
+import ViewerStatus from "./ViewerStatus.svelte"
 import { createViewerOpenCommand } from "./commands/viewerOpenCommand"
 import { isViewerBookmarkOpenPayload, isViewerOpenPayload } from "./commands/viewerCommandPayloads"
 import { viewerStore } from "./stores/viewerStore.svelte"
@@ -65,6 +66,7 @@ export async function activateViewer(
         notesStore.dispose()
         bookmarksStore.dispose()
         viewerStore.dispose()
+        context.host?.contextualStatus?.clear("builtin.viewer.contextual-status")
         installViewerHostCapabilities({})
         installViewerRelinkHost(undefined)
     })
@@ -135,5 +137,12 @@ export async function activateViewer(
         title: "Viewer",
         kind: "native",
         component: ViewerPage,
+    })
+    context.views.registerNative({
+        id: "viewer.status",
+        slot: "host.status",
+        title: "Viewer status",
+        kind: "native",
+        component: ViewerStatus,
     })
 }

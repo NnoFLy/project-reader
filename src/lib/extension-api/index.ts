@@ -1,4 +1,5 @@
 export * from "./commands"
+export * from "./contextual-status"
 export * from "./contracts"
 export * from "./documents"
 export * from "./lifecycle"
