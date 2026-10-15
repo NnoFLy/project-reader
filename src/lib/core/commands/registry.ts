@@ -1,3 +1,4 @@
+import { KeyboardHandler } from "./keyboard"
 import {
     assertNamespacedId,
     belongsToExtension,
@@ -33,16 +34,7 @@ export interface HostCommandFacade {
 
 /** Normalize host keybindings before comparing declarations or keyboard events. */
 export function normalizeKeybinding(keybinding: string): string {
-    const isMac =
-        typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/i.test(navigator.platform)
-    return keybinding
-        .trim()
-        .toLowerCase()
-        .split("+")
-        .map((part) => (part.trim() === "mod" ? (isMac ? "meta" : "ctrl") : part.trim()))
-        .filter(Boolean)
-        .sort()
-        .join("+")
+    return KeyboardHandler.normalize(keybinding)
 }
 
 export async function resolveHostKeybindings(
@@ -60,7 +52,7 @@ export async function resolveHostKeybindings(
     return eligible
 }
 
-function isFocusedInputTarget(target: EventTarget | null): boolean {
+export function isFocusedInputTarget(target: EventTarget | null): boolean {
     if (!target || typeof target !== "object") return false
     const element = target as {
         tagName?: string

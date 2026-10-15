@@ -48,6 +48,10 @@ export class ExtensionHost {
     readonly contributions: ContributionRegistry
     /** Shared host-owned command discovery and execution facade. */
     readonly commands: HostCommandFacade
+    /** Shared prompt capability for host-owned chrome that conditionally mounts prompt views. */
+    get prompt(): HostContext["prompt"] {
+        return this.hostContext.prompt
+    }
     readonly notifications: NotificationServiceImpl
     readonly contextualStatus: ContextualStatusServiceImpl
     readonly documentService: DocumentService

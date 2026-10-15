@@ -60,13 +60,17 @@ export function activatePrompt(context: ExtensionContext): void {
     context.commands.register({
         id: "prompt.open",
         label: "Open command palette",
-        keybinding: ["ctrl+k", "meta+k"],
+        keybinding: ["ctrl+k", "shift+:", "alt+x"],
+        allowInInputs: true,
         validatePayload: serializablePayload(isPromptOpenPayload),
-        execute: (payload) =>
-            openCommandPalette(
-                context.commands,
-                (payload as PromptOpenPayload | undefined)?.initialQuery,
-            ),
+        execute: (payload) => {
+            const initialQuery = (payload as PromptOpenPayload | undefined)?.initialQuery
+            if (promptStore.isOpen && initialQuery === undefined) {
+                promptStore.close()
+                return
+            }
+            return openCommandPalette(context.commands, initialQuery)
+        },
     })
     context.commands.register({
         id: "prompt.close",

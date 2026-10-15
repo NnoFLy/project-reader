@@ -1,5 +1,6 @@
 <script lang="ts">
     import { getContext, onMount } from "svelte"
+    import { SvelteMap } from "svelte/reactivity"
     import type { Component } from "svelte"
     import type { ContextualStatus, Notification } from "$lib/extension-api"
     import { version } from "$app/environment"
@@ -142,11 +143,12 @@
     let promptViews = $derived(
         ready ? hostContext.application.host.contributions.listViews("prompt.result") : [],
     )
+    let promptOpen = $derived(hostContext.application.host.prompt?.promptStore.isOpen ?? false)
     let statusViews = $derived(
         ready ? hostContext.application.host.contributions.listViews("host.status") : [],
     )
     let contextualStatus = $state<ContextualStatus | null>(null)
-    const contextualStatusPublishers = new Map<
+    const contextualStatusPublishers = new SvelteMap<
         string,
         ReturnType<typeof hostContext.application.host.contextualStatus.forExtension>
     >()
@@ -182,7 +184,7 @@
             contextualStatus = status
         })
         const notificationService = hostContext.application.host.notifications
-        const notificationTimers = new Map<string, number>()
+        const notificationTimers = new SvelteMap<string, number>()
         const removeFromView = (id: string) => {
             const timer = notificationTimers.get(id)
             if (timer !== undefined) window.clearTimeout(timer)
@@ -244,7 +246,7 @@
 
         {#each promptViews as view (view.id)}
             {@const View = view.component as Component}
-            {#if View}
+            {#if View && (view.id !== "prompt.palette" || promptOpen)}
                 <View />
             {/if}
         {/each}

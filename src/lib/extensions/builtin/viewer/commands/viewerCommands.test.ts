@@ -181,7 +181,9 @@ describe("viewer command modules", () => {
             toggleToolbar: vi.fn(),
             toggleFullscreen: vi.fn(),
         }
-        createViewerDisplayCommands(display)["viewer.toolbar.toggle"].run()
+        const commands = createViewerDisplayCommands(display)
+        commands["viewer.toolbar.toggle"].run()
+        expect(commands["viewer.sidebar.outline.toggle"].keymap).toBe("shift+o")
         expect(display.toggleToolbar).toHaveBeenCalledOnce()
     })
 

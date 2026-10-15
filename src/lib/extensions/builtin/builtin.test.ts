@@ -80,11 +80,61 @@ describe("built-in contributions", () => {
             "settings.animations.toggle",
             "settings.pdf-title.toggle",
             "viewer.open",
+            "viewer.scroll.step",
+            "viewer.scroll.half-page",
             "viewer.bookmark.open",
         ])
-        expect(
-            host.commands.listKeybindings().find(({ commandId }) => commandId === "viewer.open"),
-        ).toMatchObject({ keybinding: "shift+o" })
+        const keybindings = host.commands.listKeybindings()
+        expect(keybindings).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    commandId: "prompt.open",
+                    keybinding: "ctrl+k",
+                    allowInInputs: true,
+                }),
+                expect.objectContaining({ commandId: "prompt.open", keybinding: "shift+:" }),
+                expect.objectContaining({ commandId: "prompt.open", keybinding: "alt+x" }),
+                expect.objectContaining({ commandId: "prompt.help.toggle", keybinding: "?" }),
+                expect.objectContaining({ commandId: "viewer.open", keybinding: "shift+o" }),
+                expect.objectContaining({
+                    commandId: "viewer.bookmark.open",
+                    keybinding: "shift+b",
+                }),
+                expect.objectContaining({ commandId: "library.book.open", keybinding: "o" }),
+                expect.objectContaining({
+                    commandId: "viewer.scroll.step",
+                    keybinding: "arrowdown",
+                }),
+                expect.objectContaining({ commandId: "viewer.scroll.step", keybinding: "j" }),
+                expect.objectContaining({
+                    commandId: "viewer.scroll.step",
+                    keybinding: "arrowup",
+                }),
+                expect.objectContaining({ commandId: "viewer.scroll.step", keybinding: "k" }),
+                expect.objectContaining({
+                    commandId: "viewer.scroll.half-page",
+                    keybinding: "pagedown",
+                }),
+                expect.objectContaining({ commandId: "viewer.scroll.half-page", keybinding: "d" }),
+                expect.objectContaining({
+                    commandId: "viewer.scroll.half-page",
+                    keybinding: "pageup",
+                }),
+                expect.objectContaining({ commandId: "viewer.scroll.half-page", keybinding: "u" }),
+                expect.objectContaining({ commandId: "settings.theme", keybinding: "shift+t" }),
+                expect.objectContaining({ commandId: "settings.zoom.in", keybinding: "+" }),
+                expect.objectContaining({ commandId: "settings.zoom.out", keybinding: "-" }),
+            ]),
+        )
+        expect(keybindings).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ commandId: "prompt.open", keybinding: "meta+k" }),
+                expect.objectContaining({
+                    commandId: "library.book.open-recursive",
+                    keybinding: "o",
+                }),
+            ]),
+        )
         expect(host.record("builtin.pdf")?.state).toBe("enabled")
         host.contextualStatus.forExtension("builtin.test").publish({
             line1: "1",

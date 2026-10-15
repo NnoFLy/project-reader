@@ -8,6 +8,11 @@ import type {
     CommandDefinitions,
 } from "./commands.types"
 import { dismissFocusedInteractiveElement } from "$lib/shared/ui/modal/modalFocus"
+import {
+    isFocusedInputTarget,
+    registerActiveCommandSource,
+    registerActiveKeydownHandler,
+} from "$lib/core/commands"
 import { KeyboardHandler } from "./keyboard"
 export { KeyboardHandler } from "./keyboard"
 
@@ -358,18 +363,21 @@ export class CommandsStore {
         return this.#activeScope.getShortcut(id)
     }
 
+    canHandleKeydown(event: KeyboardEvent, scope = this.#activeScope): boolean {
+        const resolved = scope.resolveForKeyboard(event)
+        if (!resolved) return false
+        const { command } = resolved
+        if (isFocusedInputTarget(event.target) && !command.allowInInputs) return false
+        if (command.definition.shouldHandleKey && !command.definition.shouldHandleKey(event)) {
+            return false
+        }
+        return true
+    }
+
     async handleKeydown(event: KeyboardEvent, scope = this.#activeScope) {
         const resolved = scope.resolveForKeyboard(event)
-        if (!resolved) return
+        if (!resolved || !this.canHandleKeydown(event, scope)) return
         const { command } = resolved
-        const target = event.target as HTMLElement | null
-        const isInput =
-            target &&
-            (target.tagName === "INPUT" ||
-                target.tagName === "TEXTAREA" ||
-                target.isContentEditable)
-        if (isInput && !command.allowInInputs) return
-        if (command.definition.shouldHandleKey && !command.definition.shouldHandleKey(event)) return
         if (
             command.dismissFocusedElement &&
             KeyboardHandler.matches(event, "escape") &&
@@ -386,6 +394,10 @@ export class CommandsStore {
 }
 
 export const commandsStore = new CommandsStore()
+
+let keyboardHandlerUsers = 0
+let activeCommandSourceRegistration: (() => void) | undefined
+let activeKeydownHandlerRegistration: (() => void) | undefined
 
 export const COMMANDS_CONTEXT_KEY = Symbol("commands-context")
 
@@ -418,9 +430,26 @@ export function useCommands(
             commandsStore.activate(scope)
         }
         const unregister = scope.registerAll(definitions)
+        if (keyboardHandlerUsers === 0) {
+            activeCommandSourceRegistration = registerActiveCommandSource(() =>
+                commandsStore.listActive(),
+            )
+            activeKeydownHandlerRegistration = registerActiveKeydownHandler({
+                canHandleKeydown: (event) => commandsStore.canHandleKeydown(event),
+                handleKeydown: (event) => commandsStore.handleKeydown(event),
+            })
+        }
+        keyboardHandlerUsers += 1
         return () => {
             unregister()
             scope.destroy()
+            keyboardHandlerUsers -= 1
+            if (keyboardHandlerUsers === 0) {
+                activeCommandSourceRegistration?.()
+                activeCommandSourceRegistration = undefined
+                activeKeydownHandlerRegistration?.()
+                activeKeydownHandlerRegistration = undefined
+            }
         }
     })
     return scope

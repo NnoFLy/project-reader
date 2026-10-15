@@ -56,9 +56,11 @@ describe("builtin.prompt activation", () => {
         ])
         expect(context.commands.listKeybindings?.()).toEqual([
             expect.objectContaining({ commandId: "prompt.open", keybinding: "ctrl+k" }),
-            expect.objectContaining({ commandId: "prompt.open", keybinding: "meta+k" }),
+            expect.objectContaining({ commandId: "prompt.open", keybinding: "shift+:" }),
+            expect.objectContaining({ commandId: "prompt.open", keybinding: "alt+x" }),
             expect.objectContaining({ commandId: "prompt.help.toggle", keybinding: "?" }),
         ])
+        expect(context.commands.get("prompt.open")).toMatchObject({ allowInInputs: true })
         await context.commands.execute("prompt.help.toggle")
         expect(promptStore.helpOpen).toBe(true)
         promptStore.closeHelp()
@@ -75,6 +77,12 @@ describe("builtin.prompt activation", () => {
         ])
         promptStore.close()
         await palette
+
+        const activePrompt = promptStore.open({ id: "toggle-test", items: () => [] })
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        await context.commands.execute("prompt.open")
+        expect(promptStore.isOpen).toBe(false)
+        await activePrompt
 
         const pending = promptStore.open({ id: "active-prompt", items: () => [] })
         await new Promise((resolve) => setTimeout(resolve, 0))

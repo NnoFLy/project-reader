@@ -136,6 +136,10 @@ export interface CommandContribution {
     readonly label: string | (() => string)
     readonly keybinding?: readonly string[]
     readonly scope?: string
+    readonly allowInInputs?: boolean
+    readonly preventDefault?: boolean
+    readonly shouldHandleKey?: (event: KeyboardEvent) => boolean
+    readonly keyboardPayload?: (event: KeyboardEvent) => unknown
     readonly execute: (payload?: unknown) => unknown | Promise<unknown>
     readonly isEnabled?: (context?: unknown) => boolean | Promise<boolean>
     readonly validatePayload?: (payload: unknown) => boolean

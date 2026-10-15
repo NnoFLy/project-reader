@@ -19,13 +19,17 @@ export function buildKeymapHelpItems(
 
     for (const binding of bindings) {
         if (!binding.label || !binding.keymap) continue
-        const keyString = Array.isArray(binding.keymap)
-            ? binding.keymap.map(normalizeKey).join(",")
-            : normalizeKey(binding.keymap)
-        if (seen.has(keyString)) continue
-        seen.add(keyString)
+        const keymap = binding.keymap
+        const keys = typeof keymap === "string" ? [keymap] : keymap
+        const availableKeys = keys.filter((key) => {
+            const normalizedKey = normalizeKey(key)
+            if (seen.has(normalizedKey)) return false
+            seen.add(normalizedKey)
+            return true
+        })
+        if (availableKeys.length === 0) continue
         items.push({
-            keys: binding.keymap,
+            keys: typeof keymap === "string" ? availableKeys[0] : availableKeys,
             description: binding.label,
             englishDescription: binding.englishLabel,
         })

@@ -14,8 +14,7 @@ export function createViewerDisplayCommands(display: ViewerDisplayPort) {
     return defineCommands({
         "viewer.sidebar.outline.toggle": {
             id: "viewer.sidebar.outline.toggle",
-            // Shift+O is reserved for the host-level open-book command.
-            keymap: "ctrl+shift+o",
+            keymap: "shift+o",
             label: () => m.keymap_toggle_outline(),
             englishLabel: () => m.keymap_toggle_outline({}, { locale: "en" }),
             category: "commands",

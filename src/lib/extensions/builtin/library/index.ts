@@ -69,11 +69,13 @@ export async function activateLibrary(
         const contribution = {
             id: command.id,
             label: command.label,
-            keybinding: command.keymap
-                ? Array.isArray(command.keymap)
-                    ? command.keymap
-                    : [command.keymap]
-                : undefined,
+            // The dashboard scope owns the contextual recursive-open `o` binding. Keeping it
+            // out of the host registry avoids a permanent conflict with library.book.open.
+            keybinding: (() => {
+                if (command.id === "library.book.open-recursive" || !command.keymap)
+                    return undefined
+                return Array.isArray(command.keymap) ? command.keymap : [command.keymap]
+            })(),
             execute: (payload: unknown) => command.run(payload as never),
             isEnabled: () => !command.disabled?.(),
             ...(command.allowInInputs === undefined

@@ -1,4 +1,5 @@
 import { getContext, onMount, setContext } from "svelte"
+import { SvelteSet } from "svelte/reactivity"
 import type { CommandId, ExecuteArgs } from "./appCommandPayloads"
 import type {
     ActiveCommand,
@@ -7,6 +8,7 @@ import type {
     CommandExecutionResult,
     CommandDefinitions,
 } from "./commands.types"
+import { isFocusedInputTarget } from "./registry"
 import { KeyboardHandler } from "./keyboard"
 export { KeyboardHandler } from "./keyboard"
 
@@ -372,18 +374,21 @@ export class CommandsStore {
         return this.#activeScope.getShortcut(id)
     }
 
+    canHandleKeydown(event: KeyboardEvent, scope = this.#activeScope): boolean {
+        const resolved = scope.resolveForKeyboard(event)
+        if (!resolved) return false
+        const { command } = resolved
+        if (isFocusedInputTarget(event.target) && !command.allowInInputs) return false
+        if (command.definition.shouldHandleKey && !command.definition.shouldHandleKey(event)) {
+            return false
+        }
+        return true
+    }
+
     async handleKeydown(event: KeyboardEvent, scope = this.#activeScope) {
         const resolved = scope.resolveForKeyboard(event)
-        if (!resolved) return
+        if (!resolved || !this.canHandleKeydown(event, scope)) return
         const { command } = resolved
-        const target = event.target as HTMLElement | null
-        const isInput =
-            target &&
-            (target.tagName === "INPUT" ||
-                target.tagName === "TEXTAREA" ||
-                target.isContentEditable)
-        if (isInput && !command.allowInInputs) return
-        if (command.definition.shouldHandleKey && !command.definition.shouldHandleKey(event)) return
         if (
             command.dismissFocusedElement &&
             KeyboardHandler.matches(event, "escape") &&
@@ -400,6 +405,45 @@ export class CommandsStore {
 }
 
 export const commandsStore = new CommandsStore()
+
+export interface ActiveKeymapCommand {
+    readonly keymap?: string | string[]
+    readonly label: string
+    readonly englishLabel?: string
+}
+
+type ActiveCommandSource = () => readonly ActiveKeymapCommand[]
+const activeCommandSources = new SvelteSet<ActiveCommandSource>()
+
+export function registerActiveCommandSource(source: ActiveCommandSource): () => void {
+    activeCommandSources.add(source)
+    return () => activeCommandSources.delete(source)
+}
+
+export interface ActiveKeydownHandler {
+    readonly canHandleKeydown: (event: KeyboardEvent) => boolean
+    readonly handleKeydown: (event: KeyboardEvent) => void | Promise<void>
+}
+
+const activeKeydownHandlers = new SvelteSet<ActiveKeydownHandler>()
+
+export function registerActiveKeydownHandler(handler: ActiveKeydownHandler): () => void {
+    activeKeydownHandlers.add(handler)
+    return () => activeKeydownHandlers.delete(handler)
+}
+
+export function getActiveKeydownHandler(event: KeyboardEvent): ActiveKeydownHandler | undefined {
+    return [...activeKeydownHandlers]
+        .toReversed()
+        .find((handler) => handler.canHandleKeydown(event))
+}
+
+export function listActiveCommands(): readonly ActiveKeymapCommand[] {
+    return [
+        ...commandsStore.listActive(),
+        ...[...activeCommandSources].flatMap((source) => source()),
+    ]
+}
 
 export const COMMANDS_CONTEXT_KEY = Symbol("commands-context")
 

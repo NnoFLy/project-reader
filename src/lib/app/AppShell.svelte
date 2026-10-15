@@ -4,7 +4,10 @@
     import { createBuiltinApplication } from "./bootstrap"
     import { APP_HOST_CONTEXT, type AppHostContext } from "./hostContext"
     import {
+        commandsStore,
         findKeybindingConflicts,
+        getActiveKeydownHandler,
+        KeyboardHandler,
         normalizeKeybinding,
         resolveHostKeybindings,
     } from "$lib/core/commands"
@@ -25,25 +28,29 @@
     setContext(APP_HOST_CONTEXT, hostContext)
     setContext("app-host-services", hostContext.services)
 
-    function eventKeyCandidates(event: KeyboardEvent): Set<string> {
-        const modifiers = [
-            event.ctrlKey ? "ctrl" : "",
-            event.metaKey ? "meta" : "",
-            event.altKey ? "alt" : "",
-            event.shiftKey ? "shift" : "",
-        ].filter(Boolean)
-        const key = event.key === " " ? "space" : event.key.toLowerCase()
-        const candidates = new Set([normalizeKeybinding([...modifiers, key].join("+"))])
-        if (event.code) {
-            const codeKey = event.code.replace(/^(Key|Digit)/, "").toLowerCase()
-            candidates.add(normalizeKeybinding([...modifiers, codeKey].join("+")))
-        }
-        return candidates
+    function eventKeyCandidates(event: KeyboardEvent): ReadonlySet<string> {
+        return KeyboardHandler.candidates(event)
     }
 
     onMount(() => {
         const handleKeydown = async (event: KeyboardEvent) => {
             if (!ready) return
+
+            // Component command scopes own viewer and prompt shortcuts. Dispatch them before
+            // host-level bindings so scoped commands can intentionally shadow global ones.
+            if (commandsStore.canHandleKeydown(event)) {
+                event.stopImmediatePropagation()
+                await commandsStore.handleKeydown(event)
+                return
+            }
+
+            const activeKeydownHandler = getActiveKeydownHandler(event)
+            if (activeKeydownHandler) {
+                event.stopImmediatePropagation()
+                await activeKeydownHandler.handleKeydown(event)
+                return
+            }
+
             const candidates = eventKeyCandidates(event)
             const bindings = application.host.commands
                 .listKeybindings()
@@ -82,10 +89,13 @@
                 console.error(`[AppShell] Failed to execute ${binding.commandId}`, error)
             }
         }
-        window.addEventListener("keydown", handleKeydown, { capture: true })
+        // Keep this listener in the bubbling phase. Contextual components such as the
+        // library picker use a capture-phase listener for multi-key hints (for example,
+        // `fa`); the global command dispatcher must not consume the second key first.
+        window.addEventListener("keydown", handleKeydown)
         void application.start().then(() => (ready = true))
         return () => {
-            window.removeEventListener("keydown", handleKeydown, { capture: true })
+            window.removeEventListener("keydown", handleKeydown)
             void application.stop()
         }
     })

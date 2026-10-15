@@ -5,10 +5,23 @@ import {
     resolveHostKeybindings,
     type HostKeybinding,
 } from "./registry"
+import { KeyboardHandler } from "./keyboard"
 
 describe("host keybinding dispatch support", () => {
     it("normalizes modifier order before detecting conflicts", () => {
         expect(normalizeKeybinding("Shift+Mod+O")).toBe("ctrl+o+shift")
+        expect(normalizeKeybinding("+")).toBe("+")
+        expect(normalizeKeybinding("?")).toBe("?")
+        expect(
+            KeyboardHandler.candidates({
+                key: "?",
+                code: "Slash",
+                shiftKey: true,
+                ctrlKey: false,
+                metaKey: false,
+                altKey: false,
+            } as KeyboardEvent),
+        ).toContain("?")
         const bindings: HostKeybinding[] = [
             { commandId: "viewer.open", keybinding: "ctrl+shift+o", extensionId: "builtin.viewer" },
             {

@@ -11,11 +11,16 @@ export {
     type AnyCommandDefinition,
     type CommandExecutionResult,
 } from "./commands.types"
+export type { ActiveKeydownHandler, ActiveKeymapCommand } from "./commandsStore.svelte"
 export {
     COMMANDS_CONTEXT_KEY,
     CommandScope,
     CommandsStore,
     commandsStore,
+    getActiveKeydownHandler,
+    listActiveCommands,
+    registerActiveCommandSource,
+    registerActiveKeydownHandler,
     formatKeyString,
     getShortcutHint,
     useCommands,

@@ -1,4 +1,5 @@
 import type { Component } from "svelte"
+import { KeyboardHandler } from "$lib/core/commands"
 import type { CommandContribution, Disposable, ExtensionContext } from "$lib/extension-api"
 import ViewerPage from "./ViewerPage.svelte"
 import ViewerStatus from "./ViewerStatus.svelte"
@@ -37,6 +38,24 @@ export type {
 } from "./viewerHost"
 
 export const VIEWER_VIEW_ID = "viewer.reader"
+
+type ScrollPayload = {
+    direction: "up" | "down"
+    repeated: boolean
+}
+
+function scrollWindow(
+    payload: ScrollPayload | undefined,
+    viewportFraction: number,
+    animations: boolean,
+): void {
+    const direction = payload?.direction === "up" ? -1 : 1
+    const repeated = payload?.repeated ?? false
+    window.scrollBy({
+        top: direction * window.innerHeight * viewportFraction,
+        behavior: !repeated && animations ? "smooth" : "auto",
+    })
+}
 
 export async function activateViewer(
     context: ExtensionContext,
@@ -96,9 +115,48 @@ export async function activateViewer(
         validatePayload: isViewerOpenPayload,
     }
     const openRegistration = context.commands.register(openContribution)
+    const scrollRegistrations = [
+        context.commands.register({
+            id: "viewer.scroll.step",
+            label: () => m.keymap_scroll_step(),
+            keybinding: ["arrowdown", "j", "arrowup", "k"],
+            preventDefault: true,
+            keyboardPayload: (event) => ({
+                direction:
+                    KeyboardHandler.resolveDirection(event, ["arrowup", "k"], ["arrowdown", "j"]) ??
+                    "down",
+                repeated: event.repeat,
+            }),
+            execute: (payload) =>
+                scrollWindow(
+                    payload as ScrollPayload | undefined,
+                    0.2,
+                    context.host?.settings?.settingsStore.animations ?? true,
+                ),
+        }),
+        context.commands.register({
+            id: "viewer.scroll.half-page",
+            label: () => m.keymap_scroll_half_page(),
+            keybinding: ["pagedown", "d", "pageup", "u"],
+            preventDefault: true,
+            keyboardPayload: (event) => ({
+                direction:
+                    KeyboardHandler.resolveDirection(event, ["pageup", "u"], ["pagedown", "d"]) ??
+                    "down",
+                repeated: event.repeat,
+            }),
+            execute: (payload) =>
+                scrollWindow(
+                    payload as ScrollPayload | undefined,
+                    0.5,
+                    context.host?.settings?.settingsStore.animations ?? true,
+                ),
+        }),
+    ]
     const bookmarkOpenRegistration = context.commands.register({
         id: "viewer.bookmark.open",
         label: "Open bookmark",
+        keybinding: ["shift+b"],
         execute: async (payload) => {
             let bookmarkId = (payload as { bookmarkId?: string } | undefined)?.bookmarkId
             if (!bookmarkId) {
@@ -130,6 +188,7 @@ export async function activateViewer(
     context.lifecycle.onDispose(() => {
         openRegistration.dispose()
         bookmarkOpenRegistration.dispose()
+        for (const registration of scrollRegistrations) registration.dispose()
         for (const handle of notificationHandles) handle.dispose()
         notificationHandles.clear()
     })

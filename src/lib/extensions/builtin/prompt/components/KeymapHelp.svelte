@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { KeyboardHandler, normalizeKeybinding } from "$lib/core/commands"
+    import { KeyboardHandler, listActiveCommands, normalizeKeybinding } from "$lib/core/commands"
     import * as m from "$lib/paraglide/messages"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
@@ -15,19 +15,19 @@
     let { animations = true, onClose = () => promptStore.closeHelp() }: Props = $props()
 
     const commandRegistry = getPromptCommandRegistry()
-    const keymaps = commandRegistry?.listKeybindings
-        ? buildKeymapHelpItems(
-              commandRegistry.listKeybindings().map((binding) => {
-                  const command = commandRegistry.get(binding.commandId)
-                  const label = command?.label
-                  return {
-                      label: typeof label === "function" ? label() : (label ?? binding.commandId),
-                      keymap: binding.keybinding,
-                  }
-              }),
-              normalizeKeybinding,
-          )
-        : []
+    let keymaps = $derived.by(() => {
+        const scopedBindings = listActiveCommands().filter(({ keymap }) => keymap)
+        const hostBindings =
+            commandRegistry?.listKeybindings?.().map((binding) => {
+                const command = commandRegistry.get(binding.commandId)
+                const label = command?.label
+                return {
+                    label: typeof label === "function" ? label() : (label ?? binding.commandId),
+                    keymap: binding.keybinding,
+                }
+            }) ?? []
+        return buildKeymapHelpItems([...scopedBindings, ...hostBindings], normalizeKeybinding)
+    })
 
     let contentElement = $state<HTMLElement | null>(null)
     let searchQuery = $state("")
