@@ -25,6 +25,7 @@ import { openCommandPalette } from "./commands/commandPalette"
 import KeymapHelp from "./components/KeymapHelp.svelte"
 import Prompt from "./components/Prompt.svelte"
 import { getPromptCommandRegistry, setPromptCommandRegistry } from "./commandRegistry"
+import * as m from "$lib/paraglide/messages"
 import { promptStore } from "./stores/promptStore.svelte"
 
 export const PROMPT_VIEW_ID = "prompt.palette"
@@ -59,7 +60,8 @@ export function activatePrompt(context: ExtensionContext): void {
 
     context.commands.register({
         id: "prompt.open",
-        label: "Open command palette",
+        label: m.keymap_prompt,
+        englishLabel: () => m.keymap_prompt({}, { locale: "en" }),
         keybinding: ["ctrl+k", "shift+:", "alt+x"],
         allowInInputs: true,
         validatePayload: serializablePayload(isPromptOpenPayload),
@@ -74,12 +76,14 @@ export function activatePrompt(context: ExtensionContext): void {
     })
     context.commands.register({
         id: "prompt.close",
-        label: "Close prompt",
+        label: m.close,
+        englishLabel: () => m.close({}, { locale: "en" }),
         execute: () => promptStore.close(),
     })
     context.commands.register({
         id: "prompt.help.toggle",
-        label: "Toggle keyboard shortcuts help",
+        label: m.keymap_toggle_help,
+        englishLabel: () => m.keymap_toggle_help({}, { locale: "en" }),
         keybinding: ["?"],
         execute: () => promptStore.toggleHelp(),
     })

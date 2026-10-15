@@ -134,6 +134,8 @@ export interface Lifecycle {
 export interface CommandContribution {
     readonly id: string
     readonly label: string | (() => string)
+    /** Optional English alias used by localized command palettes for search. */
+    readonly englishLabel?: string | (() => string)
     readonly keybinding?: readonly string[]
     readonly scope?: string
     readonly allowInInputs?: boolean

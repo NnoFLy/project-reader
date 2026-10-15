@@ -6,6 +6,7 @@ import {
     type Lifecycle,
     type ViewRegistry,
 } from "$lib/extension-api"
+import * as m from "$lib/paraglide/messages"
 import { activatePrompt, openCommandPalette, promptStore } from "./index"
 
 function createPromptContext() {
@@ -45,6 +46,31 @@ function createPromptContext() {
 }
 
 describe("builtin.prompt activation", () => {
+    it("keeps English aliases when adapting host commands for the palette", async () => {
+        const commands = new CommandRegistryImpl("builtin.prompt")
+        commands.register({
+            id: "prompt.localized",
+            label: () => "Локализованная команда",
+            englishLabel: () => "Localized command",
+            execute: () => undefined,
+        })
+
+        const palette = openCommandPalette(commands)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(promptStore.snapshot?.items).toMatchObject([
+            {
+                id: "prompt.localized",
+                label: "Локализованная команда",
+                englishLabel: "Localized command",
+            },
+        ])
+
+        promptStore.close()
+        await palette
+        commands.dispose()
+    })
+
     it("registers prompt commands through the extension command contract", async () => {
         const { context, dispose } = createPromptContext()
         activatePrompt(context)
@@ -60,7 +86,24 @@ describe("builtin.prompt activation", () => {
             expect.objectContaining({ commandId: "prompt.open", keybinding: "alt+x" }),
             expect.objectContaining({ commandId: "prompt.help.toggle", keybinding: "?" }),
         ])
-        expect(context.commands.get("prompt.open")).toMatchObject({ allowInInputs: true })
+        expect(context.commands.get("prompt.open")).toMatchObject({
+            allowInInputs: true,
+            label: expect.any(Function),
+            englishLabel: expect.any(Function),
+        })
+        expect(context.commands.get("prompt.help.toggle")).toMatchObject({
+            label: expect.any(Function),
+            englishLabel: expect.any(Function),
+        })
+        const promptOpen = context.commands.get("prompt.open")
+        expect(
+            typeof promptOpen?.label === "function" ? promptOpen.label() : promptOpen?.label,
+        ).toBe(m.keymap_prompt())
+        expect(
+            typeof promptOpen?.englishLabel === "function"
+                ? promptOpen.englishLabel()
+                : promptOpen?.englishLabel,
+        ).toBe(m.keymap_prompt({}, { locale: "en" }))
         await context.commands.execute("prompt.help.toggle")
         expect(promptStore.helpOpen).toBe(true)
         promptStore.closeHelp()

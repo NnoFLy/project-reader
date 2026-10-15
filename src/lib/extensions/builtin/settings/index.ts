@@ -101,6 +101,7 @@ export function activateSettings(context: ExtensionContext): void {
         context.commands.register({
             id: command.id,
             label: command.label,
+            englishLabel: command.englishLabel,
             keybinding:
                 keymap === undefined ? undefined : Array.isArray(keymap) ? keymap : [keymap],
             execute: (payload) => command.run(payload as SettingsCommandPayload | undefined),

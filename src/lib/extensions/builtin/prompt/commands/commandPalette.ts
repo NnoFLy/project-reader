@@ -24,12 +24,17 @@ function isCoreRegistry(source: CommandSource): source is PromptCommandRegistry 
 function corePaletteCommands(registry: PromptCommandRegistry): PaletteChoice[] {
     return registry.list().map((command: RegisteredCommand) => {
         const label = typeof command.label === "function" ? command.label() : command.label
+        const englishLabel =
+            typeof command.englishLabel === "function"
+                ? command.englishLabel()
+                : command.englishLabel
         const formattedKeymap = command.keybinding?.map((key) => formatKeyString(key))
         const keymap =
             formattedKeymap && formattedKeymap.length === 1 ? formattedKeymap[0] : formattedKeymap
         return {
             id: command.id,
             label,
+            englishLabel,
             keymap,
             category: "commands",
             execute: async () => {

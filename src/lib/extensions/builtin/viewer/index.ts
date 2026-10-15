@@ -109,7 +109,8 @@ export async function activateViewer(
         context.commands.execute(commandId, payload)
     const openContribution: CommandContribution = {
         id: "viewer.open",
-        label: "Open book",
+        label: openCommand.label,
+        englishLabel: openCommand.englishLabel,
         keybinding: ["shift+o"],
         execute: (payload) => openCommand.run(payload as never),
         validatePayload: isViewerOpenPayload,
@@ -118,7 +119,8 @@ export async function activateViewer(
     const scrollRegistrations = [
         context.commands.register({
             id: "viewer.scroll.step",
-            label: () => m.keymap_scroll_step(),
+            label: m.keymap_scroll_step,
+            englishLabel: () => m.keymap_scroll_step({}, { locale: "en" }),
             keybinding: ["arrowdown", "j", "arrowup", "k"],
             preventDefault: true,
             keyboardPayload: (event) => ({
@@ -136,7 +138,8 @@ export async function activateViewer(
         }),
         context.commands.register({
             id: "viewer.scroll.half-page",
-            label: () => m.keymap_scroll_half_page(),
+            label: m.keymap_scroll_half_page,
+            englishLabel: () => m.keymap_scroll_half_page({}, { locale: "en" }),
             keybinding: ["pagedown", "d", "pageup", "u"],
             preventDefault: true,
             keyboardPayload: (event) => ({
@@ -155,7 +158,8 @@ export async function activateViewer(
     ]
     const bookmarkOpenRegistration = context.commands.register({
         id: "viewer.bookmark.open",
-        label: "Open bookmark",
+        label: m.open_bookmark,
+        englishLabel: () => m.open_bookmark({}, { locale: "en" }),
         keybinding: ["shift+b"],
         execute: async (payload) => {
             let bookmarkId = (payload as { bookmarkId?: string } | undefined)?.bookmarkId
