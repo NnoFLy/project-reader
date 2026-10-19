@@ -1,5 +1,5 @@
 import { page } from "$app/state"
-import type { CommandContribution } from "$lib/extension-api"
+import type { CommandContribution, HostContext, PromptRequest } from "$lib/extension-api"
 import * as m from "$lib/paraglide/messages"
 import { getLocale } from "$lib/paraglide/runtime"
 import { switchLanguage } from "../language/language"
@@ -29,6 +29,21 @@ const themeValues: readonly Theme[] = ["light", "dark", "system"]
 const layoutValues: readonly Layout[] = ["single", "split", "scroll"]
 const languageValues: readonly Language[] = ["ru", "en"]
 
+let commandHost: HostContext | undefined
+let commandLifetime = new AbortController()
+
+export function configureSettingsCommandHost(host?: HostContext): void {
+    commandLifetime.abort()
+    commandLifetime = new AbortController()
+    commandHost = host
+}
+
+async function chooseSettingValue<T>(request: PromptRequest<T>): Promise<T | undefined> {
+    const { signal } = commandLifetime
+    const value = await commandHost?.prompt?.chooseValue(request, signal)
+    return signal.aborted ? undefined : value
+}
+
 function nextValue<T>(current: T, values: readonly T[]): T {
     const index = values.indexOf(current)
     return values[(index + 1) % values.length]
@@ -50,12 +65,28 @@ export const settingsCommands = {
         englishLabel: () => m.keymap_change_theme({}, { locale: "en" }),
         category: "settings",
         subtitle: () => `${m.theme()}: ${settingsStore.theme}`,
-        run: (payload) => {
+        run: async (payload) => {
             const value = payload?.value
-            settingsStore.theme =
-                value === "light" || value === "dark" || value === "system"
-                    ? value
-                    : nextValue(settingsStore.theme, themeValues)
+            if (value === "light" || value === "dark" || value === "system") {
+                settingsStore.theme = value
+                return
+            }
+            if (value !== undefined) return
+            const theme = await chooseSettingValue<Theme>({
+                id: "settings-theme",
+                placeholder: m.select_theme(),
+                items: () =>
+                    themeValues.map((value) => ({
+                        id: value,
+                        label: m[value](),
+                        englishLabel: m[value]({}, { locale: "en" }),
+                        category: "settings",
+                        value,
+                    })),
+                initialSelection: (items) =>
+                    items.findIndex(({ value }) => value === settingsStore.theme),
+            })
+            if (theme !== undefined) settingsStore.theme = theme
         },
     },
     "settings.layout": {
@@ -78,13 +109,28 @@ export const settingsCommands = {
         englishLabel: () => m.keymap_change_language({}, { locale: "en" }),
         category: "settings",
         subtitle: () => getLanguageName(getLocale()),
-        run: (payload) => {
+        run: async (payload) => {
             const value = payload?.value
-            const locale =
-                value === "en" || value === "ru"
-                    ? value
-                    : nextValue(settingsStore.language, languageValues)
-            switchLanguage(locale, page.url)
+            if (value === "en" || value === "ru") {
+                switchLanguage(value, page.url)
+                return
+            }
+            if (value !== undefined) return
+            const language = await chooseSettingValue<Language>({
+                id: "settings-language",
+                placeholder: m.select_language(),
+                items: () =>
+                    languageValues.map((value) => ({
+                        id: value,
+                        label: getLanguageName(value),
+                        englishLabel: getLanguageName(value, "en"),
+                        category: "settings",
+                        value,
+                    })),
+                initialSelection: (items) =>
+                    items.findIndex(({ value }) => value === settingsStore.language),
+            })
+            if (language !== undefined) switchLanguage(language, page.url)
         },
     },
     "settings.zoom.in": {

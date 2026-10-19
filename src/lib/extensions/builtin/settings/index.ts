@@ -1,6 +1,10 @@
 import type { ExtensionContext, SettingContribution, SettingsCapability } from "$lib/extension-api"
 import SettingsView from "./SettingsView.svelte"
-import { settingsCommands, type SettingsCommandPayload } from "./commands/settingsCommands"
+import {
+    configureSettingsCommandHost,
+    settingsCommands,
+    type SettingsCommandPayload,
+} from "./commands/settingsCommands"
 import { installSettingsCapability } from "$lib/core/settings"
 import {
     configureSettings,
@@ -69,6 +73,8 @@ const settingDefinitions = [
 ] as const
 
 export function activateSettings(context: ExtensionContext): void {
+    configureSettingsCommandHost(context.host)
+    context.lifecycle.onDispose(() => configureSettingsCommandHost())
     if (context.host) {
         const capability: SettingsCapability = {
             settingsStore,

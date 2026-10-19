@@ -37,19 +37,30 @@ describe("settings commands", () => {
         settingsStore.quality = originalQuality
     })
 
-    it("cycles language through the host command payload path", () => {
+    it("applies an explicit language through the host command payload path", async () => {
         const original = settingsStore.language
-        settingsCommands["settings.language"].run(undefined)
-        expect(settingsStore.language).toBe(original === "en" ? "ru" : "en")
-        settingsCommands["settings.language"].run({ value: original })
+        await settingsCommands["settings.language"].run({ value: original === "en" ? "ru" : "en" })
+        expect(settingsStore.language).not.toBe(original)
+        await settingsCommands["settings.language"].run({ value: original })
         expect(settingsStore.language).toBe(original)
     })
 
-    it("cycles theme through the host command payload path", () => {
+    it("applies an explicit theme through the host command payload path", async () => {
         const original = settingsStore.theme
-        settingsCommands["settings.theme"].run(undefined)
-        expect(settingsStore.theme).not.toBe(original)
-        settingsCommands["settings.theme"].run({ value: original })
+        await settingsCommands["settings.theme"].run({ value: "dark" })
+        expect(settingsStore.theme).toBe("dark")
+        await settingsCommands["settings.theme"].run({ value: original })
         expect(settingsStore.theme).toBe(original)
+    })
+
+    it("does not cycle settings for invalid values or an unavailable Prompt", async () => {
+        const originalTheme = settingsStore.theme
+        const originalLanguage = settingsStore.language
+        await settingsCommands["settings.theme"].run({ value: "invalid" })
+        await settingsCommands["settings.language"].run({ value: "invalid" })
+        await settingsCommands["settings.theme"].run(undefined)
+        await settingsCommands["settings.language"].run(undefined)
+        expect(settingsStore.theme).toBe(originalTheme)
+        expect(settingsStore.language).toBe(originalLanguage)
     })
 })

@@ -18,7 +18,7 @@ const PROMPT_FUSE_OPTIONS = {
 }
 
 type ErasedRequest = PromptRequest<unknown>
-type SessionKind = "open" | "choose"
+type SessionKind = "open" | "choose" | "choose-child"
 type Session = {
     request: ErasedRequest
     kind: SessionKind
@@ -114,6 +114,10 @@ class PromptStore implements PromptService {
         this.helpOpen = false
     }
 
+    get hasParent() {
+        return this.suspendedFrames.length > 0
+    }
+
     get canNavigateBack() {
         return this.suspendedFrames.length > 0 && this.query === ""
     }
@@ -126,11 +130,33 @@ class PromptStore implements PromptService {
         return this.start(request, "choose") as Promise<T | undefined>
     }
 
-    private start<T>(request: PromptRequest<T>, kind: SessionKind): Promise<unknown> {
+    /** Push a value chooser; selection completes its flow atomically, back restores its parent. */
+    chooseChild<T>(request: PromptRequest<T>, signal?: AbortSignal): Promise<T | undefined> {
+        if (signal?.aborted) return Promise.resolve(undefined)
+        this.suspendCurrent()
+        const result = this.start(request, "choose-child", true) as Promise<T | undefined>
+        const session = this.session
+        const cancel = () => {
+            if (
+                this.session === session ||
+                this.suspendedFrames.some((frame) => frame.session === session)
+            ) {
+                this.cancelFlow()
+            }
+        }
+        signal?.addEventListener("abort", cancel, { once: true })
+        return result.finally(() => signal?.removeEventListener("abort", cancel))
+    }
+
+    private start<T>(
+        request: PromptRequest<T>,
+        kind: SessionKind,
+        preserveParent = false,
+    ): Promise<unknown> {
         const isExpectedChild =
             this.session === null &&
             this.suspendedFrames.some(({ session }) => this.selectingSessions.has(session))
-        if (!isExpectedChild) this.cancelFlow()
+        if (!preserveParent && !isExpectedChild) this.cancelFlow()
 
         this.currentHistoryIndex = null
         this.query =
@@ -197,7 +223,7 @@ class PromptStore implements PromptService {
         const session = this.session
         this.session = null
         this.snapshot = null
-        if (session) session.resolve(session.kind === "choose" ? value : undefined)
+        if (session) session.resolve(session.kind === "open" ? undefined : value)
     }
 
     private cancelFlow() {
@@ -238,6 +264,7 @@ class PromptStore implements PromptService {
         this.currentHistoryIndex = frame.currentHistoryIndex
         this.retainedQueriesLocal = [...frame.retainedQueriesLocal]
         this.draftQuery = frame.draftQuery
+        if (frame.snapshot.isLoading) void this.refreshItems()
     }
 
     setQuery(query: string) {
@@ -283,8 +310,9 @@ class PromptStore implements PromptService {
         if (value === undefined) return
 
         this.setLastQuery(this.query)
-        if (session.kind === "choose") {
+        if (session.kind !== "open") {
             this.resolveActive(value)
+            if (session.kind === "choose-child") this.cancelFlow()
             return
         }
 

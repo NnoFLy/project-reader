@@ -19,7 +19,7 @@ export type {
 export type { PromptCommandActions } from "./promptCommands"
 export { promptStore } from "./stores/promptStore.svelte"
 
-import type { ExtensionContext } from "$lib/extension-api"
+import type { ExtensionContext, PromptRequest } from "$lib/extension-api"
 import { isSerializablePayload, serializablePayload } from "$lib/core/commands"
 import { openCommandPalette } from "./commands/commandPalette"
 import KeymapHelp from "./components/KeymapHelp.svelte"
@@ -43,10 +43,20 @@ function isPromptOpenPayload(payload: unknown): payload is PromptOpenPayload | u
     return value.initialQuery === undefined || typeof value.initialQuery === "string"
 }
 
+/** Value choosers always have a parent, even when opened directly by a button or shortcut. */
+function chooseValue<T>(request: PromptRequest<T>, signal?: AbortSignal): Promise<T | undefined> {
+    if (signal?.aborted) return Promise.resolve(undefined)
+    if (!promptStore.isOpen && !promptStore.hasParent) {
+        void openCommandPalette(undefined, "")
+    }
+    return promptStore.chooseChild(request, signal)
+}
+
 export function activatePrompt(context: ExtensionContext): void {
     if (context.host) {
         context.host.prompt = {
             promptStore,
+            chooseValue,
             getPromptCommandRegistry,
             openCommandPalette,
         }

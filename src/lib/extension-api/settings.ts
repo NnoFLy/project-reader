@@ -13,7 +13,7 @@ export interface SettingsRegistry {
     getValue<T>(settingId: string): Promise<T>
     setValue<T>(settingId: string, value: T): Promise<void>
 }
-import type { PromptService } from "./prompt"
+import type { PromptRequest, PromptService } from "./prompt"
 
 export type SettingsTheme = "light" | "dark" | "system"
 export type SettingsLayout = "single" | "split" | "scroll"
@@ -66,6 +66,11 @@ export interface SettingsCapability {
 
 export interface PromptHostCapability {
     readonly promptStore: PromptService
+    /** Choose a value with a parent Prompt; aborting cancels only the owned flow. */
+    readonly chooseValue: <T>(
+        request: PromptRequest<T>,
+        signal?: AbortSignal,
+    ) => Promise<T | undefined>
     readonly getPromptCommandRegistry: () =>
         | Pick<CommandRegistry, "get" | "list" | "listKeybindings" | "execute">
         | undefined
