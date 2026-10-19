@@ -481,46 +481,16 @@
         width: 100%;
         height: 100%;
     }
-
     .card-shell.menu-open {
         z-index: var(--z-dropdown);
     }
-
-    .pin-marker {
-        position: absolute;
-        right: 10px;
-        bottom: 10px;
-        z-index: var(--z-10);
-        width: 24px;
-        height: 24px;
-        display: grid;
-        place-items: center;
-        color: var(--active-text-color);
-        background: var(--active-color);
-        border: 1.5px solid var(--border-color);
-        box-shadow: 2px 2px 0 var(--shadow-color);
-        pointer-events: none;
-    }
-
-    .pin-marker :global(svg) {
-        width: 14px;
-        height: 14px;
-    }
-
     .card {
         background: var(--surface-color);
-        border: 2px solid var(--border-color);
-        box-shadow: var(--shadow-elevated);
-        transition:
-            background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
         box-sizing: border-box;
         display: flex;
         flex-direction: column;
-        user-select: none;
-        -webkit-touch-callout: none;
         width: 100%;
         height: 100%;
         padding: 0;
@@ -529,253 +499,150 @@
         text-align: left;
         color: inherit;
         align-items: stretch;
-        justify-content: flex-start;
+        overflow: hidden;
+        user-select: none;
+        -webkit-touch-callout: none;
+        transition:
+            background-color 120ms ease,
+            border-color 120ms ease;
     }
-
     .card.is-selected {
         border-color: var(--selection-color);
-        box-shadow:
-            var(--shadow-elevated),
-            inset 4px 0 0 var(--selection-color);
-        background-color: var(--selected-surface);
+        background: var(--selected-surface);
     }
-
-    .card.is-selected .card-cover-container {
-        border-bottom-color: var(--selection-color);
-    }
-
     @media (hover: hover) {
         .card:hover:not(.is-placeholder) {
-            transform: translate(-1px, -1px);
-            box-shadow: 5px 5px 0 var(--shadow-color);
-            background-color: var(--surface-hover-color);
-        }
-
-        .card.is-selected:hover:not(.is-placeholder) {
-            box-shadow:
-                5px 5px 0 var(--shadow-color),
-                0 0 0 1px var(--selection-color);
+            background: var(--surface-hover-color);
         }
     }
-
     .card:focus-visible:not(.is-placeholder) {
-        transform: none;
-        box-shadow:
-            4px 4px 0 var(--shadow-color),
-            var(--focus-ring);
-        background-color: var(--surface-hover-color);
-        outline: none;
-
-        .card-metadata {
-            background-color: var(--selected-surface);
-        }
+        outline: 2px solid var(--focus-color);
+        outline-offset: 3px;
     }
-
-    .card.is-selected:focus-visible:not(.is-placeholder) {
-        box-shadow:
-            4px 4px 0 var(--selection-color),
-            var(--focus-ring);
-        outline: none;
-    }
-
     .card:active:not(.is-placeholder) {
-        transform: translate(1px, 1px);
-        box-shadow: 0 0 0 var(--shadow-color);
+        border-color: var(--color-control-border);
     }
-
-    .card.is-selected:active:not(.is-placeholder) {
-        box-shadow: 2px 2px 0 var(--selection-color);
-    }
-
     .card-cover-container {
         position: relative;
         width: 100%;
-        aspect-ratio: 2/3;
-        background: var(--bg-color);
-        border-bottom: 2px solid var(--border-color);
+        aspect-ratio: 2 / 3;
+        background: var(--color-surface-raised);
         overflow: hidden;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-sizing: border-box;
     }
-
-    .selection-badge {
-        position: absolute;
-        top: 15px;
-        right: 15px;
-        background: var(--selection-color);
-        color: var(--selection-text-color);
-        width: 32px;
-        height: 32px;
-        border: 2px solid var(--border-color);
-        box-shadow: 2px 2px 0 var(--shadow-color);
-        z-index: 25;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        animation: badge-pop 0.12s ease-out;
-    }
-
-    @keyframes badge-pop {
-        0% {
-            transform: scale(0.5);
-        }
-        100% {
-            transform: scale(1);
-        }
-    }
-
-    .selection-badge :global(svg) {
-        width: 20px;
-        height: 20px;
-    }
-
-    .card-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 100%;
-        color: var(--text-color);
-    }
-
-    .card-icon :global(svg) {
-        width: 48px;
-        height: 48px;
-        stroke-width: 2;
-    }
-
-    .card-preview {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 100%;
-    }
-
+    .card-icon,
+    .card-preview,
     .pdf-image-wrapper {
-        width: 100%;
-        height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
+        width: 100%;
+        height: 100%;
     }
-
+    .card-icon {
+        color: var(--faded-text-color);
+    }
+    .card-icon :global(svg) {
+        width: 40px;
+        height: 40px;
+        stroke-width: 1.5;
+    }
     .card-preview img {
         width: 100%;
         height: 100%;
         object-fit: cover;
         display: block;
     }
-
     .card-metadata {
         width: 100%;
-        max-height: 80px !important;
-        height: 100%;
+        min-height: 88px;
         display: flex;
         flex-direction: column;
         justify-content: center;
-        gap: 4px;
-        padding: 12px;
+        gap: 6px;
+        padding: 16px;
         box-sizing: border-box;
-        text-align: left;
-        transition:
-            background-color 0.15s ease,
-            color 0.15s ease;
     }
-
     .card-title {
-        font-size: var(--font-size-md);
-        font-weight: 800;
         margin: 0;
-        text-align: left;
-        width: 100%;
-        word-wrap: break-word;
-        color: var(--text-color);
+        font-size: var(--font-size-base);
+        font-weight: 500;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        line-height: 1.3;
     }
-
     .card-author {
-        font-family: var(--ui-mono-font);
-        font-size: var(--font-size-2xs);
-        font-weight: 600;
         margin: 0;
-        text-align: left;
-        width: 100%;
-        word-wrap: break-word;
-        color: var(--text-color);
-        opacity: 0.7;
-        display: -webkit-box;
-        -webkit-line-clamp: 1;
-        line-clamp: 1;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        line-height: 1.2;
-    }
-
-    .badge {
-        position: absolute;
-        font-family: var(--ui-mono-font);
-        top: 15px;
-        left: 15px;
-        background: var(--active-color);
-        color: var(--active-text-color);
         font-size: var(--font-size-sm);
-        font-weight: bold;
-        padding: 4px 10px;
-        transform: none;
-        border: 1.5px solid var(--border-color);
-        box-shadow: 2px 2px 0 var(--shadow-color);
-        z-index: var(--z-10);
+        color: var(--faded-text-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.5;
     }
-
+    .badge,
+    .pin-marker,
+    .selection-badge {
+        position: absolute;
+        z-index: var(--z-10);
+        display: grid;
+        place-items: center;
+        background: var(--surface-color);
+        color: var(--text-color);
+        border-radius: var(--radius-sm);
+        pointer-events: none;
+    }
+    .badge {
+        top: 12px;
+        left: 12px;
+        padding: 4px 8px;
+        font-size: var(--font-size-xs);
+    }
+    .pin-marker {
+        right: 12px;
+        bottom: 12px;
+        width: 24px;
+        height: 24px;
+    }
+    .pin-marker :global(svg) {
+        width: 14px;
+        height: 14px;
+    }
+    .selection-badge {
+        top: 12px;
+        right: 12px;
+        width: 28px;
+        height: 28px;
+        background: var(--selection-color);
+        color: var(--selection-text-color);
+    }
+    .selection-badge :global(svg) {
+        width: 18px;
+        height: 18px;
+    }
     .card-menu {
         position: absolute;
-        top: 15px;
-        right: 15px;
+        top: 8px;
+        right: 8px;
         z-index: var(--z-20);
     }
-
     :global(.menu-btn) {
         opacity: 0;
         pointer-events: none;
         background: var(--surface-color) !important;
-        transition: opacity 0.15s ease !important;
-        box-shadow: 2px 2px 0 var(--shadow-color) !important;
     }
-
-    :global(.menu-btn) :global(svg) {
-        width: 20px !important;
-        height: 20px !important;
-    }
-
     :global(.menu-btn.open),
     .card-shell:hover :global(.menu-btn),
     .card-shell:focus-within :global(.menu-btn) {
         opacity: 1;
         pointer-events: auto;
     }
-
-    @media (hover: hover) {
-        :global(.menu-btn):hover:not(:disabled):not(.open),
-        :global(.menu-btn):focus-visible:not(:disabled):not(.open) {
-            transform: translate(-1px, -1px) !important;
-            box-shadow: 3px 3px 0 var(--shadow-color) !important;
-        }
-    }
-
-    :global(.menu-btn):active:not(:disabled),
-    :global(.menu-btn.open) {
-        transform: translate(1px, 1px) !important;
-        box-shadow: 1px 1px 0 var(--shadow-color) !important;
-    }
-
     .progress-container {
         position: absolute;
         bottom: 0;
@@ -783,198 +650,95 @@
         width: 100%;
         height: 28px;
         background: var(--surface-color);
-        border-top: 2px solid var(--border-color);
         box-sizing: border-box;
         overflow: hidden;
         z-index: var(--z-5);
     }
-
     .progress-bar-track {
         width: 100%;
         height: 100%;
         position: relative;
-        background: transparent;
     }
-
     .progress-bar-fill {
-        height: 100%;
+        position: absolute;
+        bottom: 0;
+        height: 3px;
         background: var(--progress-color);
-        transition: width 0.3s ease-in-out;
-        box-sizing: border-box;
     }
-
     .progress-bar-fill.has-border {
-        border-right: 2px solid var(--border-color);
+        border: 0;
     }
-
     .progress-text {
         position: absolute;
-        font-family: var(--ui-mono-font);
-        inset: 0;
+        inset: 0 0 3px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: var(--font-size-base);
-        font-weight: 900;
-        text-transform: uppercase;
-        color: var(--text-color);
+        font-size: var(--font-size-xs);
+        font-variant-numeric: tabular-nums;
+        color: var(--faded-text-color);
         pointer-events: none;
     }
-
-    @media (--mobile-width) {
-        .card-metadata {
-            padding: 8px;
-            gap: 2px;
-        }
-
-        .card-title {
-            font-size: var(--font-size-sm);
-        }
-
-        .card-author {
-            font-size: var(--font-size-2xs);
-        }
-
-        .card-icon :global(svg) {
-            width: 36px;
-            height: 36px;
-        }
-
-        .badge {
-            top: 8px;
-            left: 8px;
-            font-size: var(--font-size-2xs);
-            padding: 2px 6px;
-        }
-
-        .card-menu {
-            top: 8px;
-            right: 8px;
-        }
-
-        .pin-marker {
-            right: 8px;
-            bottom: 8px;
-            width: 20px;
-            height: 20px;
-        }
-
-        :global(.menu-btn) {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        .progress-container {
-            height: 22px;
-        }
-
-        .progress-text {
-            font-size: var(--font-size-2xs);
-        }
-    }
-
-    @media (--phone) {
-        .card-shell {
-            min-height: 112px;
-        }
-
-        .card {
-            display: grid;
-            grid-template-columns: 72px minmax(0, 1fr);
-            grid-template-rows: minmax(108px, auto);
-        }
-
-        .card-cover-container {
-            width: 72px;
-            height: 108px;
-            aspect-ratio: auto;
-            border-right: var(--border-inline) solid var(--border-color);
-            border-bottom: 0;
-        }
-
-        .card-metadata {
-            align-self: stretch;
-            height: 108px;
-            max-height: none !important;
-            padding: 12px 48px 28px 12px;
-            justify-content: center;
-        }
-
-        .card-title {
-            font-size: var(--font-size-base);
-        }
-
-        .card-author {
-            font-size: var(--font-size-sm);
-        }
-
-        .card-menu {
-            top: 8px;
-            right: 8px;
-        }
-
-        .pin-marker {
-            top: 10px;
-            right: 52px;
-            bottom: auto;
-        }
-
-        .progress-container {
-            left: 72px;
-            width: calc(100% - 72px);
-            height: 22px;
-            border-top: var(--border-inline) solid var(--border-color);
-        }
-
-        .progress-text {
-            font-size: var(--font-size-2xs);
-        }
-
-        .selection-badge {
-            top: 8px;
-            right: 8px;
-            width: 28px;
-            height: 28px;
-            box-shadow: none;
-        }
-    }
-
     .card.is-placeholder {
         cursor: wait;
     }
-
-    .card.is-placeholder :global(.card-main-button) {
-        cursor: wait;
-    }
-
     .skeleton {
-        background: color-mix(in srgb, var(--surface-hover-color) 78%, var(--accent-color));
+        background: var(--surface-hover-color);
+        border-radius: var(--radius-sm);
     }
-
     .cover-skeleton {
         width: 100%;
         height: 100%;
     }
-
     .metadata-skeleton {
         width: 62%;
         height: 0.7rem;
-        border: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
     }
-
     .failed-icon {
         color: var(--danger-active-color);
-        opacity: 0.75;
     }
-
-    @media (prefers-reduced-motion: reduce) {
-        .selection-badge,
-        .skeleton {
-            animation: none;
+    @media (hover: none), (pointer: coarse) {
+        :global(.menu-btn) {
+            opacity: 1;
+            pointer-events: auto;
         }
-
-        .skeleton {
-            background: color-mix(in srgb, var(--surface-hover-color) 78%, var(--accent-color));
+    }
+    @media (--phone) {
+        .card-shell {
+            min-height: 124px;
+        }
+        .card {
+            display: grid;
+            grid-template-columns: 80px minmax(0, 1fr);
+            grid-template-rows: minmax(124px, auto);
+        }
+        .card-cover-container {
+            width: 80px;
+            height: 124px;
+            aspect-ratio: auto;
+        }
+        .card-metadata {
+            padding: 16px 48px 32px 16px;
+        }
+        .progress-container {
+            /* Progress lives inside the clipped cover, not the metadata column. */
+            left: 0;
+            width: 100%;
+            height: 24px;
+        }
+        .badge {
+            top: 8px;
+            left: 8px;
+            padding: 2px 4px;
+        }
+        .pin-marker {
+            top: 10px;
+            right: 56px;
+            bottom: auto;
+        }
+        .card-icon :global(svg) {
+            width: 28px;
+            height: 28px;
         }
     }
 </style>

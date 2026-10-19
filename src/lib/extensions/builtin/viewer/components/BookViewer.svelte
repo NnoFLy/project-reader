@@ -1605,11 +1605,11 @@
         display: flex;
         flex-direction: column;
         align-items: flex-end;
-        gap: 0;
-        padding: 0;
-        border: 2px solid var(--border-color);
-        background: var(--viewer-chrome-color);
-        box-shadow: 4px 4px 0 var(--shadow-color);
+        gap: 2px;
+        padding: 4px;
+        border: 1px solid var(--color-rule);
+        border-radius: 999px;
+        background: var(--surface-color);
     }
 
     .viewer-utility-rail :global(.viewer-fab-btn) {
@@ -1631,7 +1631,7 @@
         position: absolute !important;
         right: 24px;
         border-color: transparent !important;
-        border-radius: 0 !important;
+        border-radius: 999px !important;
         background: transparent;
         box-shadow: none !important;
     }
@@ -1647,7 +1647,7 @@
         border-color: transparent !important;
         background: transparent !important;
         box-shadow: none !important;
-        color: var(--accent-active-color) !important;
+        color: var(--text-color) !important;
     }
 
     :global(.viewer-fab-btn:disabled) {
@@ -1848,14 +1848,12 @@
         gap: 6px;
         background: var(--text-color);
         color: var(--surface-color);
-        border: 2px solid var(--text-color);
-        box-shadow: 4px 4px 0 var(--shadow-color);
+        border: 0;
+        border-radius: 999px;
         padding: 6px 12px;
         font-family: inherit;
         font-size: var(--font-size-sm);
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        font-weight: 500;
         cursor: pointer;
         transition:
             background-color 0.1s cubic-bezier(0.4, 0, 0.2, 1),
@@ -1865,8 +1863,7 @@
     }
 
     .note-fab .fab-btn:hover {
-        transform: translate(-1px, -1px);
-        box-shadow: 5px 5px 0 var(--shadow-color);
+        transform: scale(0.98);
         background: var(--accent-active-color);
         color: var(--text-color);
     }

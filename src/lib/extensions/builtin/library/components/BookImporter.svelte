@@ -1,5 +1,6 @@
 <script lang="ts">
     import PlusIcon from "$lib/shared/icons/PlusIcon.svelte"
+    import BookOpenIcon from "$lib/shared/icons/BookOpenIcon.svelte"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
@@ -217,10 +218,10 @@
                         <Spinner
                             variant="classic"
                             size="lg"
-                            style="--border-color: color-mix(in srgb, var(--primary-text-color) 28%, transparent); --danger-active-color: var(--primary-text-color);"
+                            style="--border-color: color-mix(in srgb, var(--text-color) 28%, transparent); --danger-active-color: var(--text-color);"
                         />
                     {:else}
-                        <PlusIcon width="48" height="48" />
+                        <BookOpenIcon width="44" height="44" />
                     {/if}
                 </div>
                 <h3>
@@ -272,351 +273,137 @@
 />
 
 <style>
-    :global(.button.brutalist-btn.import-action) {
-        min-height: var(--control-height-regular);
+    :global(.button.import-action),
+    .dashed-border :global(.upload-btn) {
         background: var(--primary-color);
         color: var(--primary-text-color);
-        font-family: var(--ui-font);
+        border-color: transparent;
         font-size: var(--font-size-base);
-        font-weight: 800;
+        font-weight: 500;
+        min-height: 40px;
+        padding-inline: 20px;
     }
-
-    @media (hover: hover) and (pointer: fine) {
-        :global(.import-action:hover:not(:disabled):not(:active) svg) {
-            transform: translateY(-1px) rotate(8deg);
-        }
+    :global(.button.import-action:hover:not(:disabled)),
+    .dashed-border :global(.upload-btn:hover:not(:disabled)) {
+        background: var(--primary-color);
+        opacity: 0.88;
     }
-
-    :global(.button.import-action:disabled) {
-        cursor: wait;
-        opacity: 0.7;
-    }
-
-    :global(.import-action svg) {
-        width: 18px;
-        height: 18px;
-        transition: transform 140ms cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
     .reader-card {
-        grid-column: 1 / -1;
         background: var(--surface-color);
-        border: var(--border-elevated) solid var(--border-color);
-        box-shadow: var(--shadow-elevated);
-        margin-top: 4px;
-        transition:
-            background-color 0.12s ease,
-            border-color 0.12s ease;
+        border-radius: var(--radius-lg);
         overflow: hidden;
     }
-
-    /* Upload Screen */
     .upload-zone {
-        padding: clamp(16px, 3vw, 24px);
-        text-align: left;
-        background: var(--surface-color);
+        padding: 32px 24px;
     }
-
     .dashed-border {
-        border: var(--border-inline) dashed var(--border-color);
-        padding: clamp(16px, 3vw, 24px);
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        grid-template-areas:
-            "icon heading action"
-            "icon copy action";
+        /* One content column: equal outer space rather than an empty grid cell. */
+        min-height: 360px;
+        display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 4px 16px;
+        justify-content: center;
+        text-align: center;
     }
-
     .upload-icon-wrapper {
-        background: var(--primary-color);
-        border: 2.5px solid var(--border-color);
-        padding: 12px;
-        border-radius: var(--radius-full);
-        display: inline-flex;
-        box-shadow: var(--shadow-inline);
-        color: var(--primary-text-color);
-        grid-area: icon;
+        display: flex;
+        color: var(--faded-text-color);
+        margin-bottom: 24px;
     }
-
-    .dashed-border h3 {
-        margin: 0;
+    h3 {
+        margin: 0 0 12px;
         font-size: var(--font-size-2xl);
-        font-weight: 700;
+        font-weight: 500;
         letter-spacing: -0.02em;
-        color: var(--text-color);
-        grid-area: heading;
     }
-
     .empty-copy {
         display: grid;
-        gap: 2px;
-        grid-area: copy;
+        gap: 4px;
     }
-
-    .dashed-border p {
+    .empty-copy p {
         margin: 0;
-        font-size: var(--font-size-md);
-        color: var(--text-color);
-        opacity: 0.8;
-        max-width: 320px;
-        line-height: 1.5;
-        font-weight: bold;
+        color: var(--faded-text-color);
+        font-size: var(--font-size-base);
+        line-height: 1.6;
     }
-
     .dashed-border :global(.upload-btn) {
-        font-size: var(--font-size-md);
-        font-weight: 800;
-        text-transform: uppercase;
-        gap: 6px;
-        margin-top: 0;
-        background: var(--primary-color);
-        grid-area: action;
-        color: var(--primary-text-color);
-        border-color: var(--border-color);
+        margin-top: 24px;
     }
-
-    @media (hover: hover) {
-        .dashed-border :global(.upload-btn:hover:not(:disabled)) {
-            background: var(--primary-color);
-            opacity: 0.9;
-        }
+    .drag-hint {
+        margin-top: 8px !important;
     }
-
+    .card {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        padding: 0;
+        background: var(--surface-color);
+        color: var(--text-color);
+        border: 1px dashed var(--color-control-border);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-family: inherit;
+        text-align: left;
+    }
+    .card-cover-container {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        aspect-ratio: 2 / 3;
+    }
+    .card-icon {
+        color: var(--faded-text-color);
+    }
+    .card-icon :global(svg) {
+        width: 36px;
+        height: 36px;
+    }
+    .card-metadata {
+        padding: 16px;
+    }
+    .card-title {
+        margin: 0;
+        font-size: var(--font-size-base);
+        font-weight: 500;
+    }
+    .card-author {
+        margin: 4px 0 0;
+        font-size: var(--font-size-sm);
+    }
+    .card:focus-visible {
+        outline: 2px solid var(--focus-color);
+        outline-offset: 3px;
+    }
+    .card:disabled {
+        cursor: wait;
+        color: var(--faded-text-color);
+    }
+    .reader-card.importing {
+        cursor: wait;
+    }
+    .reader-card.drag-active,
+    .card.drag-active {
+        outline: 2px solid var(--focus-color);
+        outline-offset: -2px;
+        background: var(--surface-hover-color);
+    }
     @media (hover: none), (pointer: coarse) {
         .drag-hint {
             display: none;
         }
     }
-
-    /* Card variant styles */
-    .card {
-        background: var(--surface-color);
-        position: relative;
-        border: 2px solid var(--border-color);
-        box-shadow: var(--shadow-elevated);
-        transition:
-            background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-        cursor: pointer;
-        font-family: inherit;
-        text-align: left;
-        color: inherit;
-        user-select: none;
-        box-sizing: border-box;
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        justify-content: flex-start;
-        padding: 0;
-    }
-
-    @media (hover: hover) {
-        .card:hover:not(:disabled) {
-            transform: translate(-1px, -1px);
-            box-shadow: 5px 5px 0 var(--shadow-color);
-            background-color: var(--surface-hover-color);
-        }
-    }
-
-    .card:focus-visible:not(:disabled) {
-        transform: translate(-1px, -1px);
-        box-shadow: 5px 5px 0 var(--shadow-color);
-        background-color: var(--surface-hover-color);
-        outline: none;
-    }
-
-    .card:active:not(:disabled) {
-        transform: translate(2px, 2px);
-        box-shadow: 2px 2px 0 var(--shadow-color);
-    }
-
-    .card-cover-container {
-        position: relative;
-        width: 100%;
-        aspect-ratio: 2/3;
-        background: var(--bg-color);
-        border-bottom: 2px solid var(--border-color);
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-sizing: border-box;
-    }
-
-    .card-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 100%;
-        color: var(--text-color);
-    }
-
-    .card-icon :global(svg) {
-        width: 48px;
-        height: 48px;
-        stroke-width: 2;
-    }
-
-    .card-metadata {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: 12px;
-        box-sizing: border-box;
-        text-align: left;
-    }
-
-    .card-title {
-        font-size: var(--font-size-md);
-        font-weight: 800;
-        text-transform: uppercase;
-        margin: 0;
-        text-align: left;
-        width: 100%;
-        word-wrap: break-word;
-        color: var(--text-color);
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        line-height: 1.3;
-    }
-
-    .card-author {
-        font-size: var(--font-size-2xs);
-        font-weight: 600;
-        text-transform: uppercase;
-        margin: 0;
-        text-align: left;
-        width: 100%;
-        word-wrap: break-word;
-        color: var(--text-color);
-        opacity: 0.7;
-        display: -webkit-box;
-        -webkit-line-clamp: 1;
-        line-clamp: 1;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        line-height: 1.2;
-    }
-
-    .card-importer {
-        background-color: transparent;
-    }
-
     @media (--mobile-width) {
-        .card-metadata {
-            padding: 8px;
-            gap: 2px;
-        }
-
-        .card-title {
-            font-size: var(--font-size-sm);
-        }
-
-        .card-author {
-            font-size: var(--font-size-2xs);
-        }
-
-        .card-icon :global(svg) {
-            width: 36px;
-            height: 36px;
-        }
-
         .upload-zone {
-            padding: 16px 12px;
+            padding: 24px 16px;
         }
-
         .dashed-border {
-            grid-template-columns: auto minmax(0, 1fr);
-            grid-template-areas:
-                "icon heading"
-                "icon copy"
-                "action action";
-            padding: 16px 12px;
-            gap: 4px 12px;
+            min-height: 320px;
         }
-
-        .dashed-border h3 {
-            font-size: var(--font-size-xl);
-        }
-
-        .dashed-border p {
-            font-size: var(--font-size-base);
-        }
-
-        .upload-icon-wrapper {
+        .card-metadata {
             padding: 12px;
-            margin-bottom: 4px;
         }
-
-        .upload-icon-wrapper :global(svg) {
-            width: 36px;
-            height: 36px;
-        }
-    }
-
-    /* Drag and drop active states */
-    .card.drag-active {
-        background-color: var(--surface-hover-color);
-        border-color: var(--primary-color);
-        transform: translate(-1px, -1px);
-        box-shadow: 5px 5px 0 var(--shadow-color);
-    }
-
-    .reader-card.drag-active {
-        border-color: var(--primary-color);
-        background-color: var(--surface-hover-color);
-        transform: translate(-1px, -1px);
-        box-shadow: 5px 5px 0 var(--shadow-color);
-    }
-
-    .reader-card.drag-active .dashed-border {
-        border-color: var(--primary-color);
-        background: color-mix(in srgb, var(--primary-color) 4%, transparent);
-    }
-
-    @keyframes float {
-        0% {
-            transform: translateY(0px);
-        }
-        50% {
-            transform: translateY(-8px);
-        }
-        100% {
-            transform: translateY(0px);
-        }
-    }
-
-    .reader-card.drag-active .upload-icon-wrapper,
-    .card.drag-active .card-icon {
-        animation: float 1.2s ease-in-out infinite;
-        border-color: var(--primary-color);
-        background: var(--primary-color);
-        color: var(--primary-text-color);
-    }
-
-    .card:disabled {
-        opacity: 0.6;
-        cursor: wait;
-    }
-
-    .reader-card.importing {
-        cursor: wait;
-        opacity: 0.85;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        .reader-card.drag-active .upload-icon-wrapper,
-        .card.drag-active .card-icon {
-            animation: none;
+        .dashed-border :global(.upload-btn) {
+            min-height: 44px;
         }
     }
 </style>

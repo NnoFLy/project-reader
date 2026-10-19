@@ -53,7 +53,7 @@
                 <span class="outline-text">{m.outline()}</span>
             </Button>
         {/if}
-        <span class="file-name" title={name}>{name || m.unknown_book()}</span>
+        <h1 class="file-name" title={name}>{name || m.unknown_book()}</h1>
     </div>
 
     <div class="header-actions">
@@ -187,8 +187,9 @@
 
     .file-name {
         min-width: 0;
-        font-size: var(--font-size-lg);
-        font-weight: 600;
+        margin: 0;
+        font-size: var(--font-size-base);
+        font-weight: 500;
         color: var(--text-color);
         white-space: nowrap;
         overflow: hidden;

@@ -511,6 +511,7 @@
     .container {
         max-width: 1280px;
         margin: 0 auto;
+        width: 100%;
         display: flex;
         flex-direction: column;
         padding-bottom: 64px;
@@ -520,7 +521,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 16px;
+        margin-bottom: 24px;
         font-family: var(--ui-font);
     }
 
@@ -550,7 +551,7 @@
             auto-fill,
             minmax(min(100%, var(--library-card-min, 11rem)), 1fr)
         );
-        gap: 16px;
+        gap: 24px;
     }
 
     main.selection-mode .grid {
@@ -599,6 +600,9 @@
         z-index: var(--z-modal);
         max-width: 90dvw;
         box-sizing: border-box;
+        background: var(--surface-color);
+        border: 1px solid var(--color-rule);
+        border-radius: 999px;
     }
 
     .selection-actions {
@@ -661,8 +665,7 @@
         width: 44px;
         height: 44px;
         background: var(--surface-color);
-        border: 2px solid var(--border-color);
-        box-shadow: var(--shadow-inline);
+        border: 1px solid var(--color-rule);
         border-radius: var(--radius-full);
         display: flex;
         align-items: center;

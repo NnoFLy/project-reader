@@ -9,84 +9,74 @@ function readStyles(file: string) {
 
 function declaration(styles: Root, selector: string, property: string) {
     let value = ""
-    styles.walkRules(selector, (rule) => {
-        rule.walkDecls(property, (decl) => {
-            value = decl.value
-        })
+    styles.walkRules((rule) => {
+        if (rule.selector.split(",").some((item) => item.trim() === selector)) {
+            rule.walkDecls(property, (decl) => {
+                value = decl.value
+            })
+        }
     })
     return value
 }
 
-const tokens = parse(
-    readFileSync(new URL("../../../../shared/styles/variables.css", import.meta.url), "utf8"),
-)
+describe("Library reading surfaces", () => {
+    it.each(["Card.svelte", "BookImporter.svelte"])(
+        "%s keeps its resting and interaction surfaces flat",
+        (file) => {
+            const styles = readStyles(file)
+            styles.walkDecls("box-shadow", (decl) => {
+                expect(decl.value).toBe("none")
+            })
+            styles.walkDecls("transform", (decl) => {
+                expect(decl.value).not.toContain("translate")
+            })
+            expect(declaration(styles, ".card", "background")).toBe("var(--surface-color)")
+        },
+    )
 
-function shadowOffset(value: string) {
-    let resolved = value
-    tokens.walkRules(":root", (rule) => {
-        rule.walkDecls((decl) => {
-            resolved = resolved.replaceAll(`var(${decl.prop})`, decl.value)
-        })
+    it("distinguishes selected books and keyboard focus independently", () => {
+        const styles = readStyles("Card.svelte")
+        expect(declaration(styles, ".card.is-selected", "border-color")).toBe(
+            "var(--selection-color)",
+        )
+        expect(declaration(styles, ".card.is-selected", "background")).toBe(
+            "var(--selected-surface)",
+        )
+        expect(declaration(styles, ".card:focus-visible:not(.is-placeholder)", "outline")).toBe(
+            "2px solid var(--focus-color)",
+        )
     })
-    const match = resolved.match(/^\s*(-?\d+)px (-?\d+)px/)
-    if (!match) throw new Error(`Expected an offset shadow, got ${resolved}`)
-    return [Number(match[1]), Number(match[2])]
-}
 
-const bookHover = ".card:hover:not(.is-placeholder)"
-const bookFocus = ".card:focus-visible:not(.is-placeholder)"
+    it("puts progress on a thin data mark without coloring its label", () => {
+        const styles = readStyles("Card.svelte")
+        expect(declaration(styles, ".progress-bar-fill", "height")).toBe("3px")
+        expect(declaration(styles, ".progress-bar-fill", "background")).toBe(
+            "var(--progress-color)",
+        )
+        expect(declaration(styles, ".progress-text", "color")).toBe("var(--faded-text-color)")
+        expect(declaration(styles, ".progress-text", "font-variant-numeric")).toBe("tabular-nums")
+        // The mobile progress mark is a child of the clipped cover.
+        expect(declaration(styles, ".progress-container", "left")).toBe("0")
+        expect(declaration(styles, ".progress-container", "width")).toBe("100%")
+    })
 
-describe("Card shadow anchoring", () => {
-    it.each([
-        ["Card.svelte", ".card", bookHover, bookHover],
-        [
-            "Card.svelte",
-            ".card.is-selected",
-            ".card.is-selected:hover:not(.is-placeholder)",
-            bookHover,
-        ],
-        ["Card.svelte", ".card", bookFocus, bookFocus],
-        [
-            "Card.svelte",
-            ".card.is-selected",
-            ".card.is-selected:focus-visible:not(.is-placeholder)",
-            bookFocus,
-        ],
-        ["Folder.svelte", ".card", ".card:hover", ".card:hover"],
-        ["Folder.svelte", ".card", ".card:focus-visible", ".card:focus-visible"],
-        [
-            "BookImporter.svelte",
-            ".card",
-            ".card:hover:not(:disabled)",
-            ".card:hover:not(:disabled)",
-        ],
-        [
-            "BookImporter.svelte",
-            ".card",
-            ".card:focus-visible:not(:disabled)",
-            ".card:focus-visible:not(:disabled)",
-        ],
-        ["BookImporter.svelte", ".card", ".card.drag-active", ".card.drag-active"],
-        [
-            "BookImporter.svelte",
-            ".reader-card",
-            ".reader-card.drag-active",
-            ".reader-card.drag-active",
-        ],
-    ])("%s keeps %s anchored in %s", (file, base, state, motionState) => {
-        const styles = readStyles(file)
-        const resting = shadowOffset(declaration(styles, base, "box-shadow"))
-        const moved = shadowOffset(declaration(styles, state, "box-shadow"))
-        const transform = declaration(styles, motionState, "transform")
-        const translation =
-            transform === "none"
-                ? [0, 0]
-                : transform
-                      .match(/^translate\((-?\d+)px, (-?\d+)px\)$/)
-                      ?.slice(1)
-                      .map(Number)
+    it("keeps the loading indicator readable on its unfilled icon surface", () => {
+        const source = readFileSync(new URL("./BookImporter.svelte", import.meta.url), "utf8")
+        const icon = source.split('<div class="upload-icon-wrapper"')[1].split("</div>")[0]
+        expect(icon).toContain("--danger-active-color: var(--text-color)")
+        expect(icon).not.toContain("--danger-active-color: var(--primary-text-color)")
+    })
 
-        expect(translation).toBeDefined()
-        expect(moved.map((offset, axis) => offset + translation![axis])).toEqual(resting)
+    it("shows drag and keyboard focus without continuous animation", () => {
+        const styles = readStyles("BookImporter.svelte")
+        expect(declaration(styles, ".reader-card.drag-active", "outline")).toBe(
+            "2px solid var(--focus-color)",
+        )
+        expect(declaration(styles, ".card:focus-visible", "outline")).toBe(
+            "2px solid var(--focus-color)",
+        )
+        styles.walkDecls("animation", (decl) => {
+            expect(decl.value).not.toContain("infinite")
+        })
     })
 })

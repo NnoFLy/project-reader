@@ -256,8 +256,6 @@
         margin: 0;
         color: var(--text-color);
         font-size: var(--font-size-lg);
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
+        font-weight: 500;
     }
 </style>

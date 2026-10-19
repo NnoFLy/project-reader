@@ -78,7 +78,8 @@
         min-height: var(--control-height-regular);
         box-sizing: border-box;
         padding: 8px var(--control-padding-inline);
-        border: var(--border-inline) solid var(--border-color);
+        border: 1px solid var(--color-control-border);
+        border-radius: var(--radius-sm);
         background: var(--surface-color);
         box-shadow: var(--shadow-inline);
         color: var(--text-color);
@@ -96,18 +97,17 @@
     }
 
     .input-field::placeholder {
-        color: var(--text-color);
-        opacity: 0.4;
+        color: var(--faded-text-color);
+        opacity: 1;
     }
 
     .input-field.has-error {
-        border-color: var(--error-color, #ff7675);
+        border-color: var(--danger-color);
     }
 
     .error-text {
         font-size: var(--font-size-sm);
         font-weight: 700;
-        color: var(--error-color, #ff7675);
-        text-transform: uppercase;
+        color: var(--danger-color);
     }
 </style>

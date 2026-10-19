@@ -282,13 +282,11 @@
 
     .section-title {
         margin: 0;
-        color: color-mix(in srgb, var(--text-color) 72%, transparent);
+        color: var(--faded-text-color);
         font-family: var(--ui-font);
-        font-size: 0.8rem;
-        font-weight: 800;
-        line-height: 1.3;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+        font-size: var(--font-size-base);
+        font-weight: 500;
+        line-height: 1.4;
     }
 
     .setting-description {
@@ -313,10 +311,9 @@
     }
 
     :global(.option-btn.active) {
-        background: var(--selection-color) !important;
-        border-color: var(--accent-active-color) !important;
-        box-shadow: inset 3px 0 0 var(--accent-active-color) !important;
-        color: var(--selection-text-color) !important;
+        background: var(--active-color) !important;
+        border-color: transparent !important;
+        color: var(--active-text-color) !important;
         transform: none !important;
     }
 
@@ -338,15 +335,16 @@
         flex-direction: column;
         gap: 10px;
         padding: 8px;
-        border: var(--border-inline) solid var(--border-color);
-        background: var(--surface-color);
+        border: 0;
+        border-radius: var(--radius-md);
+        background: var(--color-surface-raised);
     }
 
     .zoom-controls {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: var(--surface-color);
+        background: transparent;
     }
 
     .scale-input-container {
@@ -354,8 +352,8 @@
         align-items: center;
         justify-content: center;
         background: var(--surface-color);
-        border: var(--border-inline) solid var(--border-color);
-        box-shadow: var(--shadow-inline);
+        border: 1px solid var(--color-control-border);
+        border-radius: var(--radius-sm);
         padding: 0 8px;
         height: var(--control-height-compact);
         box-sizing: border-box;
@@ -376,7 +374,8 @@
         border: none;
         background: transparent;
         font-family: inherit;
-        font-weight: 900;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
         color: var(--text-color);
         text-align: right;
         padding: 0;
@@ -393,8 +392,8 @@
     }
 
     .percent-sign {
-        font-size: var(--font-size-lg);
-        font-weight: 900;
+        font-size: var(--font-size-base);
+        font-weight: 500;
         color: var(--text-color);
         margin-left: 2px;
     }
@@ -417,12 +416,12 @@
 
     .slider-container :global(.sidebar-slider) {
         width: 100%;
-        height: 6px;
+        height: 4px;
         appearance: none;
         -webkit-appearance: none;
-        background: var(--surface-color);
-        border: var(--border-inline) solid var(--border-color);
-        box-shadow: var(--shadow-inline);
+        background: var(--color-control-border);
+        border: 0;
+        border-radius: 999px;
         outline: none;
         box-sizing: border-box;
     }
@@ -431,10 +430,10 @@
         appearance: none;
         -webkit-appearance: none;
         width: 12px;
-        height: 18px;
-        background: var(--accent-active-color);
-        border: 2px solid var(--border-color);
-        box-shadow: none;
+        height: 12px;
+        background: var(--text-color);
+        border: 0;
+        border-radius: 50%;
         cursor: pointer;
         transition: transform 0.1s ease;
     }
@@ -445,12 +444,11 @@
 
     .slider-container :global(.sidebar-slider::-moz-range-thumb) {
         width: 12px;
-        height: 18px;
-        background: var(--accent-active-color);
-        border: 2px solid var(--border-color);
-        box-shadow: 1px 1px 0 var(--shadow-color);
+        height: 12px;
+        background: var(--text-color);
+        border: 0;
         cursor: pointer;
-        border-radius: 0;
+        border-radius: 50%;
         transition: transform 0.1s ease;
     }
 
@@ -487,18 +485,17 @@
             min-height: 48px !important;
             padding: 10px 14px !important;
             border-width: 1px !important;
-            border-radius: 0 !important;
+            border-radius: 999px !important;
             box-shadow: none !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+            font-family: var(--ui-font) !important;
             font-size: max(0.95rem, var(--font-size-lg)) !important;
             text-align: left !important;
         }
 
         :global(.option-btn.active) {
-            background: var(--selection-color) !important;
-            border-color: var(--accent-active-color) !important;
-            box-shadow: inset 3px 0 0 var(--accent-active-color) !important;
-            color: var(--selection-text-color) !important;
+            background: var(--active-color) !important;
+            border-color: transparent !important;
+            color: var(--active-text-color) !important;
             transform: none !important;
         }
 
@@ -506,7 +503,7 @@
             gap: 12px;
             padding: 10px;
             border-width: 1px;
-            border-radius: 0;
+            border-radius: var(--radius-md);
         }
 
         .zoom-controls {

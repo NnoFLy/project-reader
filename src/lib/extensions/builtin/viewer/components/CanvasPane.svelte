@@ -1283,8 +1283,13 @@
     class:compact-mode={viewport.isCompact}
     class:animations-enabled={settingsStore.animations}
 >
+    <!-- Keyboard users need to focus this region to scroll the document. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
         class="canvas-frame"
+        role="region"
+        aria-label={m.viewer_reading_region()}
+        tabindex="0"
         bind:this={container}
         bind:clientHeight={containerHeight}
         bind:clientWidth={() => containerWidth, updateContainerWidth}

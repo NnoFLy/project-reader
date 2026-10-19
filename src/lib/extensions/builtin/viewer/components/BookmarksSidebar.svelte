@@ -469,25 +469,18 @@
         gap: 6px;
         background: var(--surface-color);
         border: var(--border-inline) solid var(--border-color);
-        box-shadow: 3px 3px 0 var(--shadow-color);
-        transition:
-            background-color 0.15s ease-out,
-            box-shadow 0.15s ease-out,
-            transform 0.15s ease-out;
+        border-radius: var(--radius-md);
+        transition: background-color 0.12s ease;
     }
 
     .bookmark-card:hover,
     .bookmark-card:focus-within {
-        transform: translate(-1px, -1px);
         background: var(--surface-hover-color);
-        box-shadow: 4px 4px 0 var(--shadow-color);
     }
 
     .bookmark-card.selected {
         background: var(--selected-surface);
-        box-shadow:
-            4px 4px 0 var(--shadow-color),
-            inset 5px 0 0 var(--accent-active-color);
+        outline: 1px solid var(--selection-color);
     }
 
     .bookmark-primary {
@@ -515,8 +508,7 @@
         justify-content: space-between;
         align-items: center;
         font-size: var(--font-size-xs);
-        font-weight: 900;
-        text-transform: uppercase;
+        font-weight: 500;
         color: var(--faded-text-color);
     }
 
@@ -574,7 +566,7 @@
     }
 
     .action-btn:hover {
-        background: var(--accent-color);
+        background: var(--surface-hover-color);
         border-color: var(--border-color);
     }
 

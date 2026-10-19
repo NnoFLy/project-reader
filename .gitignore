@@ -4,6 +4,9 @@ tmp/
 PLAN.md
 .pi-subagents/
 
+# Local design verification (screenshots, measurements, and fixture reports)
+.taste-skill/
+
 # Output
 .output
 .vercel

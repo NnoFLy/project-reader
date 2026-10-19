@@ -347,13 +347,12 @@
         padding: 8px 20px !important;
         font-family: inherit !important;
         font-size: var(--font-size-lg) !important;
-        font-weight: 900 !important;
-        text-transform: uppercase !important;
+        font-weight: 500 !important;
         cursor: pointer !important;
-        border: 2px solid var(--border-color) !important;
+        border: 1px solid var(--color-control-border) !important;
         background: var(--surface-color) !important;
         color: var(--text-color) !important;
-        box-shadow: 3px 3px 0 var(--shadow-color) !important;
+        box-shadow: none !important;
         transition:
             background-color 0.1s ease,
             border-color 0.1s ease,
@@ -368,18 +367,18 @@
     }
 
     :global(.editor-btn:hover) {
-        transform: translate(-1px, -1px) !important;
-        box-shadow: 4px 4px 0 var(--shadow-color) !important;
-        background: var(--accent-color) !important;
+        transform: none !important;
+        box-shadow: none !important;
+        background: var(--surface-hover-color) !important;
     }
 
     :global(.editor-btn:active) {
-        transform: translate(1px, 1px) !important;
-        box-shadow: 1px 1px 0 var(--shadow-color) !important;
+        transform: scale(0.97) !important;
+        box-shadow: none !important;
     }
 
     :global(.editor-btn.cancel:hover) {
         background: var(--danger-color) !important;
-        color: white !important;
+        color: var(--danger-text-color) !important;
     }
 </style>

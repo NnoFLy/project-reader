@@ -5,25 +5,25 @@
     --breakpoint-docked: 1200px;
     --breakpoint-prompt: 640px;
 
-    /* Brutalist semantic palette — light */
-    --color-canvas: #f5f0e1;
+    /* Neutral reading surfaces; blue is reserved for progress and focus. */
+    --color-canvas: #f7f7f7;
     --color-surface: #ffffff;
     --color-surface-raised: #ffffff;
     --color-text: #1a1a1a;
     --color-text-muted: #666666;
-    --color-rule: #1a1a1a;
-    --color-control-border: #1a1a1a;
-    --color-action: #00cec9;
-    --color-on-action: #1a1a1a;
-    --color-marker: #ffde4d;
+    --color-rule: #e5e5e5;
+    --color-control-border: #858585;
+    --color-action: #1a1a1a;
+    --color-on-action: #ffffff;
+    --color-marker: #e8e8e8;
     --color-on-marker: #1a1a1a;
-    --color-danger: #ff7675;
-    --color-on-danger: #1a1a1a;
-    --color-focus: #6c5ce7;
+    --color-danger: #a92b3d;
+    --color-on-danger: #ffffff;
+    --color-focus: #176b97;
     --color-disabled: #eeeeee;
     --color-on-disabled: #666666;
-    --color-viewer-canvas: #ffffff;
-    --color-viewer-chrome: #f5f0e1;
+    --color-viewer-canvas: #eeeeee;
+    --color-viewer-chrome: #f7f7f7;
     --color-overlay: rgb(26 26 26 / 0.24);
 
     /* PDF overlays stay semantic; document darkness is handled by the image filter. */
@@ -40,29 +40,29 @@
     /* Compatibility aliases retained for existing components. */
     --bg-color: var(--color-canvas);
     --surface-color: var(--color-surface);
-    --surface-hover-color: #faf8f5;
+    --surface-hover-color: #ededed;
     --text-color: var(--color-text);
     --faded-text-color: var(--color-text-muted);
-    --border-color: var(--color-control-border);
+    --border-color: var(--color-rule);
     --outline-item-border: rgb(26 26 26 / 0.18);
     --shadow-color: #1a1a1a;
     --primary-color: var(--color-action);
     --primary-text-color: var(--color-on-action);
     --active-color: var(--color-marker);
     --active-text-color: var(--color-on-marker);
-    --selection-color: #6c5ce7;
-    --selection-text-color: #ffffff;
-    --progress-color: var(--color-action);
+    --selection-color: var(--color-action);
+    --selection-text-color: var(--color-on-action);
+    --progress-color: #176b97;
     --focus-color: var(--color-focus);
     --viewer-chrome-color: var(--color-viewer-chrome);
     --canvas-bg-color: var(--color-viewer-canvas);
     --accent-color: var(--color-action);
     --accent-active-color: var(--color-marker);
     --danger-color: var(--color-danger);
-    --danger-active-color: #ff4d4d;
+    --danger-active-color: #a92b3d;
     --danger-text-color: var(--color-on-danger);
     --muted-bg-color: #1a1a1a;
-    --muted-text-color: #f5f0e1;
+    --muted-text-color: #ffffff;
     --disabled-bg-color: var(--color-disabled);
     --overlay-color: var(--color-overlay);
     --faded-color: rgb(0 0 0 / 0.05);
@@ -77,10 +77,10 @@
     --space-8: 48px;
 
     /* Compact interface scale. */
-    --font-size-3xs: 0.5rem;
-    --font-size-2xs: 0.625rem;
-    --font-size-xs: 0.6875rem;
-    --font-size-sm: 0.75rem;
+    --font-size-3xs: 0.6875rem;
+    --font-size-2xs: 0.75rem;
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.8125rem;
     --font-size-base: 0.875rem;
     --font-size-md: 0.875rem;
     --font-size-lg: 1rem;
@@ -99,17 +99,18 @@
     --control-height-regular: var(--chrome-height-regular);
     --control-gap: var(--space-2);
     --control-padding-inline: var(--space-3);
-    --border-inline: 2px;
-    --border-elevated: 2px;
-    --shadow-inline: 2px 2px 0 var(--shadow-color);
-    --shadow-elevated: 4px 4px 0 var(--shadow-color);
+    --border-inline: 1px;
+    --border-elevated: 1px;
+    --shadow-inline: none;
+    --shadow-elevated: none;
     --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus-color) 65%, transparent);
     --selected-surface: color-mix(in srgb, var(--selection-color) 18%, var(--surface-color));
 
-    --radius-sm: 0;
-    --radius-md: 0;
-    --radius-lg: 0;
-    --radius-xl: 0;
+    /* Nested controls, overlays, then reading panels. */
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-xl: 20px;
     --radius-full: 50%;
 
     --z-below: -1;
@@ -135,31 +136,31 @@
 
 :global(html.dark) {
     --color-canvas: #000000;
-    --color-surface: #09090b;
-    --color-surface-raised: #111113;
-    --color-text: #e4e4e7;
-    --color-text-muted: #a1a1aa;
-    --color-rule: #71717a;
-    --color-control-border: #71717a;
-    --color-action: #a78bfa;
-    --color-on-action: #09090b;
-    --color-marker: #8b5cf6;
-    --color-on-marker: #09090b;
-    --color-danger: #f87171;
-    --color-on-danger: #09090b;
-    --color-focus: #67e8f9;
-    --color-disabled: #18181b;
-    --color-on-disabled: #a1a1aa;
+    --color-surface: #111111;
+    --color-surface-raised: #222222;
+    --color-text: #ffffff;
+    --color-text-muted: #b4b4b4;
+    --color-rule: #292929;
+    --color-control-border: #777777;
+    --color-action: #ffffff;
+    --color-on-action: #111111;
+    --color-marker: #2a2a2a;
+    --color-on-marker: #ffffff;
+    --color-danger: #e9909b;
+    --color-on-danger: #111111;
+    --color-focus: #69bce9;
+    --color-disabled: #222222;
+    --color-on-disabled: #b4b4b4;
     --color-viewer-canvas: #000000;
-    --color-viewer-chrome: #09090b;
+    --color-viewer-chrome: #000000;
     --color-overlay: rgb(0 0 0 / 0.24);
 
     --bg-color: var(--color-canvas);
     --surface-color: var(--color-surface);
-    --surface-hover-color: #1c1c1e;
+    --surface-hover-color: #222222;
     --text-color: var(--color-text);
     --faded-text-color: var(--color-text-muted);
-    --border-color: var(--color-control-border);
+    --border-color: var(--color-rule);
     --outline-item-border: rgb(228 228 231 / 0.2);
     --shadow-color: #000000;
     --primary-color: var(--color-action);
@@ -168,16 +169,16 @@
     --active-text-color: var(--color-on-marker);
     --selection-color: var(--color-action);
     --selection-text-color: var(--color-on-action);
-    --progress-color: var(--color-action);
+    --progress-color: #69bce9;
     --focus-color: var(--color-focus);
     --viewer-chrome-color: var(--color-viewer-chrome);
     --canvas-bg-color: var(--color-viewer-canvas);
     --accent-color: var(--color-action);
     --accent-active-color: var(--color-marker);
     --danger-color: var(--color-danger);
-    --danger-active-color: #ef4444;
+    --danger-active-color: #e9909b;
     --danger-text-color: var(--color-on-danger);
-    --muted-bg-color: #e4e4e7;
+    --muted-bg-color: #ffffff;
     --muted-text-color: #000000;
     --disabled-bg-color: var(--color-disabled);
     --overlay-color: var(--color-overlay);
@@ -203,5 +204,6 @@
         --color-focus: Highlight;
         --color-disabled: Canvas;
         --color-on-disabled: GrayText;
+        --progress-color: Highlight;
     }
 }

@@ -40,6 +40,7 @@
 
 <header>
     <div class="title-wrapper">
+        <span class="wordmark"><BookOpenIcon /> VFS</span>
         <h1 class="title" data-text={m.library()}>
             {m.library()}
         </h1>
@@ -102,168 +103,78 @@
 
 <style>
     header {
-        --header-control-height: var(--control-height-compact);
         display: flex;
+        align-items: center;
         justify-content: space-between;
-        align-items: flex-end;
-        border-bottom: var(--border-inline) solid var(--border-color);
-        padding-bottom: 12px;
-        margin-bottom: 12px;
-        gap: 12px;
-        flex-wrap: wrap;
+        gap: 16px;
+        min-height: 56px;
+        padding-bottom: 22px;
+        margin-bottom: 22px;
+        border-bottom: 1px solid var(--color-rule);
     }
-
-    .title-wrapper {
-        position: relative;
-    }
-
-    .title {
-        font-size: clamp(var(--font-size-3xl), 4vw, var(--font-size-5xl));
-        margin: 0;
-        font-weight: 700;
-        letter-spacing: -0.04em;
-        position: relative;
-        display: inline-block;
-        color: var(--text-color);
-        line-height: 1.05;
-    }
-
-    .actions-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .header-btn-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-
+    .title-wrapper,
+    .wordmark,
+    .actions-wrapper,
+    .header-btn-wrapper,
     .switchers-group {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-left: auto;
     }
-
-    .header-btn-wrapper :global(.action-btn) {
-        height: var(--header-control-height);
-        min-height: var(--header-control-height);
-        max-height: var(--header-control-height);
-        box-sizing: border-box;
-    }
-
-    .header-btn-wrapper :global(.search-prompt-button) {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: var(--header-control-height);
-        min-width: var(--header-control-height);
-        padding: 0 !important;
-        line-height: 0;
-    }
-
-    .header-btn-wrapper :global(.search-prompt-button .search-icon) {
-        display: block;
-        width: 16px;
-        height: 16px;
-        margin: 0;
-        flex: 0 0 auto;
-    }
-
-    :global(.switcher-icon) {
-        width: 16px;
-        height: 16px;
-        stroke-width: 2.5;
-    }
-
-    .current-label {
-        letter-spacing: 0.5px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+    .title-wrapper {
+        gap: 24px;
         min-width: 0;
     }
-
-    @media (--tablet) {
-        header {
-            flex-direction: column;
-            align-items: flex-start;
-            padding-bottom: 20px;
-            gap: 20px;
-        }
-
-        .actions-wrapper {
-            width: 100%;
-        }
-
-        .header-btn-wrapper {
-            width: 100%;
-            flex-wrap: wrap;
-            gap: 16px;
-        }
+    .wordmark {
+        gap: 8px;
+        font-weight: 600;
+        font-size: var(--font-size-lg);
     }
-
-    :global(.continue-btn) {
-        padding: 6px 12px !important;
-        font-size: var(--font-size-base) !important;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
+    .wordmark :global(svg) {
+        width: 22px;
+        height: 22px;
     }
-
-    @media (--phone) {
+    .title {
+        margin: 0;
+        font-size: var(--font-size-3xl);
+        font-weight: 500;
+        letter-spacing: -0.025em;
+        line-height: 1.3;
+    }
+    .header-btn-wrapper,
+    .switchers-group {
+        gap: 4px;
+    }
+    .current-label {
+        white-space: nowrap;
+    }
+    @media (--mobile-width) {
         header {
-            --header-control-height: var(--control-height-regular);
-            display: grid;
-            grid-template-columns: minmax(0, 1fr);
-            align-items: start;
-            gap: 12px;
-            padding-bottom: 14px;
+            gap: 8px;
+            padding-bottom: 16px;
+            margin-bottom: 16px;
         }
-
         .title-wrapper {
-            min-width: 0;
-            width: 100%;
+            gap: 12px;
         }
-
         .title {
-            max-width: 100%;
-            font-size: clamp(1.75rem, 11vw, 2.5rem);
-            letter-spacing: -0.03em;
-            overflow-wrap: anywhere;
+            font-size: var(--font-size-2xl);
         }
-
-        .actions-wrapper,
-        .header-btn-wrapper {
-            width: 100%;
-            min-width: 0;
+        .wordmark {
+            font-size: var(--font-size-base);
         }
-
-        .header-btn-wrapper {
-            gap: 6px;
+        .wordmark :global(svg) {
+            display: none;
+        }
+        .current-label {
+            display: none;
+        }
+        .header-btn-wrapper :global(.settings-trigger) {
+            width: 44px;
+            padding: 0;
+        }
+        .header-btn-wrapper:has(:global(.app-update-button)) {
             flex-wrap: wrap;
-        }
-
-        .header-btn-wrapper :global(.app-update-button) {
-            flex: 0 0 100%;
-            width: 100%;
-            max-width: 100%;
-            justify-content: center;
-        }
-
-        .switchers-group {
-            flex: 0 0 auto;
-            gap: 6px;
-        }
-
-        :global(.continue-btn) {
-            width: var(--header-control-height) !important;
-            min-width: var(--header-control-height) !important;
-            padding: 0 !important;
+            justify-content: flex-end;
         }
     }
 </style>

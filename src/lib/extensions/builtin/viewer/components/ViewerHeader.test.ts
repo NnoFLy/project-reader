@@ -12,7 +12,15 @@ describe("ViewerHeader document identity", () => {
     })
 
     it("keeps the document name and close action accessible", () => {
-        expect(headerSource).toContain('<span class="file-name" title={name}>')
+        expect(headerSource).toContain('<h1 class="file-name" title={name}>')
         expect(headerSource).toContain("aria-label={m.close_document()}")
+    })
+
+    it("keeps the scrollable document keyboard reachable", () => {
+        const canvasSource = readFileSync(new URL("./CanvasPane.svelte", import.meta.url), "utf8")
+        const frame = canvasSource.split('class="canvas-frame"')[1].split("bind:this")[0]
+        expect(frame).toContain('role="region"')
+        expect(frame).toContain('tabindex="0"')
+        expect(frame).toContain("aria-label={m.viewer_reading_region()}")
     })
 })

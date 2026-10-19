@@ -601,11 +601,15 @@
         justify-content: flex-end;
         gap: 12px;
     }
-    :global(.confirmation-danger) {
-        --surface-color: var(--danger-color);
-        --surface-hover-color: var(--danger-active-color);
-        --accent-active-color: var(--danger-active-color);
-        --btn-text: var(--danger-text-color);
+    .confirmation-actions :global(.confirmation-danger:not(:disabled)) {
+        background: var(--danger-color);
+        color: var(--danger-text-color);
+    }
+
+    @media (hover: hover) {
+        .confirmation-actions :global(.confirmation-danger:hover:not(:disabled)) {
+            background: var(--danger-active-color);
+        }
     }
 
     .visually-hidden {

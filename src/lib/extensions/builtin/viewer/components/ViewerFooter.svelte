@@ -148,7 +148,7 @@
         min-width: 0;
         flex: 0 1 auto;
         padding-inline: 16px;
-        font-weight: 700;
+        font-weight: 500;
     }
 
     .pagination-indicator {
@@ -166,11 +166,12 @@
     .pagination-indicator :global(.page-input) {
         width: 65px;
         height: 38px;
-        border: var(--border-inline) solid var(--border-color);
-        box-shadow: var(--shadow-inline);
+        border: 1px solid var(--color-control-border);
+        border-radius: var(--radius-sm);
         text-align: center;
-        font-family: var(--ui-mono-font);
-        font-weight: 700;
+        font-family: var(--ui-font);
+        font-variant-numeric: tabular-nums;
+        font-weight: 500;
         background: var(--surface-color);
         color: var(--text-color);
         outline: none;
@@ -180,7 +181,8 @@
     }
 
     .pagination-indicator :global(.page-input:focus-visible) {
-        border-color: var(--accent-color);
+        outline: 2px solid var(--focus-color);
+        outline-offset: 2px;
     }
 
     .pagination-indicator :global(.page-input:disabled) {
@@ -238,7 +240,7 @@
             width: 3rem;
             height: 32px;
             border-width: 1px;
-            border-radius: 0;
+            border-radius: var(--radius-sm);
             box-shadow: none;
             font-size: 1rem;
         }
@@ -261,16 +263,16 @@
 
     .scrubber-container :global(.footer-scrubber) {
         width: 100%;
-        height: 10px;
+        height: 4px;
         appearance: none;
         -webkit-appearance: none;
         background: linear-gradient(
             to right,
-            var(--color-marker) 0 var(--progress),
+            var(--progress-color) 0 var(--progress),
             var(--surface-color) var(--progress) 100%
         );
-        border: var(--border-inline) solid var(--border-color);
-        box-shadow: var(--shadow-inline);
+        border: 0;
+        border-radius: 999px;
         outline: none;
         box-sizing: border-box;
     }
@@ -278,11 +280,11 @@
     .scrubber-container :global(.footer-scrubber::-webkit-slider-thumb) {
         appearance: none;
         -webkit-appearance: none;
-        width: 14px;
-        height: 22px;
-        background: var(--accent-active-color);
-        border: 2px solid var(--border-color);
-        box-shadow: 1px 1px 0 var(--shadow-color);
+        width: 12px;
+        height: 12px;
+        background: var(--progress-color);
+        border: 0;
+        border-radius: 50%;
         cursor: pointer;
         transition: transform 0.1s ease;
     }
@@ -292,13 +294,12 @@
     }
 
     .scrubber-container :global(.footer-scrubber::-moz-range-thumb) {
-        width: 14px;
-        height: 22px;
-        background: var(--accent-active-color);
-        border: 2px solid var(--border-color);
-        box-shadow: 1px 1px 0 var(--shadow-color);
+        width: 12px;
+        height: 12px;
+        background: var(--progress-color);
+        border: 0;
         cursor: pointer;
-        border-radius: 0;
+        border-radius: 50%;
         transition: transform 0.1s ease;
     }
 
@@ -331,8 +332,7 @@
 
     .mobile-progress {
         height: 4px;
-        background: var(--accent-active-color);
-        border-bottom: 2px solid var(--border-color);
+        background: var(--progress-color);
         transition: width 0.1s ease;
         z-index: 11;
         pointer-events: none;

@@ -23,21 +23,19 @@
     :global(.app-update-button) {
         flex: none;
         color: var(--text-color) !important;
-        background: var(--accent-color) !important;
+        background: var(--surface-hover-color) !important;
         white-space: nowrap;
     }
 
     :global(.app-update-button:hover:not(:disabled)) {
-        background: var(--accent-active-color) !important;
+        background: var(--active-color) !important;
     }
 
     .status-dot {
         width: 0.55rem;
         height: 0.55rem;
         background: currentColor;
-        border: 2px solid var(--border-color);
         border-radius: 50%;
-        box-shadow: 1px 1px 0 var(--shadow-color);
     }
 
     @media (--tiny-mobile) {

@@ -393,8 +393,7 @@
 
         .pdf-image-wrapper,
         .placeholder {
-            border-width: 1.5px;
-            box-shadow: 4px 4px 0 var(--shadow-color);
+            border-width: 1px;
         }
     }
 
@@ -413,15 +412,13 @@
         position: absolute;
         top: -12px;
         left: -12px;
-        background: var(--accent-active-color);
-        color: var(--text-color);
-        border: 2.5px solid var(--border-color);
-        box-shadow: 2px 2px 0 var(--shadow-color);
+        background: var(--surface-color);
+        color: var(--faded-text-color);
+        border: 1px solid var(--color-rule);
+        border-radius: var(--radius-sm);
         padding: 4px 10px;
         font-size: var(--font-size-xs);
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
+        font-weight: 500;
         z-index: var(--z-10);
         pointer-events: none;
         transition:

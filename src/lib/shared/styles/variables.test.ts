@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { parse } from "postcss"
 import { describe, expect, it } from "vitest"
 
 const css = readFileSync(new URL("./variables.css", import.meta.url), "utf8")
@@ -73,13 +74,77 @@ const textPairs = [
     ["--color-on-disabled", "--color-disabled"],
 ] as const
 
+const consumerStates = [
+    ["../ui/AppUpdateButton.svelte", ":global(.app-update-button)", ":global(.app-update-button)"],
+    [
+        "../ui/AppUpdateButton.svelte",
+        ":global(.app-update-button)",
+        ":global(.app-update-button:hover:not(:disabled))",
+    ],
+    [
+        "../../extensions/builtin/viewer/components/NotePopup.svelte",
+        ":global(.popup-btn)",
+        ":global(.popup-btn:hover)",
+    ],
+    [
+        "../../extensions/builtin/viewer/components/NoteEditor.svelte",
+        ":global(.editor-btn)",
+        ":global(.editor-btn:hover)",
+    ],
+    [
+        "../../extensions/builtin/viewer/components/BookmarksSidebar.svelte",
+        ".action-btn",
+        ".action-btn:hover",
+    ],
+    [
+        "../../extensions/builtin/viewer/components/NotesSidebar.svelte",
+        ".action-btn",
+        ".action-btn:hover",
+    ],
+] as const
+
+function consumerColor(file: string, selector: string, property: string) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8")
+    const styles = parse(source.split("<style>")[1].split("</style>")[0])
+    let value = ""
+    styles.walkRules((rule) => {
+        if (rule.selector.split(",").some((item) => item.trim() === selector)) {
+            rule.walkDecls(property, (decl) => {
+                value = decl.value
+            })
+        }
+    })
+    return value
+}
+
+function resolveToken(value: string, tokens: Map<string, string>): string {
+    const seen = new Set<string>()
+    while (value.startsWith("var(")) {
+        if (seen.has(value)) throw new Error(`Circular color token: ${value}`)
+        seen.add(value)
+        const token = value.slice(4, -1)
+        const resolved = tokens.get(token)
+        if (!resolved) throw new Error(`Unknown color token: ${token}`)
+        value = resolved
+    }
+    return value
+}
+
 const boundaryPairs = [
     ["--color-control-border", "--color-surface"],
     ["--color-focus", "--color-surface"],
 ] as const
 
 describe.each([":root", ":global(html.dark)"])("%s semantic contrast", (selector) => {
-    const tokens = declarations(selector)
+    const tokens = new Map([...declarations(":root"), ...declarations(selector)])
+
+    it.each(consumerStates)("keeps %s readable in %s / %s", (file, base, state) => {
+        const foreground = consumerColor(file, state, "color") || consumerColor(file, base, "color")
+        const background = consumerColor(file, state, "background")
+        expect(
+            contrast(resolveToken(foreground, tokens), resolveToken(background, tokens)),
+        ).toBeGreaterThanOrEqual(4.5)
+    })
 
     it.each(textPairs)("keeps %s readable on %s", (foreground, background) => {
         expect(contrast(tokens.get(foreground)!, tokens.get(background)!)).toBeGreaterThanOrEqual(
