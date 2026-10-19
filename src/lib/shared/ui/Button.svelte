@@ -146,7 +146,8 @@
         .action-btn:hover:not(:disabled):not(:active):not(.active):not(.open) {
             transform: translate(-1px, -1px);
             background: var(--surface-hover-color);
-            box-shadow: var(--shadow-elevated);
+            /* Counter the 1px lift so the shadow stays anchored. */
+            box-shadow: 3px 3px 0 var(--shadow-color);
         }
 
         .action-btn.square:hover:not(:disabled):not(:active):not(.active):not(.open) {
@@ -250,7 +251,8 @@
         .brutalist-btn:hover:not(:disabled):not(:active):not(.active):not(.open),
         .brutalist-btn:focus-visible:not(:disabled):not(:active):not(.active):not(.open) {
             transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
+            /* Counter the 1px lift so the shadow stays anchored. */
+            box-shadow: 5px 5px 0 var(--shadow-color);
             background: var(--accent-color, var(--surface-hover-color, #faf8f5));
             outline: none;
         }

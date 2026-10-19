@@ -155,31 +155,6 @@
         box-sizing: border-box;
     }
 
-    .header-btn-wrapper :global(.action-btn) {
-        background: var(--surface-color);
-        border: 2px solid var(--border-color);
-        padding: 6px 12px;
-        box-shadow: var(--shadow-inline);
-        transition:
-            background-color 0.12s ease,
-            border-color 0.12s ease,
-            color 0.12s ease,
-            transform 0.12s ease;
-    }
-
-    @media (hover: hover) {
-        .header-btn-wrapper :global(.action-btn:hover) {
-            transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
-            background: var(--surface-hover-color);
-        }
-    }
-
-    .header-btn-wrapper :global(.action-btn:active) {
-        transform: translate(1px, 1px);
-        box-shadow: 0 0 0 var(--shadow-color);
-    }
-
     .header-btn-wrapper :global(.search-prompt-button) {
         position: relative;
         display: inline-flex;

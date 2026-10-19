@@ -2,6 +2,7 @@
     import PlusIcon from "$lib/shared/icons/PlusIcon.svelte"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
+    import Button from "$lib/shared/ui/Button.svelte"
     import * as m from "$lib/paraglide/messages"
     import { vfsStore } from "../state/libraryStore.svelte"
     import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
@@ -142,7 +143,8 @@
 </script>
 
 {#if variant === "action"}
-    <button
+    <Button
+        variant="brutalist"
         type="button"
         class={`import-action ${className}`}
         disabled={isImporting}
@@ -158,7 +160,7 @@
             <PlusIcon />
             <span>{m.import_file()}</span>
         {/if}
-    </button>
+    </Button>
 {:else if variant === "card"}
     <button
         type="button"
@@ -233,9 +235,10 @@
                     <p>{m.files_stay_local()}</p>
                     <p class="drag-hint">{m.drag_drop_hint()}</p>
                 </div>
-                <button
+                <Button
+                    variant="brutalist"
                     type="button"
-                    class="btn upload-btn"
+                    class="upload-btn"
                     disabled={isImporting}
                     onclick={(event) => {
                         event.stopPropagation()
@@ -252,7 +255,7 @@
                     {:else}
                         {m.choose_file()}
                     {/if}
-                </button>
+                </Button>
             </div>
         </div>
     </div>
@@ -269,53 +272,27 @@
 />
 
 <style>
-    .import-action {
+    :global(.button.brutalist-btn.import-action) {
         min-height: var(--control-height-regular);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        padding: 8px 16px;
-        border: var(--border-elevated) solid var(--border-color);
         background: var(--primary-color);
         color: var(--primary-text-color);
-        box-shadow: var(--shadow-elevated);
         font-family: var(--ui-font);
         font-size: var(--font-size-base);
         font-weight: 800;
-        cursor: pointer;
-        transition:
-            transform 140ms cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 140ms cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     @media (hover: hover) and (pointer: fine) {
-        .import-action:hover:not(:disabled):not(:active) {
-            transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
-        }
-
-        .import-action:hover:not(:disabled):not(:active) :global(svg) {
+        :global(.import-action:hover:not(:disabled):not(:active) svg) {
             transform: translateY(-1px) rotate(8deg);
         }
     }
 
-    .import-action:active:not(:disabled) {
-        transform: translate(2px, 2px);
-        box-shadow: 1px 1px 0 var(--shadow-color);
-    }
-
-    .import-action:focus-visible {
-        outline: none;
-        box-shadow: var(--shadow-elevated), var(--focus-ring);
-    }
-
-    .import-action:disabled {
+    :global(.button.import-action:disabled) {
         cursor: wait;
         opacity: 0.7;
     }
 
-    .import-action :global(svg) {
+    :global(.import-action svg) {
         width: 18px;
         height: 18px;
         transition: transform 140ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -331,51 +308,6 @@
             background-color 0.12s ease,
             border-color 0.12s ease;
         overflow: hidden;
-    }
-
-    /* Neo-brutalist button style */
-    .btn {
-        background: var(--surface-color);
-        border: 2px solid var(--border-color);
-        font-family: inherit;
-        font-size: var(--font-size-md);
-        font-weight: 800;
-        text-transform: uppercase;
-        color: var(--text-color);
-        padding: 8px 16px;
-        cursor: pointer;
-        box-shadow: var(--shadow-elevated);
-        transition:
-            background-color 0.1s ease,
-            border-color 0.1s ease,
-            box-shadow 0.1s ease,
-            color 0.1s ease,
-            transform 0.1s ease;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        user-select: none;
-    }
-
-    @media (hover: hover) {
-        .btn:hover:not(:disabled) {
-            transform: translate(-1px, -1px);
-            box-shadow: 4px 4px 0 var(--shadow-color);
-            background: var(--surface-hover-color);
-        }
-    }
-
-    .btn:active:not(:disabled) {
-        transform: translate(2px, 2px);
-        box-shadow: 1px 1px 0 var(--shadow-color);
-    }
-
-    .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        box-shadow: 1px 1px 0 var(--shadow-color);
-        transform: translate(1px, 1px);
     }
 
     /* Upload Screen */
@@ -433,7 +365,11 @@
         font-weight: bold;
     }
 
-    .upload-btn {
+    .dashed-border :global(.upload-btn) {
+        font-size: var(--font-size-md);
+        font-weight: 800;
+        text-transform: uppercase;
+        gap: 6px;
         margin-top: 0;
         background: var(--primary-color);
         grid-area: action;
@@ -442,7 +378,7 @@
     }
 
     @media (hover: hover) {
-        .upload-btn:hover {
+        .dashed-border :global(.upload-btn:hover:not(:disabled)) {
             background: var(--primary-color);
             opacity: 0.9;
         }
@@ -481,14 +417,14 @@
     @media (hover: hover) {
         .card:hover:not(:disabled) {
             transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
+            box-shadow: 5px 5px 0 var(--shadow-color);
             background-color: var(--surface-hover-color);
         }
     }
 
     .card:focus-visible:not(:disabled) {
         transform: translate(-1px, -1px);
-        box-shadow: var(--shadow-elevated);
+        box-shadow: 5px 5px 0 var(--shadow-color);
         background-color: var(--surface-hover-color);
         outline: none;
     }
@@ -632,14 +568,14 @@
         background-color: var(--surface-hover-color);
         border-color: var(--primary-color);
         transform: translate(-1px, -1px);
-        box-shadow: var(--shadow-elevated);
+        box-shadow: 5px 5px 0 var(--shadow-color);
     }
 
     .reader-card.drag-active {
         border-color: var(--primary-color);
         background-color: var(--surface-hover-color);
         transform: translate(-1px, -1px);
-        box-shadow: var(--shadow-elevated);
+        box-shadow: 5px 5px 0 var(--shadow-color);
     }
 
     .reader-card.drag-active .dashed-border {

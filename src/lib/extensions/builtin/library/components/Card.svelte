@@ -547,13 +547,13 @@
     @media (hover: hover) {
         .card:hover:not(.is-placeholder) {
             transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
+            box-shadow: 5px 5px 0 var(--shadow-color);
             background-color: var(--surface-hover-color);
         }
 
         .card.is-selected:hover:not(.is-placeholder) {
             box-shadow:
-                var(--shadow-elevated),
+                5px 5px 0 var(--shadow-color),
                 0 0 0 1px var(--selection-color);
         }
     }

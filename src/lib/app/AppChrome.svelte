@@ -148,7 +148,8 @@
         ready ? hostContext.application.host.contributions.listViews("host.status") : [],
     )
     let contextualStatus = $state<ContextualStatus | null>(null)
-    const contextualStatusPublishers = new SvelteMap<
+    // Publisher lookup happens during prop evaluation; this cache must not be reactive.
+    const contextualStatusPublishers = new Map<
         string,
         ReturnType<typeof hostContext.application.host.contextualStatus.forExtension>
     >()

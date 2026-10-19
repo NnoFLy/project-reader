@@ -79,14 +79,14 @@
     @media (hover: hover) {
         .card:hover {
             transform: translate(-1px, -1px);
-            box-shadow: var(--shadow-elevated);
+            box-shadow: 5px 5px 0 var(--shadow-color);
             background-color: var(--surface-hover-color);
         }
     }
 
     .card:focus-visible {
         transform: translate(-1px, -1px);
-        box-shadow: var(--shadow-elevated);
+        box-shadow: 5px 5px 0 var(--shadow-color);
         background-color: var(--surface-hover-color);
         outline: none;
     }
