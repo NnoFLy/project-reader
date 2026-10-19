@@ -206,31 +206,33 @@
     {header}
 >
     {#if side === "left" && activeTab !== "settings"}
-        <Slider
-            enabled={!modalManager.hasBlockingModal &&
-                !notesStore.editingNote &&
-                !notesStore.activePopup}
-            resolveMove={resolveSwipeTab}
-            ariaLabel={panelLabel}
-        >
-            {#snippet previous()}
-                {@const destination = getSwipeDestination("previous")}
-                {#if destination}
-                    {@render sidebarPanel(destination.id, false)}
-                {/if}
-            {/snippet}
+        {#key activeTab}
+            <Slider
+                enabled={!modalManager.hasBlockingModal &&
+                    !notesStore.editingNote &&
+                    !notesStore.activePopup}
+                resolveMove={resolveSwipeTab}
+                ariaLabel={panelLabel}
+            >
+                {#snippet previous()}
+                    {@const destination = getSwipeDestination("previous")}
+                    {#if destination}
+                        {@render sidebarPanel(destination.id, false)}
+                    {/if}
+                {/snippet}
 
-            {#snippet current()}
-                {@render sidebarPanel(activeTab, true)}
-            {/snippet}
+                {#snippet current()}
+                    {@render sidebarPanel(activeTab, true)}
+                {/snippet}
 
-            {#snippet next()}
-                {@const destination = getSwipeDestination("next")}
-                {#if destination}
-                    {@render sidebarPanel(destination.id, false)}
-                {/if}
-            {/snippet}
-        </Slider>
+                {#snippet next()}
+                    {@const destination = getSwipeDestination("next")}
+                    {#if destination}
+                        {@render sidebarPanel(destination.id, false)}
+                    {/if}
+                {/snippet}
+            </Slider>
+        {/key}
     {:else}
         <SettingsSidebar />
     {/if}
