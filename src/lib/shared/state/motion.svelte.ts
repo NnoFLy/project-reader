@@ -1,40 +1,11 @@
 import { browser } from "$app/environment"
 
+// The system preference supplies the default, not an override of the app setting.
+export const DEFAULT_ANIMATIONS =
+    !browser || !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+
 class MotionPreferences {
-    private requested = $state(true)
-    private reduced = $state(false)
-    private query: MediaQueryList | null = null
-
-    constructor() {
-        if (!browser) return
-        this.query = window.matchMedia("(prefers-reduced-motion: reduce)")
-        this.reduced = this.query.matches
-        this.query.addEventListener("change", this.handleChange)
-    }
-
-    private readonly handleChange = (event: MediaQueryListEvent) => {
-        this.reduced = event.matches
-    }
-
-    get enabled() {
-        return this.requested && !this.reduced
-    }
-
-    get prefersReducedMotion() {
-        return this.reduced
-    }
-
-    set enabled(value: boolean) {
-        this.requested = value
-    }
-
-    dispose() {
-        this.query?.removeEventListener("change", this.handleChange)
-    }
+    enabled = $state(DEFAULT_ANIMATIONS)
 }
 
 export const motionPreferences = new MotionPreferences()
-
-if (import.meta.hot) {
-    import.meta.hot.dispose(() => motionPreferences.dispose())
-}

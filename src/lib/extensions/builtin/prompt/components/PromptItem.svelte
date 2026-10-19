@@ -250,11 +250,4 @@
             display: none;
         }
     }
-
-    @media (prefers-reduced-motion: reduce) {
-        .result-item,
-        .option-mark {
-            transition: none;
-        }
-    }
 </style>

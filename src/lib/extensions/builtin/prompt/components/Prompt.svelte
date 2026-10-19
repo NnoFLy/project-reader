@@ -489,11 +489,4 @@
             display: none;
         }
     }
-
-    @media (prefers-reduced-motion: reduce) {
-        .input-wrapper.loading::after,
-        .loading-mark {
-            animation: none;
-        }
-    }
 </style>

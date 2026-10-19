@@ -215,10 +215,4 @@
             opacity: 0.5;
         }
     }
-
-    @media (prefers-reduced-motion: reduce) {
-        .sidebar-backdrop {
-            animation: none;
-        }
-    }
 </style>

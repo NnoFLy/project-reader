@@ -1,6 +1,7 @@
 import { SvelteMap } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import { untrack } from "svelte"
+import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
 import {
     isViewerLibraryCapabilityInstalled,
     getViewerLibraryCapability,
@@ -28,27 +29,105 @@ export interface PopupState {
     y: number
 }
 
+export type NoteEditorState =
+    | UserNote
+    | {
+          isNew: true
+          bookId: string
+          pageNumber: number
+          start: number
+          end: number
+          text: string
+          color: UserNote["color"]
+          noteContent: string
+      }
+
+export interface NoteEditorSession {
+    id: string
+    note: NoteEditorState
+    saving: boolean
+}
+
 class NotesStore {
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     notes = $state<UserNote[]>([])
     activePopup = $state<PopupState | null>(null)
     activeSelection = $state<SelectionState | null>(null)
-    editingNote = $state<
-        | UserNote
-        | {
-              isNew: true
-              bookId: string
-              pageNumber: number
-              start: number
-              end: number
-              text: string
-              color: "yellow" | "green" | "blue" | "pink" | "purple"
-              noteContent: string
-          }
-        | null
-    >(null)
-    editorCoords = $state<{ x: number; y: number } | null>(null)
+    editors = $state<NoteEditorSession[]>([])
+    activeEditorId = $state<string | null>(null)
+
+    get editingNote(): NoteEditorState | null {
+        return this.editors.find(({ id }) => id === this.activeEditorId)?.note ?? null
+    }
+
+    openEditor(note: NoteEditorState): string {
+        const existing = this.editors.find(({ note: candidate }) => {
+            if ("id" in note) return "id" in candidate && candidate.id === note.id
+            return (
+                "isNew" in candidate &&
+                candidate.bookId === note.bookId &&
+                candidate.pageNumber === note.pageNumber &&
+                candidate.start === note.start &&
+                candidate.end === note.end
+            )
+        })
+        if (existing) {
+            this.activateEditor(existing.id)
+            modalManager.focus(existing.id)
+            return existing.id
+        }
+        const id = `note-editor-${crypto.randomUUID()}`
+        this.editors.push({ id, note, saving: false })
+        this.activateEditor(id)
+        return id
+    }
+
+    activateEditor(id: string): void {
+        if (!this.editors.some((editor) => editor.id === id)) return
+        this.activeEditorId = id
+        this.queueHighlightUpdate()
+    }
+
+    updateEditor(id: string, change: { noteContent: string; color: UserNote["color"] }): void {
+        const editor = this.editors.find((editor) => editor.id === id)
+        if (!editor || editor.saving) return
+        if ("isNew" in editor.note) editor.note = { ...editor.note, ...change }
+        else this.updateNoteDraft(editor.note.id, change.noteContent, change.color)
+    }
+
+    async saveEditor(id = this.activeEditorId): Promise<void> {
+        const editor = this.editors.find((editor) => editor.id === id)
+        if (!editor || editor.saving) return
+        editor.saving = true
+        try {
+            const note = editor.note
+            if ("isNew" in note) {
+                const saved = await this.addNote(
+                    note.bookId,
+                    note.pageNumber,
+                    note.start,
+                    note.end,
+                    note.text,
+                    note.noteContent,
+                    note.color,
+                )
+                if (!saved) return
+            } else {
+                await this.flushNoteUpdate(note.id)
+            }
+            this.removeEditor(editor.id)
+        } finally {
+            editor.saving = false
+        }
+    }
+
+    private removeEditor(id: string): void {
+        this.editors = this.editors.filter((editor) => editor.id !== id)
+        if (this.activeEditorId === id) this.activeEditorId = this.editors.at(-1)?.id ?? null
+        this.queueHighlightUpdate()
+    }
+
     scrollingToNoteId = $state<string | null>(null)
 
     private pageRanges = new SvelteMap<number, { noteId: string; range: Range; color: string }[]>()
@@ -110,8 +189,8 @@ class NotesStore {
         this.notes = []
         this.activePopup = null
         this.activeSelection = null
-        this.editingNote = null
-        this.editorCoords = null
+        this.editors = []
+        this.activeEditorId = null
         this.scrollingToNoteId = null
         this.pageRanges.clear()
         this.clearCSSHighlights()
@@ -139,9 +218,8 @@ class NotesStore {
         this.notes = this.notes.filter((note) => note.bookId !== bookId)
         if (this.activePopup?.note.bookId === bookId) this.activePopup = null
         if (this.activeSelection?.bookId === bookId) this.activeSelection = null
-        if (this.editingNote?.bookId === bookId) {
-            this.editingNote = null
-            this.editorCoords = null
+        for (const editor of this.editors.filter(({ note }) => note.bookId === bookId)) {
+            this.removeEditor(editor.id)
         }
         if (this.scrollingToNoteId && deletedNoteIds.has(this.scrollingToNoteId)) {
             this.scrollingToNoteId = null
@@ -158,8 +236,8 @@ class NotesStore {
         if (this.notes.some((note) => note.bookId !== bookId)) this.notes = []
         this.activePopup = null
         this.activeSelection = null
-        this.editingNote = null
-        this.editorCoords = null
+        this.editors = []
+        this.activeEditorId = null
         this.scrollingToNoteId = null
         this.pageRanges.clear()
         this.clearCSSHighlights()
@@ -167,8 +245,7 @@ class NotesStore {
 
     async loadNotesForBook(bookId: string) {
         if (!browser || this.disposed || this.files.isDisposed) return
-        // Remove the previous book's notes and highlights before waiting on storage. A
-        // reload of the same book keeps its in-flight editing target available.
+        // Clear the previous view's editors and highlights before waiting on storage.
         const generation = ++this.loadGeneration
         this.clearStaleVisualState(bookId)
         const lifecycleEpoch = this.lifecycleEpoch
@@ -185,8 +262,8 @@ class NotesStore {
             this.notes = loaded.sort((a, b) => a.createdAt - b.createdAt)
             this.activePopup = null
             this.activeSelection = null
-            this.editingNote = null
-            this.editorCoords = null
+            this.editors = []
+            this.activeEditorId = null
             this.pageRanges.clear()
             this.updateCSSHighlights()
         } catch (error) {
@@ -276,10 +353,6 @@ class NotesStore {
             }
             this.notes.push(note)
             this.notes = [...this.notes] // force reactivity update
-            this.activePopup = null
-            this.activeSelection = null
-            this.editingNote = null
-            this.editorCoords = null
             // Trigger highlight refresh
             this.queueHighlightUpdate()
             return note
@@ -307,8 +380,8 @@ class NotesStore {
         this.invalidateBookLoad(updated.bookId)
         this.notes[idx] = updated
         this.notes = [...this.notes]
-        if (this.editingNote && "id" in this.editingNote && this.editingNote.id === id) {
-            this.editingNote = updated
+        for (const editor of this.editors) {
+            if ("id" in editor.note && editor.note.id === id) editor.note = updated
         }
         if (this.activePopup?.note.id === id) {
             this.activePopup = { ...this.activePopup, note: updated }
@@ -393,11 +466,11 @@ class NotesStore {
         await this.flushNoteUpdate(id)
     }
 
-    async closeEditor(): Promise<void> {
-        const editingNote = this.editingNote
-        this.editingNote = null
-        this.editorCoords = null
-        if (editingNote && "id" in editingNote) await this.flushNoteUpdate(editingNote.id)
+    async closeEditor(id = this.activeEditorId): Promise<void> {
+        const editor = this.editors.find((editor) => editor.id === id)
+        if (!editor || editor.saving) return
+        this.removeEditor(editor.id)
+        if ("id" in editor.note) await this.flushNoteUpdate(editor.note.id)
     }
 
     private clearFailedNoteDeletion(id: string, generation: number) {
@@ -453,9 +526,10 @@ class NotesStore {
             if (this.activePopup?.note.id === id) {
                 this.activePopup = null
             }
-            if (this.editingNote && "id" in this.editingNote && this.editingNote.id === id) {
-                this.editingNote = null
-                this.editorCoords = null
+            for (const editor of this.editors.filter(
+                ({ note }) => "id" in note && note.id === id,
+            )) {
+                this.removeEditor(editor.id)
             }
             this.queueHighlightUpdate()
         } catch (error) {
@@ -483,8 +557,8 @@ class NotesStore {
         this.notes = []
         this.activePopup = null
         this.activeSelection = null
-        this.editingNote = null
-        this.editorCoords = null
+        this.editors = []
+        this.activeEditorId = null
         this.pageRanges.clear()
         this.clearCSSHighlights()
     }

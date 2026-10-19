@@ -36,8 +36,11 @@
         type ScrollAnchor,
     } from "../utils/scrollAnchor"
     import { getBitmapPageScale, getBitmapWrapperStyle } from "./pageBitmapGeometry"
+    import { createKeyboardScroller } from "../utils/keyboardScroll"
 
+    const PAGE_SCROLL_DURATION_MS = 500
     const AUTO_SCROLL_TIMEOUT_MS = 800
+    const pageScroller = createKeyboardScroller()
 
     let {
         isPageLoading = false,
@@ -382,6 +385,8 @@
     }
 
     onDestroy(() => {
+        pageScroller.cancel()
+        if (autoScrollTimeout) clearTimeout(autoScrollTimeout)
         if (scrollEndTimeout) clearTimeout(scrollEndTimeout)
         if (rafId !== null) cancelAnimationFrame(rafId)
         if (zoomRestoreRaf !== null) cancelAnimationFrame(zoomRestoreRaf)
@@ -459,7 +464,11 @@
 
         const target = e.target as HTMLElement
 
-        if (isAutoScrolling) return
+        if (isAutoScrolling) {
+            // Keep virtualized pages visible during animated page navigation.
+            scrollTop = target.scrollTop
+            return
+        }
 
         // Throttle updates using requestAnimationFrame for smoother performance
         if (rafId === null) {
@@ -698,7 +707,10 @@
     })
 
     $effect(() => {
-        if (layoutMode !== "scroll") return
+        if (layoutMode !== "scroll") {
+            pageScroller.cancel()
+            return
+        }
         const targetPage = currentPage
         const offsets = pageOffsets
 
@@ -707,15 +719,20 @@
             if (pendingZoomAnchor || targetPage === lastObservedPage) return
 
             const targetOffset = offsets[targetPage - 1]
-            const behavior = settingsStore.animations && lastObservedPage !== -1 ? "smooth" : "auto"
+            const animate = settingsStore.animations && lastObservedPage !== -1
 
             isAutoScrolling = true
-            container.scrollTo({ top: targetOffset, behavior })
-            scrollTop = targetOffset
+            pageScroller.scrollBy(
+                container,
+                targetOffset - container.scrollTop,
+                animate,
+                PAGE_SCROLL_DURATION_MS,
+            )
+            scrollTop = container.scrollTop
             lastObservedPage = targetPage
 
             if (autoScrollTimeout) clearTimeout(autoScrollTimeout)
-            if (behavior === "smooth") {
+            if (animate) {
                 autoScrollTimeout = setTimeout(() => {
                     isAutoScrolling = false
                     syncScrollStateFallback()
@@ -1295,6 +1312,8 @@
         bind:clientWidth={() => containerWidth, updateContainerWidth}
         onscroll={handleScroll}
         onscrollend={() => {
+            // Each instant frame write can emit scrollend before the page animation has finished.
+            if (pageScroller.isScrolling) return
             if (isAutoScrolling) {
                 isAutoScrolling = false
                 if (autoScrollTimeout) clearTimeout(autoScrollTimeout)
@@ -1537,12 +1556,6 @@
             rgba(0, 0, 0, 0.05) 70%,
             rgba(0, 0, 0, 0) 100%
         );
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        .canvas-pane.animations-enabled .pdf-image-wrapper {
-            transition: none;
-        }
     }
 
     :global(html.dark) .book-spine {

@@ -37,11 +37,13 @@ lint: ## Check formatting and lint the project
 format: ## Format the project
 	$(PNPM) format
 
+build-preview: build preview
+
 build: ## Build the production bundle
 	$(PNPM) build
 
 preview: ## Preview the production bundle locally
-	$(PNPM) preview
+	$(PNPM) preview --host
 
 quality: test check build lint ## Run the local CI quality checks
 

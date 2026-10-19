@@ -10,10 +10,18 @@
     type NoteColor = "yellow" | "green" | "blue" | "pink" | "purple"
 
     let {
+        editorId,
         editorState,
+        saving,
+        onActivate,
         onChange,
+        onSave,
         onCancel,
     }: {
+        editorId: string
+        saving: boolean
+        onActivate: () => void
+        onSave: () => void | Promise<void>
         editorState: {
             id?: string
             pageNumber: number
@@ -28,7 +36,7 @@
     let isExistingNote = $derived(editorState.id !== undefined)
     let closeLabel = $derived(isExistingNote ? m.close() : m.cancel())
 
-    const activeNodeBeforeOpen = commandsStore.activeScope ?? commandsStore.root
+    let closeButtonId = $derived(`${editorId}-close`)
 
     const modalCommands = defineCommands({
         "modal.cancel": {
@@ -46,15 +54,10 @@
             category: "commands",
             keymap: "ctrl+enter",
             allowInInputs: true,
-            run: async (payload) => {
-                await activeNodeBeforeOpen.execute("viewer.note.save", payload)
-            },
+            run: () => onSave(),
         },
     })
-    const editorCommandsNode = useModalCommands(
-        [modalCommands["modal.cancel"], modalCommands["viewer.note.save"]],
-        activeNodeBeforeOpen,
-    )
+    const editorCommandsNode = useModalCommands(Object.values(modalCommands))
 </script>
 
 {#snippet header()}
@@ -63,7 +66,8 @@
         <div class="header-actions">
             <span class="editor-page">{m.page()} {editorState.pageNumber}</span>
             <Button
-                id="note-editor-close"
+                id={closeButtonId}
+                disabled={saving}
                 variant="close"
                 square
                 onclick={() => void editorCommandsNode.execute("modal.cancel")}
@@ -77,6 +81,12 @@
 {/snippet}
 
 <Modal
+    id={editorId}
+    onActivate={() => {
+        onActivate()
+        commandsStore.activate(editorCommandsNode)
+    }}
+    onDeactivate={() => commandsStore.deactivate(editorCommandsNode)}
     variant="default"
     type="float"
     size="medium"
@@ -85,7 +95,7 @@
     onClose={() => void editorCommandsNode.execute("modal.cancel")}
     {header}
     showCloseButton={false}
-    initialFocus={() => document.getElementById("note-editor-close")}
+    initialFocus={() => document.getElementById(closeButtonId)}
     draggable
 >
     <div class="editor-body">
@@ -94,6 +104,8 @@
         </blockquote>
 
         <textarea
+            disabled={saving}
+            aria-label={m.note_placeholder()}
             class="editor-textarea"
             placeholder={m.note_placeholder()}
             value={editorState.noteContent}
@@ -118,6 +130,7 @@
                               : m.select_color_purple()}
                 <Button
                     variant="none"
+                    disabled={saving}
                     class={`color-swatch swatch-${color} ${editorState.color === color ? "selected" : ""}`}
                     onclick={() =>
                         onChange({
@@ -137,6 +150,7 @@
                 <Button
                     variant="close"
                     class="editor-btn cancel"
+                    disabled={saving}
                     onclick={() => void editorCommandsNode.execute("modal.cancel")}
                     aria-label={m.cancel()}
                     tooltip={`${m.cancel()}${getShortcutHint(editorCommandsNode, "modal.cancel")}`}
@@ -147,6 +161,7 @@
             <Button
                 variant="none"
                 class="editor-btn save"
+                disabled={saving}
                 onclick={() => void editorCommandsNode.execute("viewer.note.save")}
                 aria-label={isExistingNote ? m.close() : m.save()}
                 tooltip={`${isExistingNote ? m.close() : m.save()}${getShortcutHint(editorCommandsNode, "viewer.note.save")}`}

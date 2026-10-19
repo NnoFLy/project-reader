@@ -209,7 +209,6 @@
             presentation,
             enabled: shouldEnableModalPresentationMotion({
                 appMotionEnabled: motionPreferences.enabled,
-                prefersReducedMotion: motionPreferences.prefersReducedMotion,
                 movementCritical,
             }),
         }}

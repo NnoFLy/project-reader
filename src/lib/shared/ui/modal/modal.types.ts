@@ -41,6 +41,8 @@ type CommonModalProps = AccessibleName &
         sidebar?: Snippet
         footer?: Snippet
         initialFocus?: ModalInitialFocus
+        onActivate?: () => void
+        onDeactivate?: () => void
         onClose: (reason: ModalCloseReason) => void
     }
 

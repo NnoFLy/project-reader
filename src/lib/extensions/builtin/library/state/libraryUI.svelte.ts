@@ -1,4 +1,5 @@
 import { createContext } from "svelte"
+import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
 import type { StorageNamespace } from "$lib/extension-api"
 
 export const LIBRARY_CARD_SIZE_LEVELS = [9, 11, 13, 15] as const
@@ -35,10 +36,21 @@ export class LibraryUIController {
     isDeleteModalOpen = $state(false)
     nodesToDeleteIds = $state<string[]>([])
     nodeToMoveId = $state<string | null>(null)
-    isEditMetadataModalOpen = $state(false)
-    nodeToEditMetadataId = $state<string | null>(null)
+    metadataEditorNodeIds = $state<string[]>([])
     isRenameFolderModalOpen = $state(false)
     folderToRenameId = $state<string | null>(null)
+
+    openMetadataEditor(nodeId: string): void {
+        if (this.metadataEditorNodeIds.includes(nodeId)) {
+            modalManager.focus(`library-metadata-${nodeId}`)
+            return
+        }
+        this.metadataEditorNodeIds.push(nodeId)
+    }
+
+    closeMetadataEditor(nodeId: string): void {
+        this.metadataEditorNodeIds = this.metadataEditorNodeIds.filter((id) => id !== nodeId)
+    }
 
     get cardSizeLevel(): number {
         return this.#cardSizeLevel
@@ -87,8 +99,7 @@ export class LibraryUIController {
         this.isDeleteModalOpen = false
         this.nodesToDeleteIds = []
         this.nodeToMoveId = null
-        this.isEditMetadataModalOpen = false
-        this.nodeToEditMetadataId = null
+        this.metadataEditorNodeIds = []
         this.isRenameFolderModalOpen = false
         this.folderToRenameId = null
     }

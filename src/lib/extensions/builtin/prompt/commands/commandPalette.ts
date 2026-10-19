@@ -50,42 +50,42 @@ export async function openCommandPalette(
         commandsStore.root,
     initialQuery?: string,
 ): Promise<void> {
-    const commands = isCoreRegistry(source) ? undefined : source.listPaletteCommands()
-    const commandItems: PromptItem<PaletteChoice>[] = (
-        commands
-            ? commands.map((command) => {
-                  const keymap = Array.isArray(command.keymap)
-                      ? command.keymap.map(formatKeyString)
-                      : command.keymap
-                        ? formatKeyString(command.keymap)
-                        : undefined
-                  const choice: PaletteChoice = {
-                      id: command.id,
-                      label: command.label,
-                      englishLabel: command.englishLabel,
-                      description: command.subtitle,
-                      category: command.category,
-                      keymap,
-                      execute: async () => {
-                          await command.execute()
-                      },
-                  }
-                  return {
-                      ...choice,
-                      presentation: { kind: command.category },
-                      value: choice,
-                  }
-              })
-            : corePaletteCommands(source as PromptCommandRegistry).map((choice) => ({
-                  ...choice,
-                  presentation: { kind: choice.category },
-                  value: choice,
-              }))
-    ) as PromptItem<PaletteChoice>[]
-
+    const registry = isCoreRegistry(source) ? source : getPromptCommandRegistry()
     const scope = isCoreRegistry(source)
         ? (commandsStore.activeScope ?? commandsStore.root)
         : source
+    const commands = scope.listPaletteCommands()
+    // Scoped definitions own visibility as well as execution, including palette: false.
+    const scopedIds = new Set(scope.listActive().map(({ id }) => id))
+    const scopedChoices: PaletteChoice[] = commands.map((command) => {
+        let keymap: PaletteChoice["keymap"]
+        if (Array.isArray(command.keymap)) {
+            keymap = command.keymap.map(formatKeyString)
+        } else if (command.keymap) {
+            keymap = formatKeyString(command.keymap)
+        }
+        return {
+            id: command.id,
+            label: command.label,
+            englishLabel: command.englishLabel,
+            description: command.subtitle,
+            category: command.category,
+            keymap,
+            execute: async () => {
+                await command.execute()
+            },
+        }
+    })
+    const registryChoices = registry
+        ? corePaletteCommands(registry).filter(({ id }) => !scopedIds.has(id))
+        : []
+    const commandItems: PromptItem<PaletteChoice>[] = [...scopedChoices, ...registryChoices].map(
+        (choice) => ({
+            ...choice,
+            presentation: { kind: choice.category },
+            value: choice,
+        }),
+    )
     const parsePageChoice = (query: string): PaletteChoice | undefined => {
         const pageNumber = Number(query.trim())
         if (!Number.isInteger(pageNumber) || pageNumber < 1) return undefined
@@ -130,8 +130,7 @@ export async function openCommandPalette(
         if (promptStore.snapshot?.request === request) promptStore.close()
     }
     const stopWatchingScope = scope?.onDestroy(closeIfCurrent) ?? (() => undefined)
-    const stopWatchingCommands =
-        commands?.map((command) => command.onUnavailable(closeIfCurrent)) ?? []
+    const stopWatchingCommands = commands.map((command) => command.onUnavailable(closeIfCurrent))
     try {
         await promptStore.open(request)
     } finally {

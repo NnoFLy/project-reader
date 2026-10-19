@@ -58,8 +58,7 @@
         onEdit={() => {
             const popup = notesStore.activePopup
             if (!popup) return
-            notesStore.editingNote = popup.note
-            notesStore.editorCoords = { x: popup.x, y: popup.y }
+            notesStore.openEditor(popup.note)
             notesStore.activePopup = null
         }}
         onDelete={() => {
@@ -71,21 +70,17 @@
     />
 {/if}
 
-{#if notesStore.editingNote}
+{#each notesStore.editors as editor (editor.id)}
     <NoteEditor
-        editorState={notesStore.editingNote}
-        onChange={({ noteContent, color }) => {
-            const editingNote = notesStore.editingNote
-            if (!editingNote) return
-            if ("isNew" in editingNote) {
-                notesStore.editingNote = { ...editingNote, noteContent, color }
-            } else {
-                notesStore.updateNoteDraft(editingNote.id, noteContent, color)
-            }
-        }}
-        onCancel={() => void notesStore.closeEditor()}
+        editorId={editor.id}
+        editorState={editor.note}
+        saving={editor.saving}
+        onActivate={() => notesStore.activateEditor(editor.id)}
+        onChange={(change) => notesStore.updateEditor(editor.id, change)}
+        onSave={() => notesStore.saveEditor(editor.id)}
+        onCancel={() => void notesStore.closeEditor(editor.id)}
     />
-{/if}
+{/each}
 
 {#if viewerUIStore.noteToDeleteId}
     <DeleteConfirmModal

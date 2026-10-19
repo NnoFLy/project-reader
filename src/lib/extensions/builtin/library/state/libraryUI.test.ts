@@ -14,8 +14,7 @@ describe("LibraryUIController", () => {
         state.isDeleteModalOpen = true
         state.nodesToDeleteIds = ["one"]
         state.nodeToMoveId = "two"
-        state.isEditMetadataModalOpen = true
-        state.nodeToEditMetadataId = "three"
+        state.openMetadataEditor("three")
         state.isRenameFolderModalOpen = true
         state.folderToRenameId = "folder"
 
@@ -27,10 +26,20 @@ describe("LibraryUIController", () => {
         expect(state.isDeleteModalOpen).toBe(false)
         expect(state.nodesToDeleteIds).toEqual([])
         expect(state.nodeToMoveId).toBeNull()
-        expect(state.isEditMetadataModalOpen).toBe(false)
-        expect(state.nodeToEditMetadataId).toBeNull()
+        expect(state.metadataEditorNodeIds).toEqual([])
         expect(state.isRenameFolderModalOpen).toBe(false)
         expect(state.folderToRenameId).toBeNull()
+    })
+
+    it("opens independent metadata editors and deduplicates the same book", () => {
+        const state = new LibraryUIController()
+        state.openMetadataEditor("one")
+        state.openMetadataEditor("two")
+        state.openMetadataEditor("one")
+        expect(state.metadataEditorNodeIds).toEqual(["one", "two"])
+
+        state.closeMetadataEditor("one")
+        expect(state.metadataEditorNodeIds).toEqual(["two"])
     })
 
     it("bounds card sizes", () => {

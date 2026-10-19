@@ -489,8 +489,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
             run: async (payload) => {
                 if (!payload?.nodeId) return
                 if (payload.name === undefined || payload.pageNumber === undefined) {
-                    libraryUI.nodeToEditMetadataId = payload.nodeId
-                    libraryUI.isEditMetadataModalOpen = true
+                    libraryUI.openMetadataEditor(payload.nodeId)
                     return
                 }
                 const node = vfsStore.nodes[payload.nodeId]
@@ -508,7 +507,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                     false,
                     contentGeneration,
                 )
-                libraryUI.isEditMetadataModalOpen = false
+                libraryUI.closeMetadataEditor(payload.nodeId)
             },
         },
         "library.node.relink": {

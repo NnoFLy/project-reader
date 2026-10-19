@@ -103,10 +103,109 @@ describe("notesStore live editing", () => {
         nodes["book-1"] = { type: "file" }
         notesStore.clear()
         notesStore.notes = [{ ...note }]
-        notesStore.editingNote = notesStore.notes[0]
+        notesStore.openEditor(notesStore.notes[0])
     })
 
     afterEach(() => vi.useRealTimers())
+
+    it("keeps existing-note editors independent and closes only the requested one", async () => {
+        const secondNote = { ...note, id: "note-2", noteContent: "Second" }
+        notesStore.notes.push(secondNote)
+        const firstId = notesStore.editors[0].id
+        const secondId = notesStore.openEditor(secondNote)
+
+        notesStore.updateEditor(firstId, { noteContent: "First changed", color: "blue" })
+        notesStore.updateEditor(secondId, { noteContent: "Second changed", color: "pink" })
+        await notesStore.closeEditor(firstId)
+
+        expect(notesStore.editors.map(({ id }) => id)).toEqual([secondId])
+        expect(notesStore.editingNote).toMatchObject({
+            id: "note-2",
+            noteContent: "Second changed",
+        })
+        expect(put).toHaveBeenCalledWith(
+            expect.objectContaining({ id: note.id, noteContent: "First changed" }),
+        )
+        await vi.advanceTimersByTimeAsync(300)
+        expect(put).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "note-2", noteContent: "Second changed" }),
+        )
+    })
+
+    it("reopens an existing editor without replacing its draft", () => {
+        const id = notesStore.editors[0].id
+        notesStore.updateEditor(id, { noteContent: "Kept", color: "green" })
+        expect(notesStore.openEditor({ ...note })).toBe(id)
+        expect(notesStore.editors).toHaveLength(1)
+        expect(notesStore.editingNote).toMatchObject({ noteContent: "Kept", color: "green" })
+    })
+
+    it("retains other new-note drafts when cancelling one", async () => {
+        const { id: _id, createdAt: _createdAt, ...firstDraft } = { ...note, isNew: true as const }
+        const firstId = notesStore.openEditor(firstDraft)
+        const secondId = notesStore.openEditor({ ...firstDraft, start: 30, end: 40 })
+        notesStore.updateEditor(firstId, { noteContent: "First draft", color: "green" })
+        notesStore.updateEditor(secondId, { noteContent: "Second draft", color: "purple" })
+
+        expect(notesStore.openEditor(firstDraft)).toBe(firstId)
+        expect(notesStore.editors).toHaveLength(3)
+        await notesStore.closeEditor(firstId)
+
+        expect(notesStore.editors.find(({ id }) => id === secondId)?.note).toMatchObject({
+            noteContent: "Second draft",
+            color: "purple",
+        })
+        expect(put).not.toHaveBeenCalled()
+    })
+
+    it("saves only the captured draft even when another editor becomes active", async () => {
+        const { id: _id, createdAt: _createdAt, ...fields } = note
+        const firstId = notesStore.openEditor({ ...fields, isNew: true })
+        let resolvePut!: () => void
+        put.mockImplementationOnce(
+            () =>
+                new Promise<undefined>((resolve) => {
+                    resolvePut = () => resolve(undefined)
+                }),
+        )
+        const savePromise = notesStore.saveEditor(firstId)
+        const secondId = notesStore.openEditor({ ...fields, isNew: true, start: 30, end: 40 })
+        await notesStore.saveEditor(firstId)
+        await notesStore.closeEditor(firstId)
+        expect(put).toHaveBeenCalledTimes(1)
+        resolvePut()
+        await savePromise
+
+        const editorIds = notesStore.editors.map(({ id }) => id)
+        expect(editorIds).toContain(secondId)
+        expect(editorIds).not.toContain(firstId)
+        expect(notesStore.activeEditorId).toBe(secondId)
+        expect(notesStore.notes).toHaveLength(2)
+    })
+
+    it("retains a new draft if persistence fails", async () => {
+        const { id: _id, createdAt: _createdAt, ...fields } = note
+        const id = notesStore.openEditor({ ...fields, isNew: true })
+        put.mockRejectedValueOnce(new Error("write failed"))
+        await notesStore.saveEditor(id)
+        expect(notesStore.editors.find((editor) => editor.id === id)?.saving).toBe(false)
+        expect(notesStore.notes).toEqual([note])
+    })
+
+    it("deletes only the matching editor", async () => {
+        const secondNote = { ...note, id: "note-2" }
+        notesStore.notes.push(secondNote)
+        const secondId = notesStore.openEditor(secondNote)
+        await notesStore.deleteNote(note.id)
+        expect(notesStore.editors.map(({ id }) => id)).toEqual([secondId])
+    })
+
+    it("clears every editor when leaving the book view", () => {
+        notesStore.openEditor({ ...note, id: "note-2" })
+        notesStore.clear()
+        expect(notesStore.editors).toEqual([])
+        expect(notesStore.activeEditorId).toBeNull()
+    })
 
     it("updates visible content and color immediately but debounces persistence", async () => {
         notesStore.updateNoteDraft(note.id, "Changed", "blue")
@@ -310,7 +409,7 @@ describe("notesStore live editing", () => {
     })
 
     it("discards a new-note draft without persisting it", async () => {
-        notesStore.editingNote = {
+        notesStore.openEditor({
             isNew: true,
             bookId: "book-1",
             pageNumber: 1,
@@ -319,11 +418,12 @@ describe("notesStore live editing", () => {
             text: "Draft",
             noteContent: "Unsaved",
             color: "green",
-        }
+        })
 
         await notesStore.closeEditor()
 
-        expect(notesStore.editingNote).toBeNull()
+        expect(notesStore.editors).toHaveLength(1)
+        expect(notesStore.editingNote).toEqual(note)
         expect(put).not.toHaveBeenCalled()
     })
 

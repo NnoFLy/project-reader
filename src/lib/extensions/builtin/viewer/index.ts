@@ -21,6 +21,7 @@ import { installViewerRelinkHost } from "./viewerRelinkHost"
 import { buildBookmarkItems } from "./commands/viewerPromptItems"
 import { openViewerBookmark } from "./commands/viewerBookmarkCommandFactory"
 import * as m from "$lib/paraglide/messages"
+import { createKeyboardScroller } from "./utils/keyboardScroll"
 
 export { ViewerPage }
 export { createViewerBookmarkCommands } from "./commands/viewerBookmarkCommandFactory"
@@ -48,13 +49,17 @@ function scrollWindow(
     payload: ScrollPayload | undefined,
     viewportFraction: number,
     animations: boolean,
+    scroller: ReturnType<typeof createKeyboardScroller>,
 ): void {
+    const container = document.scrollingElement
+    if (!(container instanceof HTMLElement)) return
     const direction = payload?.direction === "up" ? -1 : 1
     const repeated = payload?.repeated ?? false
-    window.scrollBy({
-        top: direction * window.innerHeight * viewportFraction,
-        behavior: !repeated && animations ? "smooth" : "auto",
-    })
+    scroller.scrollBy(
+        container,
+        direction * window.innerHeight * viewportFraction,
+        !repeated && animations,
+    )
 }
 
 export async function activateViewer(
@@ -116,6 +121,7 @@ export async function activateViewer(
         validatePayload: isViewerOpenPayload,
     }
     const openRegistration = context.commands.register(openContribution)
+    const keyboardScroller = createKeyboardScroller()
     const scrollRegistrations = [
         context.commands.register({
             id: "viewer.scroll.step",
@@ -134,6 +140,7 @@ export async function activateViewer(
                     payload as ScrollPayload | undefined,
                     0.2,
                     context.host?.settings?.settingsStore.animations ?? true,
+                    keyboardScroller,
                 ),
         }),
         context.commands.register({
@@ -153,6 +160,7 @@ export async function activateViewer(
                     payload as ScrollPayload | undefined,
                     0.5,
                     context.host?.settings?.settingsStore.animations ?? true,
+                    keyboardScroller,
                 ),
         }),
     ]
@@ -192,6 +200,7 @@ export async function activateViewer(
     context.lifecycle.onDispose(() => {
         openRegistration.dispose()
         bookmarkOpenRegistration.dispose()
+        keyboardScroller.cancel()
         for (const registration of scrollRegistrations) registration.dispose()
         for (const handle of notificationHandles) handle.dispose()
         notificationHandles.clear()

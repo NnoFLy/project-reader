@@ -1,6 +1,7 @@
 import { browser } from "$app/environment"
 import type { SettingsRegistry, StorageNamespace } from "$lib/extension-api"
 import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
+import { DEFAULT_ANIMATIONS, motionPreferences } from "$lib/shared/state/motion.svelte"
 
 export type Theme = "light" | "dark" | "system"
 export type Layout = "single" | "split" | "scroll"
@@ -38,14 +39,14 @@ export const DEFAULT_SETTINGS: Settings = {
     quality: CONSTANTS.defaultQuality,
     theme: "system",
     language: "ru",
-    animations: true,
+    animations: DEFAULT_ANIMATIONS,
     preferPdfTitle: true,
 }
 
-const THEME_BOOTSTRAP_STORAGE_KEY = "settings"
+const BOOTSTRAP_STORAGE_KEY = "settings"
 
-function persistThemeBootstrap(theme: Theme): void {
-    const stored = safeStorageGet(THEME_BOOTSTRAP_STORAGE_KEY)
+function persistBootstrapSetting(key: "theme" | "animations", value: Theme | boolean): void {
+    const stored = safeStorageGet(BOOTSTRAP_STORAGE_KEY)
     let bootstrap: Record<string, unknown> = {}
 
     if (stored) {
@@ -55,16 +56,16 @@ function persistThemeBootstrap(theme: Theme): void {
                 bootstrap = { ...(parsed as Record<string, unknown>) }
             }
         } catch {
-            // Replace invalid bootstrap data with the next valid theme value.
+            // Replace invalid bootstrap data with the next valid setting value.
         }
     }
 
-    bootstrap.theme = theme
-    safeStorageSet(THEME_BOOTSTRAP_STORAGE_KEY, JSON.stringify(bootstrap))
+    bootstrap[key] = value
+    safeStorageSet(BOOTSTRAP_STORAGE_KEY, JSON.stringify(bootstrap))
 }
 
 function readLegacySettings(): Partial<Settings> {
-    const stored = safeStorageGet(THEME_BOOTSTRAP_STORAGE_KEY)
+    const stored = safeStorageGet(BOOTSTRAP_STORAGE_KEY)
     if (!stored) return {}
 
     try {
@@ -129,7 +130,10 @@ export function sanitizeSettings(parsed: unknown): Partial<Settings> {
  * without bypassing the extension's registered controls or its durable storage namespace.
  */
 class SettingsStore {
-    private settings = $state<Settings>({ ...DEFAULT_SETTINGS })
+    private settings = $state<Settings>({
+        ...DEFAULT_SETTINGS,
+        animations: readLegacySettings().animations ?? DEFAULT_SETTINGS.animations,
+    })
     private registeredIds = $state<ReadonlySet<string>>(new Set())
     private registry: SettingsRegistry | undefined
     private storage: StorageNamespace | undefined
@@ -139,6 +143,7 @@ class SettingsStore {
     }
 
     constructor() {
+        motionPreferences.enabled = this.settings.animations
         if (browser) {
             document.documentElement.dataset.motion = this.settings.animations ? "on" : "off"
             this.colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
@@ -169,7 +174,12 @@ class SettingsStore {
 
     updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
         this.settings[key] = value
-        if (key === "theme") persistThemeBootstrap(value as Theme)
+        if (key === "theme") persistBootstrapSetting("theme", value as Theme)
+        if (key === "animations") {
+            motionPreferences.enabled = value as boolean
+            persistBootstrapSetting("animations", value as boolean)
+            if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
+        }
         const id = SETTING_IDS[key]
         if (this.registry && this.storage && this.isRegistered(id)) {
             void this.persist(id, value).catch(() => undefined)
@@ -227,7 +237,6 @@ class SettingsStore {
 
     set animations(value: Settings["animations"]) {
         this.updateSetting("animations", value)
-        if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
     }
 
     get quality(): Settings["quality"] {
@@ -321,6 +330,11 @@ class SettingsStore {
             if (setting.validate && !setting.validate(value)) continue
             this.settings[key] = value as never
             if (key === "animations") {
+                motionPreferences.enabled = value as boolean
+                // Cache explicit choices, but do not turn the system default into a saved choice.
+                if (stored !== undefined || legacySettings.animations !== undefined) {
+                    persistBootstrapSetting("animations", value as boolean)
+                }
                 if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
             } else if (key === "language") {
                 if (browser) {
@@ -329,7 +343,7 @@ class SettingsStore {
                     document.documentElement.dir = "ltr"
                 }
             } else if (key === "theme") {
-                persistThemeBootstrap(value as Theme)
+                persistBootstrapSetting("theme", value as Theme)
                 this.updateDOM()
             }
         }

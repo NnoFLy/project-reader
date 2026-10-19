@@ -83,9 +83,7 @@
                 ? m.keymap_close_settings({}, { locale: "en" })
                 : m.keymap_close_sidebar({}, { locale: "en" }),
         disabled: () =>
-            (!isSettingsSidebar && modalManager.hasBlockingModal) ||
-            !!notesStore.editingNote ||
-            !!notesStore.activePopup,
+            (!isSettingsSidebar && modalManager.hasBlockingModal) || !!notesStore.activePopup,
         shouldHandleKey: (event: KeyboardEvent) => {
             if (!isEditableTarget(event.target)) return true
 
@@ -208,9 +206,7 @@
     {#if side === "left" && activeTab !== "settings"}
         {#key activeTab}
             <Slider
-                enabled={!modalManager.hasBlockingModal &&
-                    !notesStore.editingNote &&
-                    !notesStore.activePopup}
+                enabled={!modalManager.hasBlockingModal && !notesStore.activePopup}
                 resolveMove={resolveSwipeTab}
                 ariaLabel={panelLabel}
             >

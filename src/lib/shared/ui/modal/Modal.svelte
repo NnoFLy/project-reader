@@ -166,8 +166,14 @@
         requestClose("escape")
     }
 
+    function handleWindowInteraction(event: Event) {
+        if (modalState !== "modeless" || !surfaceRef || !(event.target instanceof Node)) return
+        if (!surfaceRef.contains(event.target)) props.onDeactivate?.()
+    }
+
     function handleSurfacePointerDown() {
         if (modalState === "modeless") modalManager.bringToFront(modalId)
+        props.onActivate?.()
     }
 
     function handleHeaderPointerDown(event: PointerEvent) {
@@ -270,12 +276,20 @@
             viewport?.removeEventListener("scroll", reclampPosition)
             window.removeEventListener("resize", reclampPosition)
             const removed = unregister()
-            restoreFocus(removed?.restoreFocusTo ?? null, modalManager.topmostModal?.element)
+            restoreFocus(
+                removed?.restoreFocusTo ?? null,
+                modalManager.topmostModal?.element,
+                removed?.element,
+            )
         }
     })
 </script>
 
-<svelte:window onkeydowncapture={handleWindowKeydown} />
+<svelte:window
+    onkeydowncapture={handleWindowKeydown}
+    onpointerdowncapture={handleWindowInteraction}
+    onfocusincapture={handleWindowInteraction}
+/>
 
 <Float
     {...floatPlacementProps}
@@ -749,13 +763,6 @@
             gap: 12px;
             padding-top: 12px;
             padding-bottom: 12px;
-        }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        :global(.modal-surface),
-        .modal-header {
-            transition: none;
         }
     }
 </style>

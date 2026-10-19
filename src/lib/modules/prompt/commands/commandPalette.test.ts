@@ -1,10 +1,153 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { openCommandPalette } from "./commandPalette"
-import { CommandScope, defineCommands } from "$lib/modules/commands"
+import {
+    CommandScope,
+    CommandRegistryImpl,
+    commandsStore,
+    defineCommands,
+} from "$lib/modules/commands"
+import { setPromptCommandRegistry } from "$lib/extensions/builtin/prompt"
 import { promptStore } from "../stores/promptStore.svelte"
 import type { CommandRegistry } from "$lib/extension-api"
 
 afterEach(() => promptStore.close())
+
+describe("combined command discovery", () => {
+    let scope: CommandScope | undefined
+    let registry: CommandRegistryImpl | undefined
+    let replacement: CommandScope | undefined
+
+    afterEach(() => {
+        promptStore.close()
+        replacement?.destroy()
+        scope?.destroy()
+        registry?.dispose()
+        setPromptCommandRegistry(undefined)
+        scope = undefined
+        registry = undefined
+        replacement = undefined
+    })
+
+    function createCommands() {
+        const hostNext = vi.fn()
+        const hostOnly = vi.fn()
+        const scopedNext = vi.fn()
+        registry = new CommandRegistryImpl("builtin.viewer")
+        registry.register({
+            id: "viewer.page.next",
+            label: "Host next page",
+            execute: hostNext,
+        })
+        registry.register({
+            id: "viewer.registry-only",
+            label: "Host-only action",
+            execute: hostOnly,
+        })
+        scope = new CommandScope()
+        scope.registerAll([
+            {
+                id: "viewer.page.next",
+                label: () => "Следующая страница",
+                englishLabel: () => "Next PDF page",
+                category: "navigation",
+                keymap: "space",
+                run: scopedNext,
+            },
+            {
+                id: "viewer.page.previous",
+                label: () => "Previous PDF page",
+                category: "navigation",
+                run: vi.fn(),
+            },
+        ])
+        commandsStore.activeScope = scope
+        setPromptCommandRegistry(registry)
+        return { scope, registry, hostNext, hostOnly, scopedNext }
+    }
+
+    it.each(["default", "scope", "registry"] as const)(
+        "merges all available actions via the %s entry point, with scoped overrides winning",
+        async (entryPoint) => {
+            const { scope, registry, hostNext, scopedNext } = createCommands()
+            const source = { default: undefined, scope, registry }[entryPoint]
+            const closed = openCommandPalette(source, "")
+            await vi.waitFor(() => expect(promptStore.snapshot?.isLoading).toBe(false))
+
+            expect(promptStore.snapshot?.items.map(({ id }) => id)).toEqual([
+                "viewer.page.next",
+                "viewer.page.previous",
+                "viewer.registry-only",
+            ])
+            expect(promptStore.snapshot?.items[0]).toMatchObject({
+                label: "Следующая страница",
+                englishLabel: "Next PDF page",
+                category: "navigation",
+                keymap: "Space",
+            })
+            await promptStore.selectCurrent()
+            await closed
+            expect(scopedNext).toHaveBeenCalledOnce()
+            expect(hostNext).not.toHaveBeenCalled()
+        },
+    )
+
+    it("executes registry-only actions through the registry", async () => {
+        const { hostOnly } = createCommands()
+        const closed = openCommandPalette(undefined, "Host-only action")
+        await vi.waitFor(() => expect(promptStore.snapshot?.isLoading).toBe(false))
+        expect(promptStore.snapshot?.items[0]?.id).toBe("viewer.registry-only")
+        await promptStore.selectCurrent()
+        await closed
+        expect(hostOnly).toHaveBeenCalledOnce()
+    })
+
+    it("keeps the captured handler when Prompt changes the active scope", async () => {
+        const { scopedNext, hostNext } = createCommands()
+        const closed = openCommandPalette(undefined, "")
+        await vi.waitFor(() => expect(promptStore.snapshot?.isLoading).toBe(false))
+        const replacementNext = vi.fn()
+        replacement = new CommandScope()
+        replacement.register({
+            id: "viewer.page.next",
+            label: () => "Other context",
+            category: "navigation",
+            run: replacementNext,
+        })
+        commandsStore.activeScope = replacement
+
+        await promptStore.selectCurrent()
+        await closed
+        expect(scopedNext).toHaveBeenCalledOnce()
+        expect(hostNext).not.toHaveBeenCalled()
+        expect(replacementNext).not.toHaveBeenCalled()
+    })
+
+    it("closes a merged palette when its reader scope is destroyed", async () => {
+        const { scope } = createCommands()
+        const closed = openCommandPalette(undefined, "")
+        await vi.waitFor(() => expect(promptStore.snapshot?.isLoading).toBe(false))
+        scope.destroy()
+        await closed
+        expect(promptStore.isOpen).toBe(false)
+    })
+
+    it("does not resurrect intentionally hidden actions from the registry", async () => {
+        const { scope, registry } = createCommands()
+        registry.register({ id: "viewer.internal", label: "Internal action", execute: vi.fn() })
+        scope.register({
+            id: "viewer.internal",
+            label: () => "Internal action",
+            category: "navigation",
+            palette: false,
+            run: vi.fn(),
+        })
+        const closed = openCommandPalette(undefined, "")
+        await vi.waitFor(() => expect(promptStore.snapshot?.isLoading).toBe(false))
+        expect(promptStore.snapshot?.items.some(({ id }) => id === "viewer.internal")).toBe(false)
+        promptStore.close()
+        await closed
+    })
+})
 
 describe("command palette adapter", () => {
     it("captures a scope, lists enabled commands, and executes through its handle", async () => {

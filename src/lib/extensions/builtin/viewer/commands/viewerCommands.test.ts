@@ -131,6 +131,21 @@ describe("viewer command modules", () => {
         )
     })
 
+    it("uses the same PDF navigation commands for Space and the horizontal arrows", () => {
+        const { commands, viewer } = navigation()
+        expect(commands["viewer.page.next"].keymap).toEqual(["space", "arrowright"])
+        expect(commands["viewer.page.previous"].keymap).toEqual(["shift+space", "arrowleft"])
+        expect(commands["viewer.page.next"].preventDefault).toBe(true)
+        expect(commands["viewer.page.previous"].preventDefault).toBe(true)
+
+        commands["viewer.page.next"].run()
+        commands["viewer.page.previous"].run()
+
+        expect(viewer.nextPage).toHaveBeenCalledOnce()
+        expect(viewer.previousPage).toHaveBeenCalledOnce()
+        expect(viewer.scroll).not.toHaveBeenCalled()
+    })
+
     it("selects a search match, navigates, and closes Prompt", async () => {
         const prompt = promptService()
         const search = searchPort()

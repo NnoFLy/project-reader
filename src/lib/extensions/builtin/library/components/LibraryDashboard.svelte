@@ -39,13 +39,17 @@
     import PickerKey from "./PickerKey.svelte"
     import { PICKER_KEYS, generateHints } from "../utils/constants"
     import { navigateGrid } from "../utils/gridNavigation"
-    import { tick, untrack } from "svelte"
+    import { onDestroy, tick, untrack } from "svelte"
     import { settingsStore } from "../state/librarySettings"
     import { createLibraryDashboardInteractionCommands } from "../commands/libraryDashboardInteractionCommands"
     import { mergeLibraryEntries } from "../utils/libraryEntries"
     import { executeLibraryHostCommand } from "../state/libraryHostBridge"
 
     const libraryCommands = createLibraryCommands(libraryUI)
+
+    onDestroy(() => {
+        libraryUI.metadataEditorNodeIds = []
+    })
 
     let pickingMode = $state<"startSelection" | "openFileFolder" | "focusCard">("openFileFolder")
 
@@ -380,9 +384,11 @@
         />
     {/if}
 
-    {#if libraryUI.isEditMetadataModalOpen && libraryUI.nodeToEditMetadataId}
-        <EditBookMetadataModal nodeId={libraryUI.nodeToEditMetadataId} />
-    {/if}
+    {#each libraryUI.metadataEditorNodeIds as nodeId (nodeId)}
+        {#if vfsStore.nodes[nodeId]?.type === "file"}
+            <EditBookMetadataModal {nodeId} />
+        {/if}
+    {/each}
 
     {#if libraryUI.isRenameFolderModalOpen && libraryUI.folderToRenameId}
         <RenameFolderModal nodeId={libraryUI.folderToRenameId} />

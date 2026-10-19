@@ -13,6 +13,13 @@ describe("page slider targets", () => {
         expect(getPageTarget(10, 10, "single", "next")).toBeUndefined()
     })
 
+    it("moves one PDF page at a time in scroll layout without wrapping", () => {
+        expect(getPageTarget(1, 10, "scroll", "previous")).toBeUndefined()
+        expect(getPageTarget(1, 10, "scroll", "next")).toBe(2)
+        expect(getPageTarget(5, 10, "scroll", "previous")).toBe(4)
+        expect(getPageTarget(10, 10, "scroll", "next")).toBeUndefined()
+    })
+
     it("does not advance from a split spread that already contains the final page", () => {
         expect(getPageTarget(9, 10, "split", "next")).toBeUndefined()
         expect(getSpreadPages(9, 10, "split")).toEqual([9, 10])

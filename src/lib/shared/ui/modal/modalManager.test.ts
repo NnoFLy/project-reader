@@ -44,6 +44,19 @@ describe("ModalManager", () => {
         expect(manager.topmostBlockingModal?.id).toBe("blocking-two")
     })
 
+    it("focuses and raises an existing window without remounting it", () => {
+        const focus = vi.fn()
+        const one = record("one", "modeless")
+        manager.register({ ...one, element: { focus } as unknown as HTMLElement })
+        manager.register(record("two", "modeless"))
+        manager.focus("one")
+        expect(manager.topmostModal?.id).toBe("one")
+        expect(focus).toHaveBeenCalledOnce()
+        expect(one.close).not.toHaveBeenCalled()
+        manager.focus("missing")
+        expect(manager.records).toHaveLength(2)
+    })
+
     it("turns a blocking modal modeless and routes close reasons", () => {
         const modal = record("one")
         manager.register(modal)

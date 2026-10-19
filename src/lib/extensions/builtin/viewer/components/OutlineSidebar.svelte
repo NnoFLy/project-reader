@@ -129,10 +129,7 @@
             searchLabel: () => m.keymap_search_headings(),
             searchEnglishLabel: () => m.keymap_search_headings({}, { locale: "en" }),
             disabled: () =>
-                !interactive ||
-                modalManager.hasBlockingModal ||
-                !!notesStore.editingNote ||
-                !!notesStore.activePopup,
+                !interactive || modalManager.hasBlockingModal || !!notesStore.activePopup,
             shouldHandleNavigationKey: (event) =>
                 !(
                     isEditableTarget(event.target) &&

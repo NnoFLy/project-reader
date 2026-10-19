@@ -73,6 +73,13 @@ export class ModalManager {
         ])
     }
 
+    focus(id: string): void {
+        const record = this.get(id)
+        if (!record) return
+        this.bringToFront(id)
+        record.element?.focus()
+    }
+
     setModeless(id: string): void {
         this.#update(id, (record) => ({ ...record, state: "modeless" }))
         this.bringToFront(id)

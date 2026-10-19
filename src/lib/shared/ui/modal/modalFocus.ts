@@ -64,7 +64,15 @@ export function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
     }
 }
 
-export function restoreFocus(target: HTMLElement | null, fallback?: HTMLElement | null): void {
+export function restoreFocus(
+    target: HTMLElement | null,
+    fallback?: HTMLElement | null,
+    closingSurface?: HTMLElement | null,
+): void {
+    // An asynchronous close must not interrupt another window or the underlying view.
+    const active = document.activeElement
+    if (closingSurface && active && active !== document.body && !closingSurface.contains(active))
+        return
     if (target?.isConnected && !target.closest("[inert]")) {
         target.focus()
     } else if (fallback?.isConnected) {

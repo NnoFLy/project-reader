@@ -1,7 +1,7 @@
 <script lang="ts">
     const libraryUI = useLibraryUI()
     import { useLibraryUI } from "../state/libraryUI.svelte"
-    import { onMount, tick } from "svelte"
+    import { onMount } from "svelte"
     import * as m from "$lib/paraglide/messages"
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
@@ -18,6 +18,10 @@
 
     const { nodeId }: Props = $props()
 
+    const instanceId = $props.id()
+    const titleInputId = `${instanceId}-title-input`
+    const authorInputId = `${instanceId}-author-input`
+    const pageInputId = `${instanceId}-page-input`
     const node = $derived(vfsStore.nodes[nodeId])
 
     let name = $state("")
@@ -30,7 +34,7 @@
         pageNumber?: string[]
     }>({})
 
-    const activeNodeBeforeOpen = commandsStore.activeScope
+    let saving = $state(false)
 
     const modalCommands = defineCommands({
         "modal.confirm": {
@@ -52,21 +56,13 @@
         },
     })
 
-    const commandsNode = useModalCommands(Object.values(modalCommands), activeNodeBeforeOpen)
+    const commandsNode = useModalCommands(Object.values(modalCommands))
 
-    onMount(async () => {
+    onMount(() => {
         if (node && node.type === "file") {
             name = node.name
             author = node.metadata.author || ""
             pageNumber = node.metadata.pageNumber || 1
-        }
-
-        // Focus the title input when modal opens
-        await tick()
-        const input = document.getElementById("book-title-input") as HTMLInputElement | null
-        if (input) {
-            input.focus()
-            input.select()
         }
     })
 
@@ -94,29 +90,30 @@
     }
 
     async function handleSave() {
-        if (!validateForm()) return
+        if (saving || !validateForm()) return
+        saving = true
 
-        if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur()
+        try {
+            await updateLibraryBookMetadata({
+                nodeId,
+                name: name.trim(),
+                author: author.trim() || null,
+                pageNumber,
+            })
+        } finally {
+            saving = false
         }
-
-        await updateLibraryBookMetadata({
-            nodeId,
-            name: name.trim(),
-            author: author.trim() || null,
-            pageNumber,
-        })
     }
 
     function handleClose() {
-        if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur()
-        }
-        libraryUI.isEditMetadataModalOpen = false
+        if (!saving) libraryUI.closeMetadataEditor(nodeId)
     }
 </script>
 
 <Modal
+    id={`library-metadata-${nodeId}`}
+    onActivate={() => commandsStore.activate(commandsNode)}
+    onDeactivate={() => commandsStore.deactivate(commandsNode)}
     variant="default"
     type="float"
     size="medium"
@@ -124,7 +121,7 @@
     onClose={() => void commandsNode.execute("modal.cancel")}
     title={m.edit_book_metadata()}
     closeLabel={m.close()}
-    initialFocus={() => document.getElementById("book-title-input")}
+    initialFocus={() => document.getElementById(titleInputId)}
     draggable
 >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -139,21 +136,24 @@
         }}
     >
         <Input
-            id="book-title-input"
+            id={titleInputId}
+            disabled={saving}
             placeholder={m.title()}
             label={m.title()}
             bind:value={name}
             errors={errors.name}
         />
         <Input
-            id="book-author-input"
+            id={authorInputId}
+            disabled={saving}
             placeholder={m.author()}
             label={m.author()}
             bind:value={author}
             errors={errors.author}
         />
         <Input
-            id="book-page-input"
+            id={pageInputId}
+            disabled={saving}
             type="number"
             min="1"
             placeholder={m.current_page()}
@@ -165,11 +165,15 @@
 
     {#snippet footer()}
         <div class="modal-actions">
-            <Button variant="ghost" onclick={() => void commandsNode.execute("modal.cancel")}
-                >{m.cancel()}</Button
+            <Button
+                variant="ghost"
+                disabled={saving}
+                onclick={() => void commandsNode.execute("modal.cancel")}>{m.cancel()}</Button
             >
-            <Button variant="brutalist" onclick={() => void commandsNode.execute("modal.confirm")}
-                >{m.save()}</Button
+            <Button
+                variant="brutalist"
+                disabled={saving}
+                onclick={() => void commandsNode.execute("modal.confirm")}>{m.save()}</Button
             >
         </div>
     {/snippet}

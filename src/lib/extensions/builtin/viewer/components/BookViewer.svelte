@@ -71,9 +71,12 @@
     import { getViewerTapAction } from "../commands/viewerTapNavigation"
     import { createPageRenderPlan, getPageTarget, type PageLayout } from "./pageSliderPolicy"
     import { renderBookViewerBitmaps } from "./bookViewerPreload"
+    import { createKeyboardScroller } from "../utils/keyboardScroll"
 
     let commandsNode = $state.raw<CommandScope>(undefined as any)
     let scrollContainer = $state<HTMLElement | null>(null)
+    const keyboardScroller = createKeyboardScroller()
+    onDestroy(keyboardScroller.cancel)
 
     onMount(() => {
         scrollContainer = document.querySelector(".canvas-frame")
@@ -113,10 +116,11 @@
                 if (!pane) return
                 const amount =
                     scrollAmount === "half-page" ? pane.clientHeight / 2 : window.innerHeight * 0.2
-                pane.scrollBy({
-                    top: payload.direction === "up" ? -amount : amount,
-                    behavior: !payload.repeated && settingsStore.animations ? "smooth" : "auto",
-                })
+                keyboardScroller.scrollBy(
+                    pane,
+                    payload.direction === "up" ? -amount : amount,
+                    !payload.repeated && settingsStore.animations,
+                )
             },
         },
     })
@@ -243,7 +247,7 @@
         addNote: () => {
             const selection = notesStore.activeSelection
             if (!selection) return
-            notesStore.editingNote = {
+            notesStore.openEditor({
                 isNew: true,
                 bookId: selection.bookId,
                 pageNumber: selection.pageNumber,
@@ -252,22 +256,17 @@
                 text: selection.text,
                 color: "yellow",
                 noteContent: "",
-            }
-            notesStore.editorCoords = { x: selection.x, y: selection.y }
+            })
             notesStore.activeSelection = null
         },
         editNote: (payload: { noteId?: string; x?: number; y?: number } | undefined) => {
             const noteId = payload?.noteId ?? notesStore.activePopup?.note.id
             const note = notesStore.notes.find(({ id }) => id === noteId)
             if (!note) return
-            notesStore.editingNote = note
-            notesStore.editorCoords = {
-                x: payload?.x ?? window.innerWidth / 2,
-                y: payload?.y ?? window.innerHeight / 2,
-            }
+            notesStore.openEditor(note)
             notesStore.activePopup = null
         },
-        saveNote: () => saveCurrentNote(),
+        saveNote: () => notesStore.saveEditor(),
         deleteNote: async (payload: { noteId?: string; confirmed?: boolean } | undefined) => {
             const noteId =
                 payload?.noteId ??
@@ -449,25 +448,6 @@
             }
         } else {
             viewerUIStore.openBookmarkAddModal(`${m.page()} ${currentPage}`)
-        }
-    }
-
-    async function saveCurrentNote() {
-        const editorState = notesStore.editingNote
-        if (!editorState) return
-
-        if ("isNew" in editorState) {
-            await notesStore.addNote(
-                editorState.bookId,
-                editorState.pageNumber,
-                editorState.start,
-                editorState.end,
-                editorState.text,
-                editorState.noteContent || "",
-                editorState.color,
-            )
-        } else {
-            await notesStore.closeEditor()
         }
     }
 
@@ -1050,7 +1030,6 @@
     }
 
     function getPageSliderTarget(direction: SliderDirection) {
-        if (settingsStore.layout === "scroll") return undefined
         return getPageTarget(viewerStore.currentPage, totalPages, settingsStore.layout, direction)
     }
 

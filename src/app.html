@@ -31,10 +31,16 @@
         <link rel="manifest" href="/site.webmanifest?v=1" />
         <script>
             ;(function () {
+                const defaultAnimations = !window.matchMedia("(prefers-reduced-motion: reduce)")
+                    .matches
+                document.documentElement.dataset.motion = defaultAnimations ? "on" : "off"
                 try {
                     const savedSettings = JSON.parse(localStorage.getItem("settings") || "{}")
                     const theme = savedSettings.theme || localStorage.getItem("theme") || "system"
-                    const animations = savedSettings.animations !== false
+                    const animations =
+                        typeof savedSettings.animations === "boolean"
+                            ? savedSettings.animations
+                            : defaultAnimations
                     document.documentElement.dataset.motion = animations ? "on" : "off"
                     const dark =
                         theme === "dark" ||

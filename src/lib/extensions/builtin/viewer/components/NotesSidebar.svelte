@@ -122,11 +122,7 @@
             const noteId = payload?.noteId ?? filteredNotes[selectedIndex]?.id
             const note = notesStore.notes.find(({ id }) => id === noteId)
             if (!note) return
-            notesStore.editingNote = note
-            notesStore.editorCoords = {
-                x: payload?.x ?? window.innerWidth / 2,
-                y: payload?.y ?? window.innerHeight / 2,
-            }
+            notesStore.openEditor(note)
         },
         saveNote: () => {},
         deleteNote: async (payload: ViewerNoteDeletePayload | undefined) => {
@@ -142,10 +138,7 @@
     })
 
     const listCommandsDisabled = () =>
-        !interactive ||
-        modalManager.hasBlockingModal ||
-        !!notesStore.editingNote ||
-        !!notesStore.activePopup
+        !interactive || modalManager.hasBlockingModal || !!notesStore.activePopup
 
     function isEditableTarget(target: EventTarget | null) {
         return (

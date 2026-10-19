@@ -6,7 +6,6 @@ describe("draggable modal motion policy", () => {
         expect(
             shouldEnableModalPresentationMotion({
                 appMotionEnabled: false,
-                prefersReducedMotion: false,
                 movementCritical: true,
             }),
         ).toBe(true)
@@ -16,19 +15,17 @@ describe("draggable modal motion policy", () => {
         expect(
             shouldEnableModalPresentationMotion({
                 appMotionEnabled: false,
-                prefersReducedMotion: false,
                 movementCritical: false,
             }),
         ).toBe(false)
     })
 
-    it("always respects reduced motion", () => {
+    it("enables decorative modal motion when app animations are on", () => {
         expect(
             shouldEnableModalPresentationMotion({
                 appMotionEnabled: true,
-                prefersReducedMotion: true,
-                movementCritical: true,
+                movementCritical: false,
             }),
-        ).toBe(false)
+        ).toBe(true)
     })
 })

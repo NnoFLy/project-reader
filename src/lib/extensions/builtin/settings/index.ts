@@ -61,7 +61,7 @@ const settingDefinitions = [
     {
         id: "settings.animations",
         label: "Animations",
-        defaultValue: true,
+        defaultValue: DEFAULT_SETTINGS.animations,
         validate: (value: unknown): value is boolean => typeof value === "boolean",
     },
     {

@@ -1,6 +1,6 @@
 # Reader
 
-Language for the reader's command and settings interactions.
+Language for the reader's command, settings, and editing interactions.
 
 ## Language
 
@@ -19,3 +19,7 @@ _Avoid_: Toggle, switcher
 **Parent Prompt**:
 The Prompt a user returns to when backing out of a value chooser, with their previous search and selection preserved.
 _Avoid_: Previous page
+
+**Note draft**:
+An unsaved annotation attached to a selected passage in a book. Each draft has its own content and highlight color until it is saved or cancelled.
+_Avoid_: Temporary note

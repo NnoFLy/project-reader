@@ -11,7 +11,7 @@ export interface PageRenderPlanEntry {
 export function getPageTarget(
     currentPage: number,
     totalPages: number,
-    layout: PageLayout,
+    layout: PageLayout | "scroll",
     direction: SliderDirection,
 ): number | undefined {
     if (totalPages < 1 || currentPage < 1 || currentPage > totalPages) return undefined
