@@ -5,53 +5,53 @@
     --breakpoint-docked: 1200px;
     --breakpoint-prompt: 640px;
 
-    /* Paper, ink, one signal accent, and coral for destructive actions. */
-    --color-canvas: hsl(45 45% 91%);
-    --color-surface: hsl(43 100% 99%);
-    --color-surface-raised: hsl(0 0% 100%);
-    --color-text: hsl(80 6% 10%);
-    --color-text-muted: hsl(76 6% 35%);
-    --color-rule: hsl(80 6% 10%);
-    --color-control-border: hsl(86 7% 21%);
-    --color-action: hsl(76 75% 56%);
-    --color-on-action: hsl(80 6% 10%);
-    --color-marker: hsl(76 75% 56%);
-    --color-on-marker: hsl(80 6% 10%);
-    --color-danger: hsl(6 74% 64%);
-    --color-on-danger: hsl(80 6% 10%);
-    --color-focus: hsl(194 67% 26%);
-    --color-disabled: hsl(55 16% 86%);
-    --color-on-disabled: hsl(76 6% 35%);
-    --color-viewer-canvas: hsl(47 36% 95%);
-    --color-viewer-chrome: hsl(45 45% 91%);
-    --color-overlay: rgb(25 26 23 / 0.32);
+    /* Brutalist semantic palette — light */
+    --color-canvas: #f5f0e1;
+    --color-surface: #ffffff;
+    --color-surface-raised: #ffffff;
+    --color-text: #1a1a1a;
+    --color-text-muted: #666666;
+    --color-rule: #1a1a1a;
+    --color-control-border: #1a1a1a;
+    --color-action: #00cec9;
+    --color-on-action: #1a1a1a;
+    --color-marker: #ffde4d;
+    --color-on-marker: #1a1a1a;
+    --color-danger: #ff7675;
+    --color-on-danger: #1a1a1a;
+    --color-focus: #6c5ce7;
+    --color-disabled: #eeeeee;
+    --color-on-disabled: #666666;
+    --color-viewer-canvas: #ffffff;
+    --color-viewer-chrome: #f5f0e1;
+    --color-overlay: rgb(26 26 26 / 0.24);
 
     /* PDF overlays stay semantic; document darkness is handled by the image filter. */
-    --highlight-selection: rgb(182 227 58 / 0.42);
-    --highlight-search: rgb(182 227 58 / 0.55);
-    --highlight-search-active: rgb(231 111 97 / 0.72);
-    --highlight-note-yellow: rgb(182 227 58 / 0.45);
-    --highlight-note-green: rgb(118 190 64 / 0.42);
-    --highlight-note-blue: rgb(71 151 190 / 0.42);
-    --highlight-note-pink: rgb(231 111 97 / 0.42);
-    --highlight-note-purple: rgb(108 132 180 / 0.44);
-    --highlight-note-active: rgb(231 111 97 / 0.62);
+    --highlight-selection: rgb(0 206 201 / 0.4);
+    --highlight-search: rgb(255 222 77 / 0.55);
+    --highlight-search-active: rgb(255 118 117 / 0.7);
+    --highlight-note-yellow: rgb(255 222 77 / 0.45);
+    --highlight-note-green: rgb(0 184 148 / 0.42);
+    --highlight-note-blue: rgb(9 132 227 / 0.42);
+    --highlight-note-pink: rgb(232 67 147 / 0.42);
+    --highlight-note-purple: rgb(108 92 231 / 0.44);
+    --highlight-note-active: rgb(255 118 117 / 0.62);
 
     /* Compatibility aliases retained for existing components. */
     --bg-color: var(--color-canvas);
     --surface-color: var(--color-surface);
-    --surface-hover-color: #f0f1e8;
+    --surface-hover-color: #faf8f5;
     --text-color: var(--color-text);
     --faded-text-color: var(--color-text-muted);
     --border-color: var(--color-control-border);
-    --outline-item-border: rgb(53 56 49 / 0.2);
-    --shadow-color: #191a17;
+    --outline-item-border: rgb(26 26 26 / 0.18);
+    --shadow-color: #1a1a1a;
     --primary-color: var(--color-action);
     --primary-text-color: var(--color-on-action);
     --active-color: var(--color-marker);
     --active-text-color: var(--color-on-marker);
-    --selection-color: var(--color-action);
-    --selection-text-color: var(--color-on-action);
+    --selection-color: #6c5ce7;
+    --selection-text-color: #ffffff;
     --progress-color: var(--color-action);
     --focus-color: var(--color-focus);
     --viewer-chrome-color: var(--color-viewer-chrome);
@@ -59,13 +59,13 @@
     --accent-color: var(--color-action);
     --accent-active-color: var(--color-marker);
     --danger-color: var(--color-danger);
-    --danger-active-color: #d7554b;
+    --danger-active-color: #ff4d4d;
     --danger-text-color: var(--color-on-danger);
-    --muted-bg-color: var(--color-text);
-    --muted-text-color: var(--color-surface);
+    --muted-bg-color: #1a1a1a;
+    --muted-text-color: #f5f0e1;
     --disabled-bg-color: var(--color-disabled);
     --overlay-color: var(--color-overlay);
-    --faded-color: rgb(25 26 23 / 0.06);
+    --faded-color: rgb(0 0 0 / 0.05);
 
     /* 4/8px spacing rhythm */
     --space-1: 4px;
@@ -134,34 +134,34 @@
 }
 
 :global(html.dark) {
-    --color-canvas: hsl(105 8% 9%);
-    --color-surface: hsl(90 9% 13%);
-    --color-surface-raised: hsl(94 8% 17%);
-    --color-text: hsl(45 44% 93%);
-    --color-text-muted: hsl(80 9% 75%);
-    --color-rule: hsl(45 44% 93%);
-    --color-control-border: hsl(77 8% 67%);
-    --color-action: hsl(76 75% 56%);
-    --color-on-action: hsl(105 8% 9%);
-    --color-marker: hsl(76 75% 56%);
-    --color-on-marker: hsl(105 8% 9%);
-    --color-danger: hsl(7 79% 71%);
-    --color-on-danger: hsl(105 8% 9%);
-    --color-focus: hsl(76 75% 56%);
-    --color-disabled: hsl(100 6% 19%);
-    --color-on-disabled: hsl(77 8% 67%);
-    --color-viewer-canvas: hsl(94 7% 21%);
-    --color-viewer-chrome: hsl(105 8% 9%);
-    --color-overlay: rgb(0 0 0 / 0.48);
+    --color-canvas: #000000;
+    --color-surface: #09090b;
+    --color-surface-raised: #111113;
+    --color-text: #e4e4e7;
+    --color-text-muted: #a1a1aa;
+    --color-rule: #71717a;
+    --color-control-border: #71717a;
+    --color-action: #a78bfa;
+    --color-on-action: #09090b;
+    --color-marker: #8b5cf6;
+    --color-on-marker: #09090b;
+    --color-danger: #f87171;
+    --color-on-danger: #09090b;
+    --color-focus: #67e8f9;
+    --color-disabled: #18181b;
+    --color-on-disabled: #a1a1aa;
+    --color-viewer-canvas: #000000;
+    --color-viewer-chrome: #09090b;
+    --color-overlay: rgb(0 0 0 / 0.24);
 
     --bg-color: var(--color-canvas);
     --surface-color: var(--color-surface);
-    --surface-hover-color: #30352c;
+    --surface-hover-color: #1c1c1e;
     --text-color: var(--color-text);
     --faded-text-color: var(--color-text-muted);
     --border-color: var(--color-control-border);
-    --outline-item-border: rgb(245 241 229 / 0.2);
-    --shadow-color: #080a08;
+    --outline-item-border: rgb(228 228 231 / 0.2);
+    --shadow-color: #000000;
     --primary-color: var(--color-action);
     --primary-text-color: var(--color-on-action);
     --active-color: var(--color-marker);
@@ -175,13 +175,13 @@
     --accent-color: var(--color-action);
     --accent-active-color: var(--color-marker);
     --danger-color: var(--color-danger);
-    --danger-active-color: #ff7163;
+    --danger-active-color: #ef4444;
     --danger-text-color: var(--color-on-danger);
-    --muted-bg-color: var(--color-surface-raised);
-    --muted-text-color: var(--color-text);
+    --muted-bg-color: #e4e4e7;
+    --muted-text-color: #000000;
     --disabled-bg-color: var(--color-disabled);
     --overlay-color: var(--color-overlay);
-    --faded-color: rgb(245 241 229 / 0.09);
+    --faded-color: rgb(228 228 231 / 0.08);
     --selected-surface: color-mix(in srgb, var(--selection-color) 22%, var(--surface-color));
 }
 
