@@ -1,4 +1,5 @@
 import { defineCommands } from "$lib/core/commands"
+import * as m from "$lib/paraglide/messages"
 
 export interface PromptCommandActions {
     close: () => void
@@ -16,7 +17,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.close": {
             id: "prompt.close",
             keymap: ["escape", "ctrl+[", "ctrl+c", "ctrl+g"],
-            label: () => "Close prompt",
+            label: () => m.prompt_close_aria(),
+            englishLabel: () => m.prompt_close_aria({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -25,7 +27,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.next": {
             id: "prompt.next",
             keymap: ["arrowdown", "ctrl+n", "ctrl+j"],
-            label: () => "Next prompt result",
+            label: () => m.keymap_prompt_next(),
+            englishLabel: () => m.keymap_prompt_next({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -34,7 +37,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.previous": {
             id: "prompt.previous",
             keymap: ["arrowup", "ctrl+p", "ctrl+k"],
-            label: () => "Previous prompt result",
+            label: () => m.keymap_prompt_previous(),
+            englishLabel: () => m.keymap_prompt_previous({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -43,7 +47,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.select": {
             id: "prompt.select",
             keymap: "enter",
-            label: () => "Select prompt result",
+            label: () => m.keymap_prompt_select(),
+            englishLabel: () => m.keymap_prompt_select({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -52,7 +57,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.navigate.back": {
             id: "prompt.navigate.back",
             keymap: "backspace",
-            label: () => "Return to previous prompt",
+            label: () => m.keymap_prompt_back(),
+            englishLabel: () => m.keymap_prompt_back({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -62,7 +68,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.history.back": {
             id: "prompt.history.back",
             keymap: "alt+p",
-            label: () => "Prompt history back",
+            label: () => m.keymap_prompt_history_back(),
+            englishLabel: () => m.keymap_prompt_history_back({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,
@@ -71,7 +78,8 @@ export function createPromptCommands(actions: PromptCommandActions) {
         "prompt.history.forward": {
             id: "prompt.history.forward",
             keymap: "alt+n",
-            label: () => "Prompt history forward",
+            label: () => m.keymap_prompt_history_forward(),
+            englishLabel: () => m.keymap_prompt_history_forward({}, { locale: "en" }),
             category: "navigation",
             palette: false,
             allowInInputs: true,

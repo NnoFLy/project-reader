@@ -18,7 +18,13 @@ vi.mock("../viewerHost", async () => {
     }
 })
 
-import { buildBookmarkItems, buildSearchItems, parsePage } from "./viewerPromptItems"
+import {
+    buildBookmarkItems,
+    buildGotoPageItems,
+    buildSearchItems,
+    parsePage,
+} from "./viewerPromptItems"
+import * as m from "$lib/paraglide/messages"
 import { SearchStore, searchStore } from "../stores/searchStore.svelte"
 import { LocalSearchHistoryRepository, normalizeHistory } from "../stores/searchHistoryRepository"
 import { vfsStore } from "$lib/modules/documents"
@@ -36,6 +42,14 @@ describe("viewer Prompt item builders", () => {
         expect(parsePage("", 4, 20)).toBe(4)
         expect(parsePage("99", 4, 20)).toBe(20)
         expect(parsePage("0", 4, 20)).toBeUndefined()
+    })
+
+    it("gives page choices localized labels and English aliases", () => {
+        expect(buildGotoPageItems("99", 20)[0]).toMatchObject({
+            label: m.go_to_page({ page: 20 }),
+            englishLabel: m.go_to_page({ page: 20 }, { locale: "en" }),
+            value: 20,
+        })
     })
 
     it("builds history for an empty query and capped match results otherwise", () => {
@@ -59,7 +73,11 @@ describe("viewer Prompt item builders", () => {
             pageText: () => "needle in context",
         })
         expect(items).toHaveLength(200)
-        expect(items[0]?.id).toBe("search-match-1-0-6")
+        expect(items[0]).toMatchObject({
+            id: "search-match-1-0-6",
+            label: `${m.page()} 1`,
+            englishLabel: `${m.page({}, { locale: "en" })} 1`,
+        })
     })
 
     it("builds bookmark items without reading stores", () => {

@@ -50,8 +50,16 @@ function createLibraryContext(): ExtensionContext {
 
 describe("library host activation", () => {
     it("initializes persisted state before a direct viewer route can use it", async () => {
-        await activateLibrary(createLibraryContext(), undefined)
+        const context = createLibraryContext()
+        const register = vi.spyOn(context.commands, "register")
+        await activateLibrary(context, undefined)
 
         expect(libraryStore.initialized).toBe(true)
+        expect(register).toHaveBeenCalled()
+        for (const [command] of register.mock.calls) {
+            expect(typeof command.englishLabel, command.id).toBe("function")
+            const englishLabel = command.englishLabel as () => string
+            expect(englishLabel().trim(), command.id).toBeTruthy()
+        }
     })
 })

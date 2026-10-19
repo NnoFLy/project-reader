@@ -355,6 +355,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.selection.toggle": {
             id: "library.selection.toggle",
             label: () => m.select(),
+            englishLabel: () => m.select({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: (payload) => {
@@ -435,6 +436,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.node.move": {
             id: "library.node.move",
             label: () => m.move(),
+            englishLabel: () => m.move({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: async (payload) => {
@@ -455,6 +457,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.node.pin.toggle": {
             id: "library.node.pin.toggle",
             label: () => m.pin(),
+            englishLabel: () => m.pin({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: async (payload) => {
@@ -467,6 +470,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.node.delete": {
             id: "library.node.delete",
             label: () => m.delete_selected(),
+            englishLabel: () => m.delete_selected({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: async (payload) => {
@@ -484,6 +488,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.node.edit-metadata": {
             id: "library.node.edit-metadata",
             label: () => m.edit_metadata(),
+            englishLabel: () => m.edit_metadata({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: async (payload) => {
@@ -513,6 +518,7 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
         "library.node.relink": {
             id: "library.node.relink",
             label: () => m.locate_file(),
+            englishLabel: () => m.locate_file({}, { locale: "en" }),
             category: "commands",
             palette: false,
             run: async (payload) => {

@@ -29,7 +29,8 @@ export function buildGotoPageItems(query: string, totalPages: number): PromptIte
     return [
         {
             id: `goto-page-${page}`,
-            label: `${m.keymap_goto_page()} ${page}`,
+            label: m.go_to_page({ page }),
+            englishLabel: m.go_to_page({ page }, { locale: "en" }),
             category: "navigation",
             value: page,
         },
@@ -55,6 +56,7 @@ export function buildSearchItems(input: {
     return input.matches.slice(0, 200).map((match, matchIndex) => ({
         id: `search-match-${match.pageNumber}-${match.start}-${match.end}`,
         label: `${m.page()} ${match.pageNumber}`,
+        englishLabel: `${m.page({}, { locale: "en" })} ${match.pageNumber}`,
         description: matchContext(input.pageText(match.pageNumber), match.start, match.end),
         category: "navigation",
         value: { kind: "match", query: cleanQuery, matchIndex },

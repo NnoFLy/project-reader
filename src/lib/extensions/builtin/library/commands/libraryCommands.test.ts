@@ -60,9 +60,8 @@ afterEach(() => {
 })
 
 describe("library commands", () => {
-    it("gives every palette command a non-empty English alias", () => {
+    it("gives every command a non-empty English alias for host Prompt discovery", () => {
         for (const command of Object.values(libraryCommands)) {
-            if ("palette" in command && command.palette === false) continue
             expect(
                 "englishLabel" in command ? command.englishLabel().trim() : undefined,
                 command.id,
