@@ -31,30 +31,28 @@
 </script>
 
 <footer class="viewer-footer" aria-label={m.viewer_footer()}>
-    {#if viewport.isCompact}
-        <div class="mobile-scrub-bar">
-            <Input
-                unstyled
-                type="range"
-                min="1"
-                max={totalPages}
-                value={currentPage}
-                oninput={(e) => {
-                    const val = parseInt((e.target as HTMLInputElement).value, 10)
-                    if (!isNaN(val) && val >= 1 && val <= totalPages) {
-                        void commandsStore.execute("viewer.page.go-to", {
-                            page: val,
-                            isJump: false,
-                        })
-                    }
-                }}
-                class="mobile-scrubber"
-                disabled={isPageLoading}
-                aria-label={m.mobile_scrub_slider_aria()}
-            />
-            <div class="mobile-progress" style="width: {(currentPage / totalPages) * 100}%"></div>
-        </div>
-    {/if}
+    <div class="footer-scrub-bar">
+        <Input
+            unstyled
+            type="range"
+            min="1"
+            max={totalPages}
+            value={currentPage}
+            oninput={(e) => {
+                const page = parseInt((e.target as HTMLInputElement).value, 10)
+                if (page >= 1 && page <= totalPages) {
+                    void commandsStore.execute("viewer.page.go-to", {
+                        page,
+                        isJump: false,
+                    })
+                }
+            }}
+            class="footer-scrubber"
+            disabled={isPageLoading}
+            aria-label={m.scrub_slider_aria()}
+        />
+        <div class="footer-progress" style="width: {(currentPage / totalPages) * 100}%"></div>
+    </div>
 
     <Button
         variant="action"
@@ -86,31 +84,6 @@
         />
         {m.of_pages({ total: totalPages })}
     </div>
-
-    {#if !viewport.isCompact}
-        <div class="scrubber-container">
-            <Input
-                unstyled
-                type="range"
-                min="1"
-                max={totalPages}
-                value={currentPage}
-                oninput={(e) => {
-                    const val = parseInt((e.target as HTMLInputElement).value, 10)
-                    if (!isNaN(val) && val >= 1 && val <= totalPages) {
-                        void commandsStore.execute("viewer.page.go-to", {
-                            page: val,
-                            isJump: false,
-                        })
-                    }
-                }}
-                class="footer-scrubber"
-                style={`--progress: ${(currentPage / totalPages) * 100}%`}
-                disabled={isPageLoading}
-                aria-label={m.scrub_slider_aria()}
-            />
-        </div>
-    {/if}
 
     <Button
         variant="action"
@@ -252,85 +225,39 @@
         }
     }
 
-    /* Scrubber Styles */
-    .scrubber-container {
-        flex: 1;
-        max-width: 320px;
-        margin: 0 16px;
-        display: flex;
-        align-items: center;
-    }
-
-    .scrubber-container :global(.footer-scrubber) {
-        width: 100%;
+    /* Full-width scrub bar at the top edge of the footer on every screen size. */
+    .footer-scrub-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
         height: 4px;
-        appearance: none;
-        -webkit-appearance: none;
-        background: linear-gradient(
-            to right,
-            var(--progress-color) 0 var(--progress),
-            var(--surface-color) var(--progress) 100%
-        );
-        border: 0;
-        border-radius: 999px;
-        outline: none;
-        box-sizing: border-box;
+        background: var(--surface-color);
+        z-index: var(--z-10);
     }
 
-    .scrubber-container :global(.footer-scrubber::-webkit-slider-thumb) {
-        appearance: none;
-        -webkit-appearance: none;
-        width: 12px;
-        height: 12px;
-        background: var(--progress-color);
-        border: 0;
-        border-radius: 50%;
-        cursor: pointer;
-        transition: transform 0.1s ease;
-    }
-
-    .scrubber-container :global(.footer-scrubber::-webkit-slider-thumb:hover) {
-        transform: scale(1.1);
-    }
-
-    .scrubber-container :global(.footer-scrubber::-moz-range-thumb) {
-        width: 12px;
-        height: 12px;
-        background: var(--progress-color);
-        border: 0;
-        cursor: pointer;
-        border-radius: 50%;
-        transition: transform 0.1s ease;
-    }
-
-    .scrubber-container :global(.footer-scrubber::-moz-range-thumb:hover) {
-        transform: scale(1.1);
-    }
-
-    /* Mobile Scrub Bar at the top edge of footer */
-    .mobile-scrub-bar {
+    .footer-scrub-bar :global(.footer-scrubber) {
         position: absolute;
         top: -4px;
         left: 0;
-        right: 0;
-        height: 12px;
-        z-index: var(--z-10);
-        display: flex;
-        align-items: center;
-    }
-
-    .mobile-scrub-bar :global(.mobile-scrubber) {
-        position: absolute;
-        inset: 0;
         width: 100%;
-        height: 100%;
+        height: 12px;
         margin: 0;
         opacity: 0;
         cursor: pointer;
         z-index: 12;
     }
 
-    .mobile-progress {
+    .footer-scrub-bar:has(:global(.footer-scrubber:focus-visible)) {
+        outline: 2px solid var(--focus-color);
+        outline-offset: 2px;
+    }
+
+    .footer-scrub-bar :global(.footer-scrubber:disabled) {
+        cursor: not-allowed;
+    }
+
+    .footer-progress {
         height: 4px;
         background: var(--progress-color);
         transition: width 0.1s ease;
