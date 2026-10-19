@@ -128,10 +128,10 @@
         cursor: pointer;
         user-select: none;
         transition:
-            background-color 0.12s ease,
-            border-color 0.12s ease,
-            box-shadow 0.12s ease,
-            transform 0.12s ease;
+            background-color 0.1s ease,
+            border-color 0.1s ease,
+            box-shadow 0.1s ease,
+            transform 0.1s ease;
     }
 
     .button.square {
@@ -144,9 +144,9 @@
 
     @media (hover: hover) {
         .action-btn:hover:not(:disabled):not(:active):not(.active):not(.open) {
-            transform: translate(-2px, -2px);
-            background: var(--surface-hover-color, #faf8f5);
-            box-shadow: 4px 4px 0 var(--shadow-color);
+            transform: translate(-1px, -1px);
+            background: var(--surface-hover-color);
+            box-shadow: var(--shadow-elevated);
         }
 
         .action-btn.square:hover:not(:disabled):not(:active):not(.active):not(.open) {
@@ -163,7 +163,7 @@
     .action-btn:active:not(:disabled),
     .action-btn.active:not(:disabled),
     .action-btn.open:not(:disabled) {
-        transform: translate(2px, 2px);
+        transform: translate(1px, 1px);
         background: var(--accent-active-color);
         border-color: var(--border-color);
         box-shadow: 0 0 0 var(--shadow-color);
@@ -187,11 +187,11 @@
         position: relative;
         box-sizing: border-box;
         transition:
-            transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-            opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            background-color 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            color 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+            transform 0.1s ease,
+            opacity 0.1s ease,
+            box-shadow 0.1s ease,
+            background-color 0.1s ease,
+            color 0.1s ease;
         color: var(--btn-text, var(--text-color, #1a1a1a));
         padding: 0;
         width: 50px;
@@ -200,7 +200,7 @@
 
     @media (hover: hover) {
         .fab-btn:hover:not(:disabled):not(:active):not(.active):not(.open) {
-            color: var(--accent-color, #6c5ce7);
+            color: var(--accent-color);
         }
     }
 
@@ -237,11 +237,11 @@
         user-select: none;
         box-sizing: border-box;
         transition:
-            background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-            transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            background-color 0.1s ease,
+            border-color 0.1s ease,
+            box-shadow 0.1s ease,
+            color 0.1s ease,
+            transform 0.1s ease;
         line-height: 1.2;
         text-align: center;
     }
@@ -249,8 +249,8 @@
     @media (hover: hover) {
         .brutalist-btn:hover:not(:disabled):not(:active):not(.active):not(.open),
         .brutalist-btn:focus-visible:not(:disabled):not(:active):not(.active):not(.open) {
-            transform: translate(-2px, -2px);
-            box-shadow: 4px 4px 0 var(--shadow-color, var(--shadow-color, #1a1a1a));
+            transform: translate(-1px, -1px);
+            box-shadow: var(--shadow-elevated);
             background: var(--accent-color, var(--surface-hover-color, #faf8f5));
             outline: none;
         }

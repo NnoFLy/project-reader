@@ -51,9 +51,9 @@
 
 <style>
     .breadcrumbs-nav {
-        --font-size: clamp(var(--font-size-lg), 3vw, var(--font-size-2xl));
-        --gap: clamp(6px, 2vw, 12px);
-        margin-bottom: 20px;
+        --font-size: clamp(var(--font-size-sm), 2vw, var(--font-size-base));
+        --gap: clamp(6px, 1.5vw, 10px);
+        margin-bottom: 12px;
     }
 
     .breadcrumbs-list {
@@ -84,14 +84,14 @@
         font-weight: normal;
         margin: 0;
         color: var(--text-color);
-        letter-spacing: 1px;
+        letter-spacing: 0.01em;
         background: transparent;
         border: none;
         padding: 0;
         cursor: pointer;
         font-family: var(--ui-font);
         overflow-wrap: anywhere;
-        transition: opacity 0.15s ease;
+        transition: opacity 0.12s ease;
     }
 
     .breadcrumb-text-btn:not(.active):hover {
@@ -100,7 +100,7 @@
     }
 
     .breadcrumb-text-btn.active {
-        font-weight: bold;
+        font-weight: 600;
         cursor: default;
     }
 

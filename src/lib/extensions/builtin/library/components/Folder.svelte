@@ -78,15 +78,15 @@
 
     @media (hover: hover) {
         .card:hover {
-            transform: translate(-4px, -4px);
-            box-shadow: 8px 8px 0 var(--shadow-color);
+            transform: translate(-1px, -1px);
+            box-shadow: var(--shadow-elevated);
             background-color: var(--surface-hover-color);
         }
     }
 
     .card:focus-visible {
-        transform: translate(-4px, -4px);
-        box-shadow: 8px 8px 0 var(--shadow-color);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-elevated);
         background-color: var(--surface-hover-color);
         outline: none;
     }

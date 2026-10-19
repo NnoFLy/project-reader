@@ -143,11 +143,11 @@
     }
 
     .sidebar.overlay.left {
-        box-shadow: 6px 0 0 var(--shadow-color);
+        box-shadow: var(--shadow-elevated);
     }
 
     .sidebar.overlay.right {
-        box-shadow: -6px 0 0 var(--shadow-color);
+        box-shadow: -4px 4px 0 var(--shadow-color);
     }
 
     .sidebar-body {

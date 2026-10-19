@@ -449,9 +449,9 @@
         min-height: 0;
         overflow: hidden;
         background: var(--surface-color);
-        border: 3px solid var(--border-color);
+        border: var(--border-elevated) solid var(--border-color);
         border-radius: var(--radius-md);
-        box-shadow: 6px 6px 0 var(--shadow-color);
+        box-shadow: var(--shadow-elevated);
         color: var(--text-color);
         font-family: inherit;
     }
@@ -490,7 +490,7 @@
         min-width: 0;
         min-height: 52px;
         box-sizing: border-box;
-        padding: 16px 24px;
+        padding: 12px 16px;
         border-bottom: 2px solid var(--border-color);
     }
 
@@ -517,9 +517,8 @@
         margin: 0;
         overflow-wrap: anywhere;
         font-size: var(--font-size-3xl);
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: -0.01em;
     }
 
     .modal-scroll-region,
@@ -589,7 +588,7 @@
     }
 
     .confirmation-body {
-        padding: 24px;
+        padding: 20px;
     }
     .confirmation-message {
         margin: 0;

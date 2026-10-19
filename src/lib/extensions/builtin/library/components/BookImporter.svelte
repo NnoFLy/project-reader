@@ -292,7 +292,7 @@
     @media (hover: hover) and (pointer: fine) {
         .import-action:hover:not(:disabled):not(:active) {
             transform: translate(-1px, -1px);
-            box-shadow: 6px 6px 0 var(--shadow-color);
+            box-shadow: var(--shadow-elevated);
         }
 
         .import-action:hover:not(:disabled):not(:active) :global(svg) {
@@ -324,12 +324,12 @@
     .reader-card {
         grid-column: 1 / -1;
         background: var(--surface-color);
-        border: 3px solid var(--border-color);
+        border: var(--border-elevated) solid var(--border-color);
         box-shadow: var(--shadow-elevated);
-        margin-top: 8px;
+        margin-top: 4px;
         transition:
-            transform 0.15s ease,
-            box-shadow 0.15s ease;
+            background-color 0.12s ease,
+            border-color 0.12s ease;
         overflow: hidden;
     }
 
@@ -346,11 +346,11 @@
         cursor: pointer;
         box-shadow: var(--shadow-elevated);
         transition:
-            background-color 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            border-color 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            color 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+            background-color 0.1s ease,
+            border-color 0.1s ease,
+            box-shadow 0.1s ease,
+            color 0.1s ease,
+            transform 0.1s ease;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -380,42 +380,47 @@
 
     /* Upload Screen */
     .upload-zone {
-        padding: clamp(20px, 5vw, 36px);
-        text-align: center;
+        padding: clamp(16px, 3vw, 24px);
+        text-align: left;
         background: var(--surface-color);
     }
 
     .dashed-border {
-        border: 2px dashed var(--border-color);
-        padding: clamp(20px, 4vw, 32px) 20px;
-        display: flex;
-        flex-direction: column;
+        border: var(--border-inline) dashed var(--border-color);
+        padding: clamp(16px, 3vw, 24px);
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas:
+            "icon heading action"
+            "icon copy action";
         align-items: center;
-        gap: 16px;
+        gap: 4px 16px;
     }
 
     .upload-icon-wrapper {
         background: var(--primary-color);
         border: 2.5px solid var(--border-color);
-        padding: 16px;
+        padding: 12px;
         border-radius: var(--radius-full);
         display: inline-flex;
-        box-shadow: 3px 3px 0 var(--shadow-color);
+        box-shadow: var(--shadow-inline);
         color: var(--primary-text-color);
-        margin-bottom: 8px;
+        grid-area: icon;
     }
 
     .dashed-border h3 {
         margin: 0;
-        font-size: var(--font-size-3xl);
-        font-weight: 900;
-        letter-spacing: -0.5px;
+        font-size: var(--font-size-2xl);
+        font-weight: 700;
+        letter-spacing: -0.02em;
         color: var(--text-color);
+        grid-area: heading;
     }
 
     .empty-copy {
         display: grid;
-        gap: 4px;
+        gap: 2px;
+        grid-area: copy;
     }
 
     .dashed-border p {
@@ -429,8 +434,9 @@
     }
 
     .upload-btn {
-        margin-top: 8px;
+        margin-top: 0;
         background: var(--primary-color);
+        grid-area: action;
         color: var(--primary-text-color);
         border-color: var(--border-color);
     }
@@ -474,15 +480,15 @@
 
     @media (hover: hover) {
         .card:hover:not(:disabled) {
-            transform: translate(-4px, -4px);
-            box-shadow: 8px 8px 0 var(--shadow-color);
+            transform: translate(-1px, -1px);
+            box-shadow: var(--shadow-elevated);
             background-color: var(--surface-hover-color);
         }
     }
 
     .card:focus-visible:not(:disabled) {
-        transform: translate(-4px, -4px);
-        box-shadow: 8px 8px 0 var(--shadow-color);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-elevated);
         background-color: var(--surface-hover-color);
         outline: none;
     }
@@ -589,16 +595,21 @@
         }
 
         .upload-zone {
-            padding: 24px 16px;
+            padding: 16px 12px;
         }
 
         .dashed-border {
-            padding: 24px 12px;
-            gap: 12px;
+            grid-template-columns: auto minmax(0, 1fr);
+            grid-template-areas:
+                "icon heading"
+                "icon copy"
+                "action action";
+            padding: 16px 12px;
+            gap: 4px 12px;
         }
 
         .dashed-border h3 {
-            font-size: var(--font-size-2xl);
+            font-size: var(--font-size-xl);
         }
 
         .dashed-border p {
@@ -620,15 +631,15 @@
     .card.drag-active {
         background-color: var(--surface-hover-color);
         border-color: var(--primary-color);
-        transform: translate(-6px, -6px);
-        box-shadow: 8px 8px 0 var(--shadow-color);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-elevated);
     }
 
     .reader-card.drag-active {
         border-color: var(--primary-color);
         background-color: var(--surface-hover-color);
-        transform: translate(-4px, -4px);
-        box-shadow: 12px 12px 0 var(--shadow-color);
+        transform: translate(-1px, -1px);
+        box-shadow: var(--shadow-elevated);
     }
 
     .reader-card.drag-active .dashed-border {

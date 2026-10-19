@@ -255,11 +255,11 @@ class SettingsStore {
         document.documentElement.lang = this.language
         document.documentElement.dir = "ltr"
 
-        const activeThemeColor = isDark ? "#000000" : "#f5f0e1"
+        const activeThemeColor = isDark ? "#171a16" : "#f3eedf"
         for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
             const isDarkMeta = meta.id.endsWith("dark")
             meta.content =
-                this.theme === "system" ? (isDarkMeta ? "#000000" : "#f5f0e1") : activeThemeColor
+                this.theme === "system" ? (isDarkMeta ? "#171a16" : "#f3eedf") : activeThemeColor
             meta.media =
                 this.theme === "system"
                     ? isDarkMeta

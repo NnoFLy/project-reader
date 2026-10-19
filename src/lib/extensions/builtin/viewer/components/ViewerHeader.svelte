@@ -151,8 +151,8 @@
         gap: 12px;
         background: var(--viewer-chrome-color);
         border-bottom: var(--border-inline) solid var(--border-color);
-        min-height: calc(56px + env(safe-area-inset-top));
-        max-height: calc(56px + env(safe-area-inset-top));
+        min-height: calc(52px + env(safe-area-inset-top));
+        max-height: calc(52px + env(safe-area-inset-top));
         box-sizing: border-box;
         padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px
             calc(16px + env(safe-area-inset-left));
@@ -169,13 +169,13 @@
     }
 
     .doc-info {
-        gap: 16px;
+        gap: 10px;
         min-width: 0;
         flex: 1;
     }
 
     .header-actions {
-        gap: 12px;
+        gap: 8px;
         flex-shrink: 0;
     }
 
@@ -187,8 +187,8 @@
 
     .file-name {
         min-width: 0;
-        font-size: var(--font-size-xl);
-        font-weight: 900;
+        font-size: var(--font-size-lg);
+        font-weight: 600;
         color: var(--text-color);
         white-space: nowrap;
         overflow: hidden;
@@ -198,7 +198,7 @@
 
     @media (--mobile) {
         .viewer-header {
-            min-height: calc(52px + env(safe-area-inset-top));
+            min-height: calc(46px + env(safe-area-inset-top));
             box-sizing: border-box;
             gap: 8px;
             padding: calc(4px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px
@@ -217,7 +217,7 @@
 
         .file-name {
             font-size: max(0.875rem, var(--font-size-base));
-            font-weight: 700;
+            font-weight: 600;
         }
 
         .settings-text,

@@ -351,8 +351,8 @@
     }
 
     .pdf-image-wrapper {
-        border: 3px solid var(--border-color);
-        box-shadow: 12px 12px 0 var(--shadow-color);
+        border: var(--border-elevated) solid var(--border-color);
+        box-shadow: var(--shadow-elevated);
         display: inline-flex;
         position: relative;
     }
@@ -368,8 +368,8 @@
     }
 
     .placeholder {
-        border: 3px solid var(--border-color);
-        box-shadow: 12px 12px 0 var(--shadow-color);
+        border: var(--border-elevated) solid var(--border-color);
+        box-shadow: var(--shadow-elevated);
         background: var(--canvas-bg-color);
         display: flex;
         align-items: center;

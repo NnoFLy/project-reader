@@ -202,10 +202,10 @@
 
     .dropdown-menu {
         position: absolute;
-        top: calc(100% + 8px);
+        top: calc(100% + 6px);
         background: var(--surface-color);
-        border: 2px solid var(--border-color);
-        box-shadow: 4px 4px 0 var(--shadow-color);
+        border: var(--border-inline) solid var(--border-color);
+        box-shadow: var(--shadow-elevated);
         min-width: 160px;
         z-index: var(--z-sticky);
         overflow: hidden;
@@ -235,11 +235,12 @@
         color: var(--text-color);
         font-family: inherit;
         font-size: var(--font-size-base);
-        font-weight: 800;
-        text-transform: uppercase;
+        font-weight: 600;
         cursor: pointer;
         text-align: left;
-        transition: background-color 0.1s ease;
+        transition:
+            background-color 0.1s ease,
+            box-shadow 0.1s ease;
         box-sizing: border-box;
     }
 

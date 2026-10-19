@@ -281,12 +281,12 @@
         gap: 0.1rem;
         min-width: 5.5rem;
         padding: 0.6rem 0.85rem;
-        border: 1px solid hsl(220 20% 35% / 0.8);
-        border-radius: 0.75rem;
-        color: hsl(210 30% 96%);
-        background: hsl(222 26% 15% / 0.96);
-        box-shadow: 0 0.75rem 2rem hsl(220 40% 4% / 0.32);
-        font: 0.875rem/1.25 var(--font-sans, sans-serif);
+        border: var(--border-inline) solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-color);
+        background: var(--surface-color);
+        box-shadow: var(--shadow-elevated);
+        font: var(--font-size-sm) / 1.25 var(--ui-font);
         text-align: center;
         pointer-events: none;
     }
@@ -296,10 +296,10 @@
     }
 
     .host-contextual-status span {
-        color: hsl(210 20% 76%);
-        font-size: 0.72rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
+        color: var(--faded-text-color);
+        font-family: var(--ui-mono-font);
+        font-size: var(--font-size-xs);
+        letter-spacing: 0.02em;
     }
 
     .host-notifications {
@@ -313,24 +313,24 @@
     }
 
     .host-notification {
-        border: 1px solid hsl(220 20% 35% / 0.8);
-        border-radius: 0.75rem;
-        padding: 0.8rem 1rem;
-        color: hsl(210 30% 96%);
-        background: hsl(222 26% 15% / 0.96);
-        box-shadow: 0 0.75rem 2rem hsl(220 40% 4% / 0.32);
-        font: 0.875rem/1.4 var(--font-sans, sans-serif);
+        border: var(--border-inline) solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: 0.7rem 0.85rem;
+        color: var(--text-color);
+        background: var(--surface-color);
+        box-shadow: var(--shadow-elevated);
+        font: var(--font-size-sm) / 1.4 var(--ui-font);
     }
 
     .host-notification-success {
-        border-color: hsl(145 55% 42% / 0.9);
+        border-color: var(--color-action);
     }
 
     .host-notification-warning {
-        border-color: hsl(38 85% 52% / 0.9);
+        border-color: var(--color-marker);
     }
 
     .host-notification-error {
-        border-color: hsl(0 72% 58% / 0.9);
+        border-color: var(--color-danger);
     }
 </style>

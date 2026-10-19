@@ -546,13 +546,15 @@
 
     @media (hover: hover) {
         .card:hover:not(.is-placeholder) {
-            transform: translate(-4px, -4px);
-            box-shadow: 8px 8px 0 var(--shadow-color);
+            transform: translate(-1px, -1px);
+            box-shadow: var(--shadow-elevated);
             background-color: var(--surface-hover-color);
         }
 
         .card.is-selected:hover:not(.is-placeholder) {
-            box-shadow: 8px 8px 0 var(--selection-color);
+            box-shadow:
+                var(--shadow-elevated),
+                0 0 0 1px var(--selection-color);
         }
     }
 
@@ -577,8 +579,8 @@
     }
 
     .card:active:not(.is-placeholder) {
-        transform: translate(2px, 2px);
-        box-shadow: 2px 2px 0 var(--shadow-color);
+        transform: translate(1px, 1px);
+        box-shadow: 0 0 0 var(--shadow-color);
     }
 
     .card.is-selected:active:not(.is-placeholder) {
@@ -612,7 +614,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        animation: badge-pop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        animation: badge-pop 0.12s ease-out;
     }
 
     @keyframes badge-pop {
@@ -700,6 +702,7 @@
     }
 
     .card-author {
+        font-family: var(--ui-mono-font);
         font-size: var(--font-size-2xs);
         font-weight: 600;
         margin: 0;
@@ -718,6 +721,7 @@
 
     .badge {
         position: absolute;
+        font-family: var(--ui-mono-font);
         top: 15px;
         left: 15px;
         background: var(--active-color);
@@ -725,11 +729,10 @@
         font-size: var(--font-size-sm);
         font-weight: bold;
         padding: 4px 10px;
-        transform: rotate(-10deg);
+        transform: none;
         border: 1.5px solid var(--border-color);
         box-shadow: 2px 2px 0 var(--shadow-color);
         z-index: var(--z-10);
-        text-transform: uppercase;
     }
 
     .card-menu {
@@ -806,6 +809,7 @@
 
     .progress-text {
         position: absolute;
+        font-family: var(--ui-mono-font);
         inset: 0;
         display: flex;
         align-items: center;
@@ -944,14 +948,7 @@
     }
 
     .skeleton {
-        background: linear-gradient(
-            105deg,
-            color-mix(in srgb, var(--surface-color) 72%, var(--accent-color)) 35%,
-            color-mix(in srgb, var(--surface-hover-color) 62%, var(--accent-color)) 48%,
-            color-mix(in srgb, var(--surface-color) 72%, var(--accent-color)) 61%
-        );
-        background-size: 220% 100%;
-        animation: skeleton-shimmer 1.6s ease-in-out infinite;
+        background: color-mix(in srgb, var(--surface-hover-color) 78%, var(--accent-color));
     }
 
     .cover-skeleton {
@@ -970,15 +967,6 @@
         opacity: 0.75;
     }
 
-    @keyframes skeleton-shimmer {
-        from {
-            background-position: 100% 0;
-        }
-        to {
-            background-position: -100% 0;
-        }
-    }
-
     @media (prefers-reduced-motion: reduce) {
         .selection-badge,
         .skeleton {
@@ -986,7 +974,7 @@
         }
 
         .skeleton {
-            background-position: 50% 0;
+            background: color-mix(in srgb, var(--surface-hover-color) 78%, var(--accent-color));
         }
     }
 </style>

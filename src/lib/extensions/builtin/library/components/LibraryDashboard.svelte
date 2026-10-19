@@ -509,18 +509,18 @@
 
 <style>
     .container {
-        max-width: 1200px;
+        max-width: 1280px;
         margin: 0 auto;
         display: flex;
         flex-direction: column;
-        padding-bottom: 100px;
+        padding-bottom: 64px;
     }
 
     .library-actions {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-bottom: 20px;
+        gap: 8px;
+        margin-bottom: 16px;
         font-family: var(--ui-font);
     }
 
@@ -550,7 +550,7 @@
             auto-fill,
             minmax(min(100%, var(--library-card-min, 11rem)), 1fr)
         );
-        gap: 24px;
+        gap: 16px;
     }
 
     main.selection-mode .grid {
@@ -593,7 +593,7 @@
         bottom: 24px;
         left: 50%;
         transform: translateX(-50%);
-        padding: 12px 24px;
+        padding: 8px 12px;
         display: flex;
         align-items: center;
         z-index: var(--z-modal);
@@ -604,7 +604,7 @@
     .selection-actions {
         display: flex;
         align-items: stretch;
-        gap: 12px;
+        gap: 8px;
         flex: 1;
         justify-content: center;
     }
@@ -622,7 +622,7 @@
         .selection-bar {
             bottom: 16px;
             padding: 8px 16px;
-            gap: 16px;
+            gap: 8px;
             min-width: auto;
             flex-direction: row;
             align-items: center;
@@ -662,7 +662,7 @@
         height: 44px;
         background: var(--surface-color);
         border: 2px solid var(--border-color);
-        box-shadow: 3px 3px 0 var(--shadow-color);
+        box-shadow: var(--shadow-inline);
         border-radius: var(--radius-full);
         display: flex;
         align-items: center;
@@ -671,14 +671,14 @@
         color: var(--text-color);
         padding: 0;
         transition:
-            transform 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            box-shadow 0.1s cubic-bezier(0.4, 0, 0.2, 1),
-            background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            transform 0.1s ease,
+            box-shadow 0.1s ease,
+            background-color 0.12s ease;
     }
 
     .mobile-prompt-btn:active {
         transform: translate(1px, 1px);
-        box-shadow: 1px 1px 0 var(--shadow-color);
+        box-shadow: 0 0 0 var(--shadow-color);
         background: var(--surface-hover-color);
     }
 

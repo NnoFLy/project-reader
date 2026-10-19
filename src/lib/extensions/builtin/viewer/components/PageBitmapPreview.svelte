@@ -150,8 +150,8 @@
     .pdf-image-wrapper {
         display: inline-flex;
         position: relative;
-        border: 3px solid var(--border-color);
-        box-shadow: 12px 12px 0 var(--shadow-color);
+        border: var(--border-elevated) solid var(--border-color);
+        box-shadow: var(--shadow-elevated);
         transform-origin: top center;
     }
 
@@ -169,8 +169,8 @@
         display: flex;
         position: relative;
         align-items: flex-start;
-        border: 3px solid var(--border-color);
-        box-shadow: 12px 12px 0 var(--shadow-color);
+        border: var(--border-elevated) solid var(--border-color);
+        box-shadow: var(--shadow-elevated);
         background: var(--canvas-bg-color);
     }
 

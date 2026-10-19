@@ -133,12 +133,12 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 16px;
+        gap: 10px;
         background: var(--viewer-chrome-color);
         border-top: var(--border-inline) solid var(--border-color);
         font-family: var(--ui-font);
-        min-height: calc(56px + env(safe-area-inset-bottom));
-        max-height: calc(56px + env(safe-area-inset-bottom));
+        min-height: calc(52px + env(safe-area-inset-bottom));
+        max-height: calc(52px + env(safe-area-inset-bottom));
         box-sizing: border-box;
         padding: 6px calc(16px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom))
             calc(16px + env(safe-area-inset-left));
@@ -155,8 +155,8 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        font-weight: 700;
-        font-size: var(--font-size-xl);
+        font-weight: 600;
+        font-size: var(--font-size-base);
         color: var(--text-color);
         font-family: var(--ui-font);
         font-variant-numeric: tabular-nums;

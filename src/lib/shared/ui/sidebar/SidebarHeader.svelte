@@ -51,12 +51,12 @@
         align-items: center;
         justify-content: space-between;
         box-sizing: border-box;
-        height: 56px;
+        height: 48px;
         gap: 12px;
         overflow: hidden;
-        padding: 10px 12px;
+        padding: 8px 12px;
         border-bottom: var(--border-inline) solid var(--border-color);
-        background: var(--accent-active-color);
+        background: var(--color-surface-raised);
         font-family: var(--ui-font);
     }
 
@@ -75,7 +75,7 @@
         color: var(--text-color);
         font-size: var(--font-size-lg);
         font-family: var(--ui-font);
-        font-weight: 800;
+        font-weight: 700;
     }
 
     @media (--compact) {
@@ -88,8 +88,8 @@
 
     @media (--tiny-mobile) {
         .sidebar-header {
-            height: calc(66px + env(safe-area-inset-top));
-            min-height: calc(66px + env(safe-area-inset-top));
+            height: calc(58px + env(safe-area-inset-top));
+            min-height: calc(58px + env(safe-area-inset-top));
             gap: 8px;
             border-bottom-width: var(--border-inline);
         }

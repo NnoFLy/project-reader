@@ -167,9 +167,9 @@
 
     .editor-header .modal-title {
         margin: 0;
-        font-family: Georgia, "Times New Roman", Times, serif;
+        font-family: var(--ui-font);
         font-size: var(--font-size-2xl);
-        font-weight: 900;
+        font-weight: 700;
         line-height: 1.1;
     }
 
