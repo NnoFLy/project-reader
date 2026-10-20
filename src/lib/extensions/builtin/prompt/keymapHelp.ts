@@ -1,3 +1,5 @@
+import { KeyboardHandler } from "$lib/core/commands/keyboard"
+
 export interface KeymapHelpSource {
     label: string
     englishLabel?: string
@@ -38,14 +40,25 @@ export function buildKeymapHelpItems(
     return items
 }
 
+// Match the displayed modifier order, accepting +, spaces, or - after modifiers.
+function normalizeShortcutSearch(shortcut: string): string {
+    const normalizedSeparators = shortcut
+        .toLowerCase()
+        .replace(/\b(ctrl|meta|mod|alt|shift)(?:\s*[+-]\s*|\s+)(?=\S)/g, "$1+")
+    return KeyboardHandler.getFormattedParts(normalizedSeparators).join("+").toLowerCase()
+}
+
 export function filterKeymapHelpItems(items: KeymapHelpItem[], query: string): KeymapHelpItem[] {
-    const normalizedQuery = query.toLowerCase()
+    const normalizedQuery = query.trim().toLowerCase()
+    const shortcutQuery = normalizeShortcutSearch(query)
+    const matchesKey = (key: string) =>
+        key.toLowerCase().includes(normalizedQuery) ||
+        normalizeShortcutSearch(key).includes(shortcutQuery)
+
     return items.filter(
         (item) =>
             item.description.toLowerCase().includes(normalizedQuery) ||
             item.englishDescription?.toLowerCase().includes(normalizedQuery) ||
-            (Array.isArray(item.keys)
-                ? item.keys.some((key) => key.toLowerCase().includes(normalizedQuery))
-                : item.keys.toLowerCase().includes(normalizedQuery)),
+            (Array.isArray(item.keys) ? item.keys.some(matchesKey) : matchesKey(item.keys)),
     )
 }
