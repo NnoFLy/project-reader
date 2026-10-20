@@ -21,10 +21,17 @@ export function createViewerRuntime(
     store: ViewerStore,
     executeCommand: ViewerRuntime["executeCommand"],
     relinkHost?: Component,
+    writeSignal?: AbortSignal,
 ): ViewerRuntime {
     const notes = new NotesStore(store.library, store.libraryMutations)
     const bookmarks = new BookmarksStore(store.library, store.libraryMutations)
-    const search = new SearchStore(undefined, store, store.library, store.libraryMutations)
+    const search = new SearchStore(
+        undefined,
+        store,
+        store.library,
+        store.libraryMutations,
+        writeSignal,
+    )
     return { store, notes, bookmarks, search, executeCommand, relinkHost }
 }
 

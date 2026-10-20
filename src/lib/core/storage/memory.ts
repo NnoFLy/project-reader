@@ -18,9 +18,16 @@ export interface StorageBackend {
 export class MemoryStorageBackend implements StorageBackend {
     private readonly values = new Map<string, StoredValue>()
     private readonly limit?: number
+    private readonly signal?: AbortSignal
 
-    constructor(options?: { quota?: number }) {
+    constructor(options?: { quota?: number; signal?: AbortSignal }) {
         this.limit = options?.quota
+        this.signal = options?.signal
+    }
+
+    /** Memory mutations are synchronous; no physical writes remain after revocation. */
+    whenQuiescent(): Promise<void> {
+        return Promise.resolve()
     }
 
     async get(key: string): Promise<StoredValue | undefined> {
@@ -28,6 +35,7 @@ export class MemoryStorageBackend implements StorageBackend {
     }
 
     async set(key: string, value: StoredValue): Promise<void> {
+        this.signal?.throwIfAborted()
         if (this.limit !== undefined && !this.values.has(key) && this.values.size >= this.limit) {
             throw new StorageError("storage.quota", "Storage quota exceeded")
         }
@@ -35,6 +43,7 @@ export class MemoryStorageBackend implements StorageBackend {
     }
 
     async delete(key: string): Promise<void> {
+        this.signal?.throwIfAborted()
         this.values.delete(key)
     }
 
@@ -77,6 +86,96 @@ function isMigrationJournal(value: unknown): value is MigrationJournal {
 }
 
 /**
+ * One permanently revocable writer lifetime shared by all native IndexedDB writers.
+ * Revoke signal first, then await whenQuiescent() before releasing writer ownership.
+ * Pending opens count as work: a blocked open must not permit an unsafe timeout-release.
+ */
+export class IndexedDBWriteLifetime {
+    readonly signal: AbortSignal
+    private readonly transactions = new Set<IDBTransaction>()
+    private readonly opens = new Set<IDBOpenDBRequest>()
+    private readonly waiters = new Set<() => void>()
+
+    constructor(signal: AbortSignal = new AbortController().signal) {
+        this.signal = signal
+        signal.addEventListener(
+            "abort",
+            () => {
+                for (const transaction of this.transactions) this.abort(transaction)
+            },
+            { once: true },
+        )
+    }
+
+    assertWritable(): void {
+        this.signal.throwIfAborted()
+    }
+
+    /** Register immediately after creation, before issuing any requests. */
+    trackTransaction(transaction: IDBTransaction): void {
+        if (transaction.mode === "readonly" || this.transactions.has(transaction)) return
+        this.transactions.add(transaction)
+        const finish = () => {
+            this.transactions.delete(transaction)
+            this.notifyQuiescent()
+        }
+        transaction.addEventListener("complete", finish, { once: true })
+        transaction.addEventListener("abort", finish, { once: true })
+        if (this.signal.aborted) this.abort(transaction)
+    }
+
+    /** Fence schema writes as well as opens that complete after ownership is revoked. */
+    open(factory: IDBFactory, name: string, version?: number): IDBOpenDBRequest {
+        this.assertWritable()
+        const request = version === undefined ? factory.open(name) : factory.open(name, version)
+        this.opens.add(request)
+        request.addEventListener("upgradeneeded", (event) => {
+            const transaction = request.transaction
+            if (transaction) this.trackTransaction(transaction)
+            if (this.signal.aborted) {
+                // Prevent a consumer's later upgrade handler from touching the schema.
+                event.stopImmediatePropagation()
+                if (transaction) this.abort(transaction)
+            }
+        })
+        const finish = () => {
+            this.opens.delete(request)
+            this.notifyQuiescent()
+        }
+        request.addEventListener(
+            "success",
+            () => {
+                if (this.signal.aborted) request.result.close()
+                finish()
+            },
+            { once: true },
+        )
+        request.addEventListener("error", finish, { once: true })
+        return request
+    }
+
+    /** Safe to release ownership only after revocation and this promise's fulfillment. */
+    whenQuiescent(): Promise<void> {
+        if (!this.transactions.size && !this.opens.size) return Promise.resolve()
+        return new Promise((resolve) => this.waiters.add(resolve))
+    }
+
+    private abort(transaction: IDBTransaction): void {
+        try {
+            transaction.abort()
+        } catch {
+            // Inactive/committing transactions still count until their terminal event.
+        }
+    }
+
+    private notifyQuiescent(): void {
+        if (this.transactions.size || this.opens.size) return
+        for (const resolve of this.waiters) resolve()
+        this.waiters.clear()
+    }
+}
+
+/**
  * A small IndexedDB backend for extension data. IndexedDB is kept behind the
  * core StorageBackend interface so extensions never depend on the database
  * implementation or receive a database handle.
@@ -85,12 +184,28 @@ export class IndexedDBStorageBackend implements StorageBackend {
     private readonly databaseName: string
     private readonly indexedDB: IDBFactory
     private databasePromise: Promise<IDBDatabase> | null = null
+    private readonly lifetime: IndexedDBWriteLifetime
 
-    constructor(options: { databaseName?: string; indexedDB?: IDBFactory } = {}) {
+    constructor(
+        options: {
+            databaseName?: string
+            indexedDB?: IDBFactory
+            signal?: AbortSignal
+            lifetime?: IndexedDBWriteLifetime
+        } = {},
+    ) {
+        if (options.signal && options.lifetime && options.signal !== options.lifetime.signal) {
+            throw new Error("Storage signal must match the shared writer lifetime")
+        }
+        this.lifetime = options.lifetime ?? new IndexedDBWriteLifetime(options.signal)
         this.databaseName = options.databaseName ?? "vfs-extension-storage"
         const indexedDB = options.indexedDB ?? globalThis.indexedDB
         if (!indexedDB) throw new Error("IndexedDB is unavailable")
         this.indexedDB = indexedDB
+    }
+
+    whenQuiescent(): Promise<void> {
+        return this.lifetime.whenQuiescent()
     }
 
     async get(key: string): Promise<StoredValue | undefined> {
@@ -160,7 +275,11 @@ export class IndexedDBStorageBackend implements StorageBackend {
             }
             let transaction: IDBTransaction
             try {
+                // open() can await browser work; ownership must be checked afterwards,
+                // immediately before the physical write transaction is created.
+                if (mode === "readwrite") this.lifetime.assertWritable()
                 transaction = database.transaction("values", mode)
+                this.lifetime.trackTransaction(transaction)
                 transaction.onerror = () =>
                     fail(transaction.error ?? new Error("Storage transaction failed"))
                 transaction.onabort = () =>
@@ -180,7 +299,7 @@ export class IndexedDBStorageBackend implements StorageBackend {
         const promise = new Promise<IDBDatabase>((resolve, reject) => {
             let request: IDBOpenDBRequest
             try {
-                request = this.indexedDB.open(this.databaseName, 1)
+                request = this.lifetime.open(this.indexedDB, this.databaseName, 1)
             } catch (error) {
                 reject(error)
                 return

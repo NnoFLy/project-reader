@@ -1,5 +1,6 @@
 import { Dexie, type Transaction } from "dexie"
 import type { StorageNamespace } from "../extension-api"
+import type { IndexedDBWriteLifetime } from "./storage"
 
 export const LEGACY_LIBRARY_MIGRATION_VERSION = 1
 export const LEGACY_LIBRARY_MIGRATION_MARKER = "legacy-dexie-migration"
@@ -77,25 +78,30 @@ const migrationPromises = new WeakMap<object, Promise<void>>()
 export function migrateLegacyDatabaseToLibrary(
     storage: StorageNamespace,
     legacyDatabase?: LegacyDatabase,
+    options: { lifetime?: IndexedDBWriteLifetime; indexedDB?: IDBFactory } = {},
 ): Promise<void> {
     const existing = migrationPromises.get(storage)
     if (existing) return existing
-    if (!legacyDatabase && typeof indexedDB === "undefined") return Promise.resolve()
+    if (!legacyDatabase && !options.indexedDB && typeof indexedDB === "undefined")
+        return Promise.resolve()
 
     const ownsDatabase = !legacyDatabase
     let database = legacyDatabase
     const migration = (async () => {
         try {
+            options.lifetime?.assertWritable()
             const marker = await storage.get<LegacyMigrationMarker>(LEGACY_LIBRARY_MIGRATION_MARKER)
             if (marker?.completed && marker.version >= LEGACY_LIBRARY_MIGRATION_VERSION) return
 
-            if (!database) database = createLegacyDatabase()
+            options.lifetime?.assertWritable()
+            if (!database) database = createLegacyDatabase(options)
             const source = database
             await storage.set(LEGACY_LIBRARY_MIGRATION_MARKER, {
                 version: LEGACY_LIBRARY_MIGRATION_VERSION,
                 completed: false,
             } satisfies LegacyMigrationMarker)
 
+            options.lifetime?.assertWritable()
             const records = await source.transaction(
                 "r",
                 LEGACY_TABLES.map((table) => table.name),
@@ -113,6 +119,7 @@ export function migrateLegacyDatabaseToLibrary(
                     if (!isRecordWithId(record)) continue
                     const copy = cloneIfPossible(record)
                     const key = `${table.storagePrefix}.${record.id}`
+                    options.lifetime?.assertWritable()
                     await storage.set(key, copy)
                     const persisted = await storage.get<unknown>(key)
                     if (!(await equivalentCloneableValue(copy, persisted))) {
@@ -121,6 +128,7 @@ export function migrateLegacyDatabaseToLibrary(
                 }
             }
 
+            options.lifetime?.assertWritable()
             await storage.set(LEGACY_LIBRARY_MIGRATION_MARKER, {
                 version: LEGACY_LIBRARY_MIGRATION_VERSION,
                 completed: true,
@@ -164,8 +172,27 @@ class DexieLegacyDatabase implements LegacyDatabase {
     }
 }
 
-function createLegacyDatabase(): LegacyDatabase {
-    const database = new Dexie("Database")
+function createLegacyDatabase(options: {
+    lifetime?: IndexedDBWriteLifetime
+    indexedDB?: IDBFactory
+}): LegacyDatabase {
+    const factory = options.indexedDB ?? globalThis.indexedDB
+    const lifetime = options.lifetime
+    // Dexie opens lazily. Fence the native request, including schema upgrades
+    // delivered after a blocked open outlives the host that initiated it.
+    const indexedDB = lifetime
+        ? new Proxy(factory, {
+              get(target, key) {
+                  if (key === "open") {
+                      return (name: string, version?: number) =>
+                          lifetime.open(target, name, version)
+                  }
+                  const value = Reflect.get(target, key)
+                  return typeof value === "function" ? value.bind(target) : value
+              },
+          })
+        : factory
+    const database = new Dexie("Database", { indexedDB })
     database.version(1).stores({ books: "id", previews: "id", folders: "id" })
     database
         .version(2)

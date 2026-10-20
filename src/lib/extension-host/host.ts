@@ -62,7 +62,9 @@ export class ExtensionHost {
     private disposing = false
     private disposal?: Promise<void>
     constructor(options: ExtensionHostOptions) {
-        this.storage = options.storage ?? new MemoryStorageBackend()
+        this.storage =
+            options.storage ??
+            new MemoryStorageBackend({ signal: options.hostContext?.writeSignal })
         this.migration = options.migration
         this.notifications = options.notifications ?? new NotificationServiceImpl()
         this.contextualStatus = new ContextualStatusServiceImpl()

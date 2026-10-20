@@ -1,7 +1,6 @@
 import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
 
 const STORAGE_KEY = "viewer.searchHistory.v1"
-const LEGACY_STORAGE_KEY = "search_history"
 const HISTORY_LIMIT = 10
 
 type HistoryRecord = Record<string, string[]>
@@ -15,13 +14,8 @@ export interface SearchHistoryRepository {
 export class LocalSearchHistoryRepository implements SearchHistoryRepository {
     constructor(
         private readonly storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null,
-    ) {
-        try {
-            this.storage?.removeItem(LEGACY_STORAGE_KEY)
-        } catch {
-            // Storage may be unavailable in private or restricted browser contexts.
-        }
-    }
+        private readonly signal?: AbortSignal,
+    ) {}
 
     load(bookId: string): string[] {
         const histories = this.readAll()
@@ -31,14 +25,14 @@ export class LocalSearchHistoryRepository implements SearchHistoryRepository {
     }
 
     save(bookId: string, queries: readonly string[]): void {
-        if (!this.storage) return
+        if (!this.storage || this.signal?.aborted) return
         const histories = this.readAll()
         histories[bookId] = normalizeHistory(queries)
         this.writeAll(histories)
     }
 
     clear(bookId: string): void {
-        if (!this.storage) return
+        if (!this.storage || this.signal?.aborted) return
         const histories = this.readAll()
         delete histories[bookId]
         this.writeAll(histories)
@@ -58,6 +52,7 @@ export class LocalSearchHistoryRepository implements SearchHistoryRepository {
     }
 
     private writeAll(histories: HistoryRecord): void {
+        if (this.signal?.aborted) return
         try {
             this.storage?.setItem(STORAGE_KEY, JSON.stringify(histories))
         } catch (error) {

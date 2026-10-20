@@ -48,24 +48,28 @@ export class SearchStore {
     private readonly historyRepository: SearchHistoryRepository
     private currentPdf: ViewerPagedDocument | null = null
     private currentBookId: string | null = null
+    private disposed = false
+    private readonly onWriteRevoked = () => this.dispose()
 
     constructor(
-        historyRepository: SearchHistoryRepository = new LocalSearchHistoryRepository(
-            getSafeStorage(),
-        ),
+        historyRepository: SearchHistoryRepository | undefined = undefined,
         private readonly viewer = viewerStore,
         files = getViewerLibraryCapability() ?? vfsStore,
         mutations = getViewerLibraryMutationCapability() ?? vfsMutations,
+        private readonly writeSignal?: AbortSignal,
     ) {
         this.files = files
         this.mutations = mutations
-        this.historyRepository = historyRepository
+        this.historyRepository =
+            historyRepository ?? new LocalSearchHistoryRepository(getSafeStorage(), writeSignal)
         this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
             ? this.files.onContentRestored((bookId) => {
                   if (this.currentBookId !== bookId || !this.currentPdf) return
                   this.restartIndexing()
               })
             : () => undefined
+        if (writeSignal?.aborted) this.dispose()
+        else writeSignal?.addEventListener("abort", this.onWriteRevoked, { once: true })
     }
 
     private restartIndexing() {
@@ -93,6 +97,7 @@ export class SearchStore {
     }
 
     addToHistory(q: string) {
+        if (this.disposed || this.writeSignal?.aborted) return
         const bookId = this.currentBookId
         const trimmed = q.trim()
         if (!bookId || !trimmed) return
@@ -105,6 +110,7 @@ export class SearchStore {
     }
 
     clearHistory() {
+        if (this.disposed || this.writeSignal?.aborted) return
         const bookId = this.currentBookId
         if (!bookId) return
         this.searchHistory = []
@@ -129,6 +135,7 @@ export class SearchStore {
     }
 
     initDocument({ pdf, bookId }: { pdf: ViewerPagedDocument; bookId: string }) {
+        if (this.disposed) return
         if (this.currentPdf === pdf && this.currentBookId === bookId) return
         this.currentPdf = pdf
         this.currentBookId = bookId
@@ -162,6 +169,7 @@ export class SearchStore {
     }
 
     async startIndexing() {
+        if (this.disposed || this.writeSignal?.aborted) return
         if (!this.currentPdf || this.isIndexing || this.pageTexts.size > 0) return
 
         const pdf = this.currentPdf
@@ -546,7 +554,9 @@ export class SearchStore {
     }
 
     resetLifecycle() {
-        this.dispose()
+        if (this.disposed) return
+        this.vfsUnsubscribe()
+        this.reset()
         this.files = getViewerLibraryCapability() ?? vfsStore
         this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
         this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
@@ -558,6 +568,9 @@ export class SearchStore {
     }
 
     dispose() {
+        if (this.disposed) return
+        this.disposed = true
+        this.writeSignal?.removeEventListener("abort", this.onWriteRevoked)
         this.vfsUnsubscribe()
         this.reset()
         if (this.highlightFrameId !== null && typeof cancelAnimationFrame !== "undefined") {

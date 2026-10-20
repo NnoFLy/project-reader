@@ -89,6 +89,7 @@ export async function activateViewer(
         store,
         (id, payload) => context.commands.execute(id, payload),
         relinkHost,
+        context.host?.writeSignal,
     )
     const { notes: notesStore, bookmarks: bookmarksStore, search: searchStore } = runtime
     installViewerRuntime(runtime)

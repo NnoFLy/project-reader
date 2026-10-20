@@ -14,6 +14,8 @@ export interface Application {
 export class ApplicationImpl implements Application {
     private currentState: ApplicationState = "created"
     private readonly listeners = new Set<(state: ApplicationState) => void>()
+    private startup?: Promise<void>
+    private shutdown?: Promise<void>
 
     constructor(readonly host: ExtensionHost) {}
 
@@ -21,18 +23,22 @@ export class ApplicationImpl implements Application {
         return this.currentState
     }
 
-    async start(): Promise<void> {
-        if (this.currentState === "running" || this.currentState === "starting") return
+    start(): Promise<void> {
+        if (this.startup) return this.startup
+        // A disposed host is never reusable. Retry constructs a fresh application.
+        if (this.currentState !== "created") return Promise.resolve()
         this.setState("starting")
-        await this.host.start()
-        this.setState("running")
+        this.startup = this.host.start().then(() => {
+            if (this.currentState === "starting") this.setState("running")
+        })
+        return this.startup
     }
 
-    async stop(): Promise<void> {
-        if (this.currentState === "stopped" || this.currentState === "stopping") return
+    stop(): Promise<void> {
+        if (this.shutdown) return this.shutdown
         this.setState("stopping")
-        await this.host.dispose()
-        this.setState("stopped")
+        this.shutdown = this.host.dispose().finally(() => this.setState("stopped"))
+        return this.shutdown
     }
 
     onStateChange(listener: (state: ApplicationState) => void): Disposable {

@@ -81,6 +81,8 @@ export interface PromptHostCapability {
 }
 
 export interface HostContext {
+    /** Permanently revoked when this host loses permission to persist shared data. */
+    readonly writeSignal?: AbortSignal
     /** Host-wide command discovery and execution for cross-extension UI surfaces. */
     commands?: Pick<CommandRegistry, "get" | "list" | "listKeybindings" | "execute">
     /** Status publication bound to this extension's ID. */

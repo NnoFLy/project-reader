@@ -1,7 +1,9 @@
 <script lang="ts">
     import { onMount, setContext } from "svelte"
     import AppChrome from "./AppChrome.svelte"
-    import { createBuiltinApplication } from "./bootstrap"
+    import { createBrowserApplication } from "./bootstrap"
+    import WriterFeedback from "./WriterFeedback.svelte"
+    import type { WriterApplicationState } from "./writerApplication"
     import { APP_HOST_CONTEXT, type AppHostContext } from "./hostContext"
     import {
         commandsStore,
@@ -13,13 +15,22 @@
     } from "$lib/core/commands"
 
     let { children } = $props()
-    const application = createBuiltinApplication()
-    let ready = $state(false)
+    const writer = createBrowserApplication()
+    let gateState = $state<WriterApplicationState>(writer.state)
+    let mountFailed = $state(false)
+    let suspended = $state(false)
+    let ready = $derived(gateState === "running" && !mountFailed && !suspended)
     const hostContext: AppHostContext = {
-        application,
+        get application() {
+            const application = writer.application
+            if (!application || !ready) throw new Error("Library writer is not running")
+            return application
+        },
         services: {
-            executeCommand: (commandId, payload) =>
-                application.host.commands.execute(commandId, payload),
+            executeCommand: (commandId, payload) => {
+                if (!ready) return Promise.reject(new Error("Library writer is not running"))
+                return writer.executeCommand(commandId, payload)
+            },
         },
         get ready() {
             return ready
@@ -32,9 +43,39 @@
         return KeyboardHandler.candidates(event)
     }
 
+    function failMount() {
+        mountFailed = true
+        void writer.stop()
+    }
+
+    function start() {
+        if (suspended) return
+        mountFailed = false
+        void writer.start().catch(failMount)
+    }
+
+    function handlePagehide() {
+        suspended = true
+        void writer.stop()
+    }
+
+    function reload() {
+        handlePagehide()
+        window.location.reload()
+    }
+
+    function handlePageshow(event: PageTransitionEvent) {
+        // BFCache must never revive a revoked host, backend, or command capability.
+        if (event.persisted) reload()
+    }
+
     onMount(() => {
+        const subscription = writer.onStateChange((next) => {
+            gateState = next
+        })
         const handleKeydown = async (event: KeyboardEvent) => {
-            if (!ready) return
+            const application = writer.application
+            if (!ready || !application) return
 
             // Component command scopes own viewer and prompt shortcuts. Dispatch them before
             // host-level bindings so scoped commands can intentionally shadow global ones.
@@ -61,7 +102,7 @@
             if (bindings.length === 0) return
 
             const enabledBindings = await resolveHostKeybindings(bindings, event)
-            if (enabledBindings.length === 0) return
+            if (!ready || writer.application !== application || enabledBindings.length === 0) return
             if (enabledBindings.length > 1) {
                 const conflict = findKeybindingConflicts(enabledBindings)[0]
                 const description = conflict
@@ -93,12 +134,27 @@
         // library picker use a capture-phase listener for multi-key hints (for example,
         // `fa`); the global command dispatcher must not consume the second key first.
         window.addEventListener("keydown", handleKeydown)
-        void application.start().then(() => (ready = true))
+        try {
+            start()
+        } catch {
+            failMount()
+        }
         return () => {
             window.removeEventListener("keydown", handleKeydown)
-            void application.stop()
+            subscription.dispose()
+            void writer.stop()
         }
     })
 </script>
 
-<AppChrome>{@render children()}</AppChrome>
+<svelte:window onpagehide={handlePagehide} onpageshow={handlePageshow} />
+
+{#if ready}
+    <AppChrome>{@render children()}</AppChrome>
+{:else}
+    <WriterFeedback
+        state={mountFailed && gateState !== "recovery-required" ? "failed" : gateState}
+        retry={start}
+        {reload}
+    />
+{/if}
