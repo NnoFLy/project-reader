@@ -5,114 +5,15 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-const chromium = process.env.CHROMIUM_PATH ?? "/usr/sbin/chromium"
-type Reply = { result?: { value?: unknown }; exceptionDetails?: unknown }
-
-class BrowserPage {
-    private sequence = 0
-    private errors: unknown[] = []
-    private pending = new Map<
-        number,
-        { resolve: (value: Reply) => void; reject: (error: Error) => void }
-    >()
-
-    private constructor(private readonly socket: WebSocket) {
-        socket.addEventListener("message", (event) => {
-            const message = JSON.parse(String(event.data))
-            if (message.method === "Runtime.exceptionThrown")
-                this.errors.push(message.params.exceptionDetails)
-            const pending = this.pending.get(message.id)
-            if (!pending) return
-            this.pending.delete(message.id)
-            if (message.error) pending.reject(new Error(message.error.message))
-            else pending.resolve(message.result)
-        })
-        socket.addEventListener("close", () => {
-            for (const pending of this.pending.values())
-                pending.reject(new Error("Browser page closed"))
-            this.pending.clear()
-        })
-    }
-
-    static async connect(endpoint: string): Promise<BrowserPage> {
-        const socket = new WebSocket(endpoint)
-        await new Promise<void>((resolve, reject) => {
-            socket.addEventListener("open", () => resolve(), { once: true })
-            socket.addEventListener("error", () => reject(new Error("Browser connection failed")), {
-                once: true,
-            })
-        })
-        const page = new BrowserPage(socket)
-        await page.call("Page.enable")
-        await page.call("Runtime.enable")
-        return page
-    }
-
-    call(method: string, params: Record<string, unknown> = {}): Promise<Reply> {
-        return new Promise((resolve, reject) => {
-            const id = ++this.sequence
-            const timeout = setTimeout(() => {
-                this.pending.delete(id)
-                reject(new Error(`Browser command timed out: ${method}`))
-            }, 10000)
-            this.pending.set(id, {
-                resolve: (value) => {
-                    clearTimeout(timeout)
-                    resolve(value)
-                },
-                reject: (error) => {
-                    clearTimeout(timeout)
-                    reject(error)
-                },
-            })
-            this.socket.send(JSON.stringify({ id, method, params }))
-        })
-    }
-
-    async evaluate(expression: string): Promise<unknown> {
-        const reply = await this.call("Runtime.evaluate", {
-            expression,
-            awaitPromise: true,
-            returnByValue: true,
-        })
-        if (reply.exceptionDetails) throw new Error(JSON.stringify(reply.exceptionDetails))
-        return reply.result?.value
-    }
-
-    async waitFor(expression: string): Promise<unknown> {
-        const deadline = Date.now() + 30000
-        do {
-            const result = await this.evaluate(expression)
-            if (result) return result
-            await new Promise((resolve) => setTimeout(resolve, 50))
-        } while (Date.now() < deadline)
-        throw new Error(
-            `Browser condition timed out: ${expression}; ${await this.evaluate("document.body.innerText")}; errors: ${JSON.stringify(this.errors)}`,
-        )
-    }
-
-    close() {
-        this.socket.close()
-    }
-}
-
-async function terminate(child: ChildProcess | undefined) {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return
-    const exited = new Promise((resolve) => child.once("exit", resolve))
-    child.kill("SIGKILL")
-    await exited
-}
+import { Chromium, chromiumPath, terminate } from "../helpers/chromium"
 
 // These pages share one browser profile, origin and real IndexedDB Library.
 // A native lock and a renderer crash cannot be established by jsdom/storage stand-ins.
-describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () => {
+describe.skipIf(!existsSync(chromiumPath))("same-origin Library writer windows", () => {
     let profile: string
-    let browser: ChildProcess | undefined
+    let browser: Chromium | undefined
     let server: ChildProcess | undefined
-    let endpoint: string
     let origin: string
-    const pages: BrowserPage[] = []
-    const targets: string[] = []
 
     beforeAll(async () => {
         profile = await mkdtemp(join(tmpdir(), "reader-writer-windows-"))
@@ -158,49 +59,23 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
                 })
             })
         }
-        browser = spawn(chromium, [
-            "--headless",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--ignore-certificate-errors",
-            "--remote-debugging-port=0",
-            `--user-data-dir=${profile}`,
-            "about:blank",
-        ])
-        endpoint = await new Promise<string>((resolve, reject) => {
-            let log = ""
-            const timeout = setTimeout(() => reject(new Error("Chromium startup timed out")), 20000)
-            browser!.stderr!.on("data", (data) => {
-                log += String(data)
-                const match = log.match(/DevTools listening on (ws:\/\/[^\s]+)/)
-                if (match) {
-                    clearTimeout(timeout)
-                    resolve(new URL(match[1]).origin.replace("ws:", "http:"))
-                }
-            })
-            browser!.once("error", reject)
-            browser!.once("exit", () => {
-                clearTimeout(timeout)
-                reject(new Error("Chromium exited before connecting"))
-            })
-        })
+        browser = await Chromium.launch(profile)
     }, 70000)
 
     afterAll(async () => {
-        for (const page of pages) page.close()
-        await terminate(browser)
-        await terminate(server)
-        if (profile) await rm(profile, { recursive: true, force: true })
+        try {
+            await browser?.close()
+        } finally {
+            try {
+                await terminate(server)
+            } finally {
+                if (profile) await rm(profile, { recursive: true, force: true })
+            }
+        }
     })
 
     async function page() {
-        const target = (await (
-            await fetch(`${endpoint}/json/new?about:blank`, { method: "PUT" })
-        ).json()) as { id: string; webSocketDebuggerUrl: string }
-        targets.push(target.id)
-        const page = await BrowserPage.connect(target.webSocketDebuggerUrl)
-        pages.push(page)
-        return page
+        return browser!.page()
     }
 
     const ready = "!!document.querySelector('#app-root')"
@@ -224,14 +99,14 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
         const first = await page()
         const second = await page()
         await Promise.all([
-            first.call("Page.navigate", { url: origin }),
-            second.call("Page.navigate", { url: origin }),
+            first.call("Page.navigate", { url: `${origin}/en` }),
+            second.call("Page.navigate", { url: `${origin}/en` }),
         ])
         await Promise.all([first.waitFor(settled), second.waitFor(settled)])
         const firstOwns = await first.evaluate(ready)
         const owner = firstOwns ? first : second
         const contender = firstOwns ? second : first
-        const ownerTarget = targets[firstOwns ? 0 : 1]
+        const ownerTarget = owner.targetId
         expect(await owner.evaluate(ready)).toBe(true)
         expect(await contender.evaluate(blocked)).toBe(true)
         expect(await contender.evaluate("document.querySelector('h1')?.textContent")).toBe(
@@ -315,7 +190,7 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
         )
         expect(await contender.evaluate(records)).toEqual(preserved)
 
-        await fetch(`${endpoint}/json/close/${ownerTarget}`)
+        await browser!.closeTarget(ownerTarget)
         await contender.waitFor(
             "navigator.locks.query().then(result => result.held.every(lock => !lock.name.endsWith(':writer')))",
         )
@@ -324,7 +199,7 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
         expect(await contender.evaluate(records)).toEqual(preserved)
 
         const recovery = await page()
-        await recovery.call("Page.navigate", { url: origin })
+        await recovery.call("Page.navigate", { url: `${origin}/en` })
         await recovery.waitFor(blocked)
         // Page.crash terminates the owning renderer, not an orderly page.close.
         await contender.call("Page.crash").catch(() => undefined)
@@ -362,7 +237,7 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
 
     it("fences an old owner's delayed save after another window acquires the Library", async () => {
         const old = await page()
-        await old.call("Page.navigate", { url: origin })
+        await old.call("Page.navigate", { url: `${origin}/en` })
         await old.waitFor(ready)
         await old.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
         await old.waitFor(
@@ -385,7 +260,7 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
         })()`)
         await old.waitFor("typeof window.finishOldRead === 'function'")
         const next = await page()
-        await next.call("Page.navigate", { url: origin })
+        await next.call("Page.navigate", { url: `${origin}/en` })
         await next.waitFor(blocked)
         await old.evaluate("window.testWriter.stop()")
         await next.waitFor(
@@ -409,7 +284,7 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
         await unsupported.call("Page.addScriptToEvaluateOnNewDocument", {
             source: "Object.defineProperty(navigator, 'locks', {value: undefined, configurable: true}); localStorage.setItem('search_history', 'unsupported old history');",
         })
-        await unsupported.call("Page.navigate", { url: `${origin}/viewer` })
+        await unsupported.call("Page.navigate", { url: `${origin}/en/viewer` })
         await unsupported.waitFor("!!document.querySelector('[data-writer-state=unsupported]')")
         expect(await unsupported.evaluate("document.querySelector('#app-root') === null")).toBe(
             true,
@@ -427,5 +302,25 @@ describe.skipIf(!existsSync(chromium))("same-origin Library writer windows", () 
                 "document.querySelectorAll('input, textarea, #app-root').length",
             ),
         ).toBe(0)
+
+        await unsupported.call("Page.navigate", { url: `${origin}/viewer` })
+        await unsupported.waitFor("!!document.querySelector('[data-writer-state=unsupported]')")
+        await unsupported.call("Emulation.setDeviceMetricsOverride", {
+            width: 320,
+            height: 568,
+            deviceScaleFactor: 1,
+            mobile: true,
+        })
+        expect(await unsupported.evaluate("document.querySelector('h1')?.textContent")).toBe(
+            "Этот браузер не может безопасно открыть библиотеку",
+        )
+        expect(
+            await unsupported.evaluate(
+                "Array.from(document.querySelectorAll('button'), button => button.textContent.trim())",
+            ),
+        ).toEqual(["Повторить попытку", "Перезагрузить страницу"])
+        expect(
+            await unsupported.evaluate("document.documentElement.scrollWidth <= innerWidth"),
+        ).toBe(true)
     }, 45000)
 })

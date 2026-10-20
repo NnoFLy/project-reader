@@ -109,7 +109,8 @@ and **Reload page** buttons provide keyboard recovery. Retry remains mounted and
 uses `aria-disabled` while pending so keyboard focus survives an unsuccessful
 retry. Other stable states are observable through the same data attribute.
 Feedback uses existing reading surfaces, typography, focus colors and spacing;
-actions wrap on narrow screens. Failures do not display raw exception details.
+actions wrap on narrow screens. Headings, instructions and actions use the English
+and Russian Paraglide catalogs. Failures do not display raw exception details.
 
 `tests/integration/writer-startup.test.ts` exercises application startup with real
 builtin hosts and the Reading workspace, mocking external Web Locks, clocks and

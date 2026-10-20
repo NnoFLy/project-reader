@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { WriterApplicationState } from "./writerApplication"
+    import * as m from "$lib/paraglide/messages"
 
     let {
         state,
@@ -12,44 +13,17 @@
     } = $props()
 
     const messages = {
-        idle: [
-            "Checking Library availability",
-            "This window will open only when the Library is safe to use.",
-        ],
-        acquiring: [
-            "Checking Library availability",
-            "Checking whether another window is using this Library.",
-        ],
-        starting: [
-            "Opening your Library",
-            "Restoring your Library before enabling reading and editing.",
-        ],
-        running: ["Library is ready", ""],
-        blocked: [
-            "Library is open in another window",
-            "Use the window that already has this Library open, or close it and try again here. This window cannot edit or save reading data.",
-        ],
-        unsupported: [
-            "This browser cannot safely open the Library",
-            "Exclusive access is unavailable. Use a browser with Web Locks support in a secure context, then try again. No Library editing has started.",
-        ],
-        failed: [
-            "Library could not start safely",
-            "Reading and editing are disabled. Try again, or reload this page. Your existing Library has not been reset.",
-        ],
-        stopping: [
-            "Closing this Library",
-            "Reading and editing are disabled while this window releases its work safely.",
-        ],
-        stopped: [
-            "Library is closed",
-            "Try again to open this Library with a fresh writer lifetime.",
-        ],
-        "recovery-required": [
-            "Library needs a safe restart",
-            "Reading and editing are disabled. This window may still be finishing storage work; it will not force another writer to take over. Reload this page, or close this window before retrying elsewhere.",
-        ],
-    } satisfies Record<WriterApplicationState, readonly [string, string]>
+        idle: [m.writer_checking_title, m.writer_idle_description],
+        acquiring: [m.writer_checking_title, m.writer_acquiring_description],
+        starting: [m.writer_starting_title, m.writer_starting_description],
+        running: [m.writer_ready_title, () => ""],
+        blocked: [m.writer_blocked_title, m.writer_blocked_description],
+        unsupported: [m.writer_unsupported_title, m.writer_unsupported_description],
+        failed: [m.writer_failed_title, m.writer_failed_description],
+        stopping: [m.writer_stopping_title, m.writer_stopping_description],
+        stopped: [m.writer_stopped_title, m.writer_stopped_description],
+        "recovery-required": [m.writer_recovery_title, m.writer_recovery_description],
+    } satisfies Record<WriterApplicationState, readonly [() => string, () => string]>
     let message = $derived(messages[state])
     let canRetry = $derived(["blocked", "unsupported", "failed", "stopped"].includes(state))
 </script>
@@ -62,8 +36,8 @@
             aria-atomic="true"
             aria-labelledby="writer-heading"
         >
-            <h1 id="writer-heading">{message[0]}</h1>
-            <p>{message[1]}</p>
+            <h1 id="writer-heading">{message[0]()}</h1>
+            <p>{message[1]()}</p>
         </section>
         <div class="writer-actions">
             <button
@@ -71,9 +45,9 @@
                 aria-disabled={!canRetry}
                 onclick={() => {
                     if (canRetry) retry()
-                }}>Try again</button
+                }}>{m.writer_retry()}</button
             >
-            <button type="button" class="secondary" onclick={reload}>Reload page</button>
+            <button type="button" class="secondary" onclick={reload}>{m.writer_reload()}</button>
         </div>
     </div>
 </main>

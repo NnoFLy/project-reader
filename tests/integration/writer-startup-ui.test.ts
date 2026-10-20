@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { afterEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { createRawSnippet, mount, tick, unmount } from "svelte"
 import AppShell from "$lib/app/AppShell.svelte"
+import { getLocale, setLocale } from "$lib/paraglide/runtime"
 
 vi.hoisted(() => {
     window.matchMedia = (() => ({
@@ -21,7 +22,15 @@ vi.mock("$app/state", () => ({
     page: { url: new URL("https://reader.test/viewer") },
 }))
 
+const originalLocale = getLocale()
+const originalHref = window.location.href
+beforeEach(() => {
+    window.history.replaceState({}, "", "/en/viewer")
+    setLocale("en", { reload: false })
+})
 afterEach(() => {
+    window.history.replaceState({}, "", originalHref)
+    setLocale(originalLocale, { reload: false })
     vi.unstubAllGlobals()
 })
 
@@ -62,6 +71,38 @@ it("gates chrome and direct-route children behind accessible blocked feedback an
         expect(target.querySelector("[data-direct-viewer]")).toBeNull()
         window.dispatchEvent(new PageTransitionEvent("pagehide"))
         await tick()
+        expect(target.querySelector("[data-direct-viewer]")).toBeNull()
+    } finally {
+        await unmount(shell)
+        target.remove()
+        Reflect.deleteProperty(navigator, "locks")
+    }
+})
+
+it("presents Russian recovery instructions and actions before starting the application", async () => {
+    window.history.replaceState({}, "", "/viewer")
+    setLocale("ru", { reload: false })
+    Object.defineProperty(navigator, "locks", { value: undefined, configurable: true })
+    const target = document.createElement("div")
+    document.body.append(target)
+    const shell = mount(AppShell, {
+        target,
+        props: {
+            children: createRawSnippet(() => ({
+                render: () => "<div data-direct-viewer>Viewer</div>",
+            })),
+        },
+    })
+    try {
+        await vi.waitFor(() =>
+            expect(target.querySelector('[data-writer-state="unsupported"]')).not.toBeNull(),
+        )
+        expect(target.querySelector("h1")?.textContent).toBe(
+            "Этот браузер не может безопасно открыть библиотеку",
+        )
+        expect(
+            [...target.querySelectorAll("button")].map((button) => button.textContent?.trim()),
+        ).toEqual(["Повторить попытку", "Перезагрузить страницу"])
         expect(target.querySelector("[data-direct-viewer]")).toBeNull()
     } finally {
         await unmount(shell)

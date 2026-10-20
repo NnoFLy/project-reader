@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest"
-import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -9,6 +8,7 @@ import { svelte } from "@sveltejs/vite-plugin-svelte"
 import type { AppExtension, ExtensionStorage } from "$lib/extension-api"
 import { ExtensionHost } from "$lib/extension-host"
 import { MemoryStorageBackend } from "$lib/core/storage"
+import { Chromium, chromiumPath } from "../helpers/chromium"
 
 function persistenceExtension(activate: (storage: ExtensionStorage) => void): AppExtension {
     return {
@@ -28,18 +28,21 @@ function persistenceExtension(activate: (storage: ExtensionStorage) => void): Ap
 // Supporting browser/host seam: exercise the production backend against native IndexedDB.
 async function inBrowser(script: string): Promise<void> {
     const profile = await mkdtemp(join(tmpdir(), "reader-writer-persistence-"))
-    const server = await createServer({
-        configFile: false,
-        cacheDir: join(profile, "vite-cache"),
-        plugins: [svelte({ configFile: false })],
-        resolve: { alias: { $lib: resolve("src/lib") } },
-        server: { port: 0, host: "127.0.0.1" },
-        appType: "custom",
-        logLevel: "error",
-    })
-    server.middlewares.use("/__writer-persistence", (_request, response) => {
-        response.setHeader("Content-Type", "text/html")
-        response.end(`<body><pre id="result">pending</pre><script type="module">
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+    let browser: Chromium | undefined
+    try {
+        server = await createServer({
+            configFile: false,
+            cacheDir: join(profile, "vite-cache"),
+            plugins: [svelte({ configFile: false })],
+            resolve: { alias: { $lib: resolve("src/lib") } },
+            server: { port: 0, host: "127.0.0.1" },
+            appType: "custom",
+            logLevel: "error",
+        })
+        server.middlewares.use("/__writer-persistence", (_request, response) => {
+            response.setHeader("Content-Type", "text/html")
+            response.end(`<body><pre id="result">pending</pre><script type="module">
             import { IndexedDBStorageBackend, IndexedDBWriteLifetime, MemoryStorageBackend, createExtensionStorage } from "/src/lib/core/storage/memory.ts";
             import { migrateLegacyDatabaseToLibrary } from "/src/lib/core/legacy-migration.ts";
             import { ExtensionHost } from "/src/lib/extension-host/host.ts";
@@ -55,82 +58,38 @@ async function inBrowser(script: string): Promise<void> {
                 document.querySelector("#result").textContent = error.stack ?? String(error);
             }
         </script></body>`)
-    })
-    let browser: ReturnType<typeof spawn> | undefined
-    let socket: WebSocket | undefined
-    try {
+        })
         await server.listen()
         const address = server.httpServer!.address()
         if (!address || typeof address === "string") throw new Error("Missing browser test server")
-        browser = spawn("/usr/sbin/chromium", [
-            "--headless",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--remote-debugging-port=0",
-            `--user-data-dir=${profile}`,
-            "about:blank",
-        ])
-        const endpoint = await new Promise<string>((resolve, reject) => {
-            let output = ""
-            browser!.on("error", reject)
-            browser!.stderr!.on("data", (chunk) => {
-                output += String(chunk)
-                const match = output.match(/DevTools listening on (ws:\/\/[^\s]+)/)
-                if (match) resolve(new URL(match[1]).origin.replace("ws:", "http:"))
-            })
-            browser!.on("exit", () => reject(new Error("Browser exited before connecting")))
-        })
-        const pages = (await (await fetch(`${endpoint}/json/list`)).json()) as {
-            type: string
-            webSocketDebuggerUrl: string
-        }[]
-        socket = new WebSocket(pages.find((page) => page.type === "page")!.webSocketDebuggerUrl)
-        await new Promise<void>((resolve) =>
-            socket!.addEventListener("open", () => resolve(), { once: true }),
-        )
-        const browserErrors: string[] = []
-        socket.addEventListener("message", (event) => {
-            const message = JSON.parse(String(event.data))
-            if (message.method === "Runtime.exceptionThrown")
-                browserErrors.push(JSON.stringify(message.params))
-        })
-        let id = 0
-        const call = (method: string, params: Record<string, unknown>) =>
-            new Promise<{ result?: { value?: unknown } }>((resolve) => {
-                const requestId = ++id
-                const listener = (event: MessageEvent) => {
-                    const message = JSON.parse(String(event.data))
-                    if (message.id !== requestId) return
-                    socket!.removeEventListener("message", listener)
-                    resolve(message.result)
-                }
-                socket!.addEventListener("message", listener)
-                socket!.send(JSON.stringify({ id: requestId, method, params }))
-            })
-        await call("Runtime.enable", {})
-        await call("Log.enable", {})
-        await call("Page.navigate", {
+        browser = await Chromium.launch(profile)
+        const page = await browser.page()
+        await page.call("Log.enable", {})
+        await page.call("Page.navigate", {
             url: `http://127.0.0.1:${address.port}/__writer-persistence`,
         })
         let result = "pending"
         for (let attempt = 0; attempt < 200 && result === "pending"; attempt++) {
             await new Promise((resolve) => setTimeout(resolve, 50))
-            const evaluated = await call("Runtime.evaluate", {
-                expression: 'document.querySelector("#result")?.textContent ?? "pending"',
-            })
-            const value = evaluated.result?.value
+            const value = await page.evaluate(
+                'document.querySelector("#result")?.textContent ?? "pending"',
+            )
             if (typeof value === "string") result = value
         }
-        expect({ result, browserErrors }).toEqual({ result: "passed", browserErrors: [] })
+        expect({ result, browserErrors: page.errors }).toEqual({
+            result: "passed",
+            browserErrors: [],
+        })
     } finally {
-        socket?.close()
-        if (browser && browser.exitCode === null) {
-            const exited = new Promise((resolve) => browser!.once("exit", resolve))
-            browser.kill("SIGKILL")
-            await exited
+        try {
+            await browser?.close()
+        } finally {
+            try {
+                await server?.close()
+            } finally {
+                await rm(profile, { recursive: true, force: true })
+            }
         }
-        await server.close()
-        await rm(profile, { recursive: true, force: true })
     }
 }
 
@@ -154,7 +113,7 @@ describe("host writer persistence", () => {
         }
     })
 
-    it.skipIf(!existsSync("/usr/sbin/chromium"))(
+    it.skipIf(!existsSync(chromiumPath))(
         "rejects a host save revoked while its IndexedDB open completes",
         async () => {
             await inBrowser(`
@@ -188,7 +147,7 @@ describe("host writer persistence", () => {
         },
         40000,
     )
-    it.skipIf(!existsSync("/usr/sbin/chromium"))(
+    it.skipIf(!existsSync(chromiumPath))(
         "aborts active host writes synchronously and waits for physical transaction termination",
         async () => {
             await inBrowser(`
@@ -246,7 +205,7 @@ describe("host writer persistence", () => {
         40000,
     )
 
-    it.skipIf(!existsSync("/usr/sbin/chromium"))(
+    it.skipIf(!existsSync(chromiumPath))(
         "fences a delayed legacy schema upgrade without purging or migrating source records",
         async () => {
             await inBrowser(`
