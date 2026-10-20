@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { notes: notesStore } = getViewerRuntimeContext()()
     import * as m from "$lib/paraglide/messages"
     import MenuIcon from "$lib/shared/icons/MenuIcon.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
@@ -15,7 +17,6 @@
     import NotesSidebar from "./NotesSidebar.svelte"
     import BookmarksSidebar from "./BookmarksSidebar.svelte"
     import SettingsSidebar from "./SettingsSidebar.svelte"
-    import { notesStore } from "../stores/notesStore.svelte"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { Slider, type SliderDirection } from "$lib/shared/ui/slider"
     import {

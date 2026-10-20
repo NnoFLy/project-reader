@@ -2,7 +2,8 @@
     import type { ContextualStatus, ContextualStatusPublisher } from "$lib/extension-api"
     import { page } from "$app/state"
     import * as m from "$lib/paraglide/messages"
-    import { searchStore } from "./stores/searchStore.svelte"
+    import { getViewerRuntimeContext } from "./viewerRuntime"
+    const { search: searchStore } = getViewerRuntimeContext()()
 
     const PRIORITY_SEARCH = 2
 

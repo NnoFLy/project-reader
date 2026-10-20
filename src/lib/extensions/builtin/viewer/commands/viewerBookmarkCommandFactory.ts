@@ -3,6 +3,7 @@ import { defineCommands } from "$lib/core/commands"
 import type { CommandScope } from "$lib/core/commands"
 import type { PromptService } from "$lib/extension-api"
 import PromptBookPreview from "../components/PromptBookPreview.svelte"
+import type { ViewerPreviewCapability } from "../stores/viewerPreview.svelte"
 import { buildBookmarkItems } from "./viewerPromptItems"
 import * as m from "$lib/paraglide/messages"
 
@@ -31,6 +32,7 @@ export function createViewerBookmarkCommands(dependencies: {
     prompt: PromptChooser
     scope: Pick<CommandScope, "onDestroy">
     bookmarks: {
+        preview?: ViewerPreviewCapability
         list(): readonly Bookmark[]
         resolveBookName(bookId: string): string
         open(bookmarkId: string): void | Promise<void>
@@ -83,6 +85,9 @@ export function createViewerBookmarkCommands(dependencies: {
                                         leading: PromptBookPreview,
                                         leadingProps: {
                                             bookId: bookmarksById.get(item.id)?.bookId,
+                                            ...(bookmarks.preview
+                                                ? { preview: bookmarks.preview }
+                                                : {}),
                                         },
                                     },
                                 }),

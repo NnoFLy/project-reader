@@ -427,7 +427,7 @@ describe("notesStore live editing", () => {
         expect(put).not.toHaveBeenCalled()
     })
 
-    it("clears stale visual state before awaiting a new book's notes", async () => {
+    it("clears stale notes before awaiting a new book without deleting unowned highlights", async () => {
         const highlights = new Map<string, unknown>([["user-note-yellow", {}]])
         Object.defineProperty(globalThis, "CSS", {
             configurable: true,
@@ -445,7 +445,7 @@ describe("notesStore live editing", () => {
         const loading = notesStore.loadNotesForBook("book-2")
 
         expect(notesStore.notes).toEqual([])
-        expect(highlights.size).toBe(0)
+        expect([...highlights.keys()]).toEqual(["user-note-yellow"])
         resolveLoad([])
         await loading
     })
@@ -530,7 +530,8 @@ describe("notesStore live editing", () => {
         expect(notesStore.notes).toEqual([])
         expect(notesStore.activeSelection).toBeNull()
         expect(notesStore.scrollingToNoteId).toBeNull()
-        expect(highlights.size).toBe(0)
+        // Entries not published by this store may belong to another live reader.
+        expect(highlights.size).toBe(6)
 
         put.mockClear()
         deleteRecord.mockClear()

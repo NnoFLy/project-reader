@@ -1,11 +1,14 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const {
+        store: viewerStore,
+        search: searchStore,
+        notes: notesStore,
+    } = getViewerRuntimeContext()()
     import type { ViewerPagedDocument } from "../viewerDocument"
     import { getViewerDocumentErrorDiagnostic, renderViewerPageLayers } from "../viewerDocument"
     import { settingsStore } from "$lib/core/settings"
-    import { viewerStore } from "../stores/viewerStore.svelte"
-    import { searchStore } from "../stores/searchStore.svelte"
     import {
-        notesStore,
         getGlobalOffset,
         getOffsetFromPoint,
         getTextNodeAndOffset,

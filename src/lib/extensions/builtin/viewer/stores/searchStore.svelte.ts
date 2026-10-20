@@ -1,4 +1,5 @@
 import { SvelteMap } from "svelte/reactivity"
+import { createViewerHighlights } from "./viewerHighlights"
 import { viewerStore } from "./viewerStore.svelte"
 import {
     isViewerLibraryCapabilityInstalled,
@@ -22,6 +23,7 @@ export interface SearchMatch {
 }
 
 export class SearchStore {
+    private readonly highlights = createViewerHighlights()
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     query = $state("")
@@ -51,7 +53,12 @@ export class SearchStore {
         historyRepository: SearchHistoryRepository = new LocalSearchHistoryRepository(
             getSafeStorage(),
         ),
+        private readonly viewer = viewerStore,
+        files = getViewerLibraryCapability() ?? vfsStore,
+        mutations = getViewerLibraryMutationCapability() ?? vfsMutations,
     ) {
+        this.files = files
+        this.mutations = mutations
         this.historyRepository = historyRepository
         this.vfsUnsubscribe = isViewerLibraryCapabilityInstalled()
             ? this.files.onContentRestored((bookId) => {
@@ -420,13 +427,13 @@ export class SearchStore {
     private goToCurrentMatch() {
         if (this.currentMatchIndex >= 0 && this.currentMatchIndex < this.matches.length) {
             const match = this.matches[this.currentMatchIndex]
-            const currentBook = viewerStore.getCurrentBook()
+            const currentBook = this.viewer.getCurrentBook()
 
             // Only trigger a page jump if the match is on a different page.
             // This prevents resetting scrollPosition to 0 for matches on the same page.
             if (currentBook && currentBook.pageNumber !== match.pageNumber) {
-                if (viewerStore.goToPage) {
-                    viewerStore.goToPage(match.pageNumber)
+                if (this.viewer.goToPage) {
+                    this.viewer.goToPage(match.pageNumber)
                 }
             }
         }
@@ -527,8 +534,8 @@ export class SearchStore {
             }
 
             try {
-                CSS.highlights.set("search-match", new Highlight(...allMatchRanges))
-                CSS.highlights.set("search-match-active", new Highlight(...allActiveRanges))
+                this.highlights.set("search-match", allMatchRanges)
+                this.highlights.set("search-match-active", allActiveRanges)
             } catch (e) {
                 console.error(
                     "[SearchStore] Failed to update CSS Highlights:",
@@ -559,10 +566,7 @@ export class SearchStore {
             this.highlightUpdatePending = false
         }
         this.matchesChangedListeners.clear()
-        if (typeof CSS !== "undefined" && CSS.highlights) {
-            CSS.highlights.delete("search-match")
-            CSS.highlights.delete("search-match-active")
-        }
+        this.highlights.clear()
     }
 
     reset() {
@@ -600,7 +604,11 @@ export class SearchStore {
     }
 }
 
-export const searchStore = new SearchStore()
+export let searchStore = new SearchStore()
+
+export function installSearchStore(store: SearchStore): void {
+    searchStore = store
+}
 
 if (import.meta.hot) {
     import.meta.hot.dispose(() => searchStore.dispose())

@@ -1,13 +1,15 @@
-import { vfsStore } from "../state/libraryStore.svelte"
-import { relinkRequest } from "../state/relinkRequest.svelte"
+import { vfsStore, type VFSStore } from "../state/libraryStore.svelte"
+import { relinkRequest, type RelinkRequestState } from "../state/relinkRequest.svelte"
 import { getLibraryErrorDiagnostic } from "../state/libraryDiagnostics"
 import * as m from "$lib/paraglide/messages"
 
 export async function relinkLibraryNode(
     nodeId: string,
     fileSource: File | FileSystemFileHandle,
+    store: VFSStore = vfsStore,
+    request: RelinkRequestState = relinkRequest,
 ): Promise<boolean> {
-    const node = vfsStore.nodes[nodeId]
+    const node = store.nodes[nodeId]
     if (!node || node.type !== "file") return false
 
     const originalName = node.name
@@ -22,8 +24,8 @@ export async function relinkLibraryNode(
     }
 
     try {
-        await vfsStore.relinkFile(node.id, fileSource)
-        await relinkRequest.complete()
+        await store.relinkFile(node.id, fileSource)
+        await request.complete()
         return true
     } catch (error) {
         console.error("Failed to relink file:", getLibraryErrorDiagnostic(error))

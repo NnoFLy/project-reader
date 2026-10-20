@@ -9,7 +9,7 @@ import {
 } from "../viewerHost"
 import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
 
-class BookmarksStore {
+export class BookmarksStore {
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     bookmarks = $state<Bookmark[]>([])
@@ -22,7 +22,12 @@ class BookmarksStore {
     private disposed = false
     private readonly vfsUnsubscribers: (() => void)[] = []
 
-    constructor() {
+    constructor(
+        files = getViewerLibraryCapability() ?? vfsStore,
+        mutations = getViewerLibraryMutationCapability() ?? vfsMutations,
+    ) {
+        this.files = files
+        this.mutations = mutations
         this.attachLibraryListeners()
     }
 
@@ -298,7 +303,11 @@ class BookmarksStore {
     }
 }
 
-export const bookmarksStore = new BookmarksStore()
+export let bookmarksStore = new BookmarksStore()
+
+export function installBookmarksStore(store: BookmarksStore): void {
+    bookmarksStore = store
+}
 
 if (import.meta.hot) {
     import.meta.hot.dispose(() => bookmarksStore.dispose())

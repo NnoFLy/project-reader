@@ -1,8 +1,8 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { notes: notesStore, bookmarks: bookmarksStore } = getViewerRuntimeContext()()
     const viewerUIStore = useViewerUIStore()
     import * as m from "$lib/paraglide/messages"
-    import { bookmarksStore } from "../stores/bookmarksStore.svelte"
-    import { notesStore } from "../stores/notesStore.svelte"
     import { useViewerUIStore } from "../stores/viewerUIStore.svelte"
     import NotePopup from "./NotePopup.svelte"
     import NoteEditor from "./NoteEditor.svelte"

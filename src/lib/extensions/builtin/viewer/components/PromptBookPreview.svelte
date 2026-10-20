@@ -1,11 +1,17 @@
 <script lang="ts">
     import BookItemIcon from "$lib/shared/icons/BookItemIcon.svelte"
-    import { useViewerPreviewUrl as usePreviewUrl } from "../stores/viewerPreview.svelte"
+    import {
+        useViewerPreviewUrl as usePreviewUrl,
+        type ViewerPreviewCapability,
+    } from "../stores/viewerPreview.svelte"
     import * as m from "$lib/paraglide/messages"
 
-    let { bookId }: { bookId: string } = $props()
-    const preview = usePreviewUrl(() => bookId)
-    const previewUrl = $derived(preview.url)
+    let { bookId, preview }: { bookId: string; preview?: ViewerPreviewCapability } = $props()
+    const image = usePreviewUrl(
+        () => bookId,
+        () => preview,
+    )
+    const previewUrl = $derived(image.url)
 </script>
 
 {#if previewUrl}

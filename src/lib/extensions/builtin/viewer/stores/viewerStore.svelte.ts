@@ -9,11 +9,25 @@ import {
     viewerLibraryCapability as vfsStore,
     viewerLibraryMutationCapability as vfsMutations,
 } from "../viewerHost"
-import { type Book, fileNodeToBook } from "./viewerStore.types"
+import { type Book } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
-import { getViewerDocumentErrorDiagnostic } from "../viewerDocument"
+import { getViewerDocumentErrorDiagnostic, type ViewerDocumentLoader } from "../viewerDocument"
+import { ReadingWorkspace } from "../readingWorkspace"
+import {
+    viewerFileCapability,
+    type ViewerFileCapability,
+    type ViewerLibraryCapability,
+    type ViewerLibraryMutationCapability,
+} from "../viewerHost"
 
-class ViewerStore {
+export interface ViewerStoreOptions {
+    files?: ViewerFileCapability
+    library?: ViewerLibraryCapability
+    mutations?: ViewerLibraryMutationCapability
+    loader?: ViewerDocumentLoader
+}
+
+export class ViewerStore {
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     private storage: StorageNamespace | undefined
@@ -64,21 +78,62 @@ class ViewerStore {
     private bookSwitchGeneration = 0
     private disposalEpoch = 0
     private disposed = false
-    private syncPromise: Promise<void> | null = null
-    private readonly pendingBookSwitches = new Map<string, number>()
-    private readonly deferredStaleUrls = new Map<string, { id: string; url: string }[]>()
+    workspace: ReadingWorkspace
     private readonly vfsUnsubscribers: (() => void)[] = []
     private readonly flush = () => this.persistViewerState(true)
     private readonly handleVisibilityChange = () => {
         if (document.visibilityState === "hidden") this.flush()
     }
 
-    constructor() {
+    constructor(private readonly options: ViewerStoreOptions = {}) {
+        this.files = options.library ?? this.files
+        this.mutations = options.mutations ?? this.mutations
+        this.workspace = this.createWorkspace()
         this.attachLibraryListeners()
     }
 
+    private createWorkspace(): ReadingWorkspace {
+        const files = this.files
+        const mutations = this.mutations
+        return new ReadingWorkspace({
+            files: this.options.files ?? {
+                get nodes() {
+                    return files.nodes
+                },
+                get isLockedMap() {
+                    return files.isLockedMap
+                },
+                getFileUrl: (id) => files.getFileUrl(id),
+                restoreFileAccess: (id) => viewerFileCapability.restoreFileAccess(id),
+                requestRelink: (id) => viewerFileCapability.requestRelink(id),
+                waitForRelink: (id) => viewerFileCapability.waitForRelink(id),
+                releaseFileUrl: (id, url) => mutations.releaseFileUrl(id, url),
+                getContentGeneration: (id) => files.getContentGeneration(id),
+                isCurrentContent: (id, generation) => files.isCurrentContent(id, generation),
+                isCurrentFileUrl: (id, url, generation) =>
+                    files.isCurrentFileUrl(id, url, generation),
+                clearForwardHistory: () => mutations.clearForwardHistory(),
+            },
+            loader: this.options.loader,
+            getCurrentBook: () => this.book,
+            publish: (book) => this.publishBook(book),
+        })
+    }
+
+    private publishBook(book: Book | null): boolean {
+        if (this.disposed) return false
+        this.mutations.setActiveFileId(book?.id ?? null)
+        this.bookSwitchGeneration++
+        this.book = book
+        this.currentPage = book?.pageNumber || 1
+        this.scrollPosition = book?.scrollPosition || 0
+        this.totalPages = book?.totalPages || 0
+        this.persistViewerState(true)
+        return true
+    }
+
     private attachLibraryListeners() {
-        if (!isViewerLibraryCapabilityInstalled()) return
+        if (!this.options.library && !isViewerLibraryCapabilityInstalled()) return
         this.vfsUnsubscribers.push(
             this.files.onNodesDeleted?.((ids) => {
                 if (this.book && ids.includes(this.book.id))
@@ -89,11 +144,7 @@ class ViewerStore {
             this.files.onNodeRelinked?.((id) => {
                 const node = this.files.nodes[id]
                 if (!node || node.type !== "file" || this.book?.id !== id) return
-                void this.setCurrentBook({
-                    ...fileNodeToBook(node),
-                    url: "",
-                    isLocked: this.files.isLockedMap[id],
-                })
+                void this.workspace.synchronize(true)
             }) ?? (() => undefined),
         )
 
@@ -106,8 +157,10 @@ class ViewerStore {
 
     reset() {
         this.dispose()
-        this.files = getViewerLibraryCapability() ?? vfsStore
-        this.mutations = getViewerLibraryMutationCapability() ?? vfsMutations
+        this.files = this.options.library ?? getViewerLibraryCapability() ?? vfsStore
+        this.mutations =
+            this.options.mutations ?? getViewerLibraryMutationCapability() ?? vfsMutations
+        this.workspace = this.createWorkspace()
         this.disposed = false
         this.book = null
         this.outlineList = null
@@ -132,9 +185,14 @@ class ViewerStore {
             window.removeEventListener("beforeunload", this.flush)
             this.listening = false
         }
-        if (this.book?.url) this.mutations.releaseFileUrl(this.book.id, this.book.url)
-        for (const id of this.deferredStaleUrls.keys()) this.flushDeferredStaleUrls(id)
-        this.pendingBookSwitches.clear()
+        return this.workspace.dispose()
+    }
+
+    get library() {
+        return this.files
+    }
+    get libraryMutations() {
+        return this.mutations
     }
 
     get isRestoringHistory() {
@@ -236,85 +294,11 @@ class ViewerStore {
 
     private async clearDeletedBook(id: string) {
         if (this.book?.id !== id || this.files.nodes[id]?.type === "file") return
-        const oldBook = this.book
-        if (oldBook.url) this.releaseStaleUrl(oldBook.id, oldBook.url)
-        this.book = null
-        this.mutations.setActiveFileId(null)
-        this.persistViewerState(true)
+        await this.workspace.synchronize()
     }
 
-    async syncWithBooks() {
-        // A sync has one URL lease to publish. Share the in-flight operation so concurrent
-        // lifecycle callbacks cannot each claim and publish the same book URL.
-        if (this.syncPromise) return this.syncPromise
-        const operation = this.syncWithBooksUnlocked()
-        this.syncPromise = operation
-        void operation.then(
-            () => {
-                if (this.syncPromise === operation) this.syncPromise = null
-            },
-            () => {
-                if (this.syncPromise === operation) this.syncPromise = null
-            },
-        )
-        return operation
-    }
-
-    private async syncWithBooksUnlocked() {
-        if (!this.book || this.pendingBookSwitches.size > 0) return
-        const operationDisposalEpoch = this.disposalEpoch
-        const operationBookSwitchGeneration = this.bookSwitchGeneration
-        const bookId = this.book.id
-        this.mutations.setActiveFileId(bookId)
-        const matchingNode = this.files.nodes[bookId]
-        if (!matchingNode || matchingNode.type !== "file") {
-            await this.clearDeletedBook(bookId)
-            return
-        }
-
-        const contentGeneration = this.files.getContentGeneration(bookId)
-        let currentUrl = this.book.url
-        let acquiredUrl = false
-        if (currentUrl && !this.files.isCurrentFileUrl(bookId, currentUrl, contentGeneration)) {
-            // The active lease belongs to this exact URL, not to whichever URL the
-            // node happens to expose after a relink.
-            this.releaseStaleUrl(bookId, currentUrl)
-            currentUrl = ""
-        }
-        if (!currentUrl) {
-            currentUrl = await this.files.getFileUrl(bookId)
-            acquiredUrl = !!currentUrl
-        }
-
-        if (
-            this.disposed ||
-            operationDisposalEpoch !== this.disposalEpoch ||
-            operationBookSwitchGeneration !== this.bookSwitchGeneration ||
-            this.book?.id !== bookId ||
-            !this.files.isCurrentContent(bookId, contentGeneration)
-        ) {
-            // This operation may have acquired a new lease; release only this exact URL.
-            if (acquiredUrl && currentUrl) this.releaseStaleUrl(bookId, currentUrl)
-            return
-        }
-        const currentNode = this.files.nodes[bookId]
-        if (!currentNode || currentNode.type !== "file") {
-            if (acquiredUrl && currentUrl) this.releaseStaleUrl(bookId, currentUrl)
-            await this.clearDeletedBook(bookId)
-            return
-        }
-
-        const localPageNumber = this.book.pageNumber
-        const localScrollPosition = this.book.scrollPosition
-
-        this.book = {
-            ...fileNodeToBook(currentNode),
-            pageNumber: localPageNumber,
-            scrollPosition: localScrollPosition,
-            url: currentUrl,
-            previewDataUrl: "",
-            isLocked: this.files.isLockedMap[currentNode.id],
-        }
+    syncWithBooks(): Promise<void> {
+        return this.workspace.synchronize()
     }
 
     private saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -355,141 +339,8 @@ class ViewerStore {
         }
     }
 
-    private releaseStaleUrl(id: string, url: string) {
-        // Each switch owns the lease returned by getFileUrl. Release stale switches
-        // immediately even when another switch for the same book is still pending.
-        this.mutations.releaseFileUrl(id, url)
-    }
-
-    private flushDeferredStaleUrls(id: string) {
-        const deferred = this.deferredStaleUrls.get(id)
-        if (!deferred) return
-        this.deferredStaleUrls.delete(id)
-        for (const { url } of deferred) {
-            if (!this.disposed && this.book?.id === id && this.book.url === url) continue
-            this.mutations.releaseFileUrl(id, url)
-        }
-    }
-
-    async setCurrentBook(newBook: Book | null): Promise<boolean> {
-        const newBookId = newBook?.id
-        if (newBookId) {
-            this.pendingBookSwitches.set(
-                newBookId,
-                (this.pendingBookSwitches.get(newBookId) ?? 0) + 1,
-            )
-        }
-        try {
-            return await this.setCurrentBookUnlocked(newBook)
-        } finally {
-            if (newBookId) {
-                const count = (this.pendingBookSwitches.get(newBookId) ?? 1) - 1
-                if (count > 0) this.pendingBookSwitches.set(newBookId, count)
-                else {
-                    this.pendingBookSwitches.delete(newBookId)
-                    this.flushDeferredStaleUrls(newBookId)
-                }
-            }
-        }
-    }
-
-    private async setCurrentBookUnlocked(newBook: Book | null): Promise<boolean> {
-        if (this.disposed) return false
-        const oldBook = this.book
-        const newBookId = newBook?.id
-        const generation = ++this.bookSwitchGeneration
-        const disposalEpoch = this.disposalEpoch
-        const isCurrentSwitch = () =>
-            !this.disposed &&
-            disposalEpoch === this.disposalEpoch &&
-            generation === this.bookSwitchGeneration
-        const contentGeneration = newBook ? this.files.getContentGeneration(newBook.id) : undefined
-
-        if (newBook) {
-            const currentNode = this.files.nodes[newBook.id]
-            if (!currentNode || currentNode.type !== "file") {
-                if (newBook.url) this.releaseStaleUrl(newBook.id, newBook.url)
-                await this.clearDeletedBook(newBook.id)
-                return false
-            }
-            if (
-                newBook.url &&
-                !this.files.isCurrentFileUrl(newBook.id, newBook.url, contentGeneration)
-            ) {
-                this.releaseStaleUrl(newBook.id, newBook.url)
-                return false
-            }
-        }
-
-        let hasChanges = false
-        if (newBook) {
-            // Resolve a missing URL before publishing the replacement book. This keeps an
-            // access failure from replacing a usable active book with a URL-less one.
-            if (!newBook.url) {
-                const loadedUrl = await this.files.getFileUrl(newBook.id)
-                if (!isCurrentSwitch()) {
-                    if (loadedUrl) this.releaseStaleUrl(newBook.id, loadedUrl)
-                    return false
-                }
-                const currentNode = this.files.nodes[newBook.id]
-                if (
-                    !currentNode ||
-                    currentNode.type !== "file" ||
-                    !loadedUrl ||
-                    !this.files.isCurrentContent(newBook.id, contentGeneration!) ||
-                    !this.files.isCurrentFileUrl(newBook.id, loadedUrl, contentGeneration)
-                ) {
-                    if (loadedUrl) this.releaseStaleUrl(newBook.id, loadedUrl)
-                    if (!currentNode || currentNode.type !== "file") {
-                        await this.clearDeletedBook(newBook.id)
-                    } else if (oldBook?.id === newBook.id && this.book?.id === newBook.id) {
-                        // The old URL was revoked by relinking; keep the previous book identity
-                        // but expose the failed access as locked rather than publishing a blank,
-                        // unlocked replacement.
-                        this.book = {
-                            ...oldBook,
-                            url: "",
-                            isLocked: this.files.isLockedMap[newBook.id] ?? true,
-                        }
-                        this.persistViewerState(true)
-                    }
-                    return false
-                }
-                newBook.url = loadedUrl
-                hasChanges = true
-            }
-        }
-
-        // A replacement owns the old lease only until the replacement commits. Compare
-        // exact URLs so same-ID relinks cannot strand the previous URL lease.
-        if (oldBook?.url && (oldBook.id !== newBookId || oldBook.url !== newBook?.url)) {
-            this.releaseStaleUrl(oldBook.id, oldBook.url)
-        }
-
-        // Set the active book state only after a missing URL has been resolved.
-        this.book = newBook
-        this.mutations.setActiveFileId(newBookId ?? null)
-        this.persistViewerState(true)
-
-        if (newBook) {
-            this.currentPage = newBook.pageNumber || 1
-            this.scrollPosition = newBook.scrollPosition || 0
-            this.totalPages = newBook.totalPages || 0
-            const isLocked = this.files.isLockedMap[newBook.id]
-            if (newBook.isLocked !== isLocked) {
-                newBook.isLocked = isLocked
-                hasChanges = true
-            }
-
-            // Only update reactive state if we haven't switched to a different book in the meantime
-            if (this.book && this.book.id === newBook.id) {
-                if (hasChanges) {
-                    this.book = { ...newBook }
-                }
-                this.persistViewerState(true)
-            }
-        }
-        return true
+    setCurrentBook(book: Book | null): Promise<boolean> {
+        return this.workspace.setCurrentBook(book)
     }
 
     getCurrentBook(): Book | null {
@@ -564,7 +415,12 @@ class ViewerStore {
     }
 }
 
-export const viewerStore = new ViewerStore()
+export let viewerStore = new ViewerStore()
+
+/** Select the UI-facing store without changing any previous instance\'s ownership. */
+export function installViewerStore(store: ViewerStore): void {
+    viewerStore = store
+}
 
 if (import.meta.hot) {
     import.meta.hot.dispose(() => viewerStore.dispose())

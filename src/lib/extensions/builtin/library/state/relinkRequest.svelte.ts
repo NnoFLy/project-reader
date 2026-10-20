@@ -21,7 +21,11 @@ export class RelinkRequestState {
     }
 }
 
-export const relinkRequest = new RelinkRequestState()
+export let relinkRequest = new RelinkRequestState()
+
+export function installRelinkRequest(request: RelinkRequestState): void {
+    relinkRequest = request
+}
 
 export function requestLibraryRelink(nodeId: string, onComplete?: RelinkCompletion): void {
     relinkRequest.request(nodeId, onComplete)

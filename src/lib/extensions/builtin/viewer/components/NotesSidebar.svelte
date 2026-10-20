@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { notes: notesStore } = getViewerRuntimeContext()()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
@@ -6,7 +8,6 @@
     import { MediaQuery } from "svelte/reactivity"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
-    import { notesStore } from "../stores/notesStore.svelte"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"
     import EditIcon from "$lib/shared/icons/EditIcon.svelte"
     import type { UserNote } from "$lib/core/documents"

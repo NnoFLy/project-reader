@@ -1,7 +1,7 @@
 import { ApplicationImpl, type Application } from "../core/app"
 import { DocumentService } from "../core/documents"
 import { IndexedDBStorageBackend, MemoryStorageBackend, type StorageBackend } from "../core/storage"
-import { createBuiltinHost, installBuiltinDocumentService } from "../extensions/builtin"
+import { createBuiltinHost } from "../extensions/builtin"
 import type { ExtensionHostOptions } from "../extension-host"
 import { migrateLegacyDatabaseToLibrary } from "../core/legacy-migration"
 
@@ -16,9 +16,6 @@ export function createBuiltinApplication(
         documentService,
         migration: options.migration ?? { migrateLibrary: migrateLegacyDatabaseToLibrary },
     })
-    installBuiltinDocumentService(documentService, (extension) =>
-        host.activateForDocumentType(extension),
-    )
     return new ApplicationImpl(host)
 }
 

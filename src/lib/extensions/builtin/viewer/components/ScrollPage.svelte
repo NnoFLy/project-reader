@@ -1,4 +1,10 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const {
+        store: viewerStore,
+        search: searchStore,
+        notes: notesStore,
+    } = getViewerRuntimeContext()()
     const viewerUI = useViewerUI()
     import { useViewerUI } from "../state/viewerUI.svelte"
     import { viewport } from "$lib/shared/state/viewport.svelte"
@@ -11,10 +17,7 @@
     import * as m from "$lib/paraglide/messages"
     import { untrack } from "svelte"
     import { settingsStore } from "$lib/core/settings"
-    import { viewerStore } from "../stores/viewerStore.svelte"
-    import { searchStore } from "../stores/searchStore.svelte"
     import {
-        notesStore,
         getOffsetFromPoint,
         getTextNodeAndOffset,
         buildSpanRanges,

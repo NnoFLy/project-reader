@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { notes: notesStore } = getViewerRuntimeContext()()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
@@ -10,7 +12,6 @@
     import Button from "$lib/shared/ui/Button.svelte"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
-    import { notesStore } from "../stores/notesStore.svelte"
     import { tick, untrack } from "svelte"
     import { buildSidebarNavigationHints, findSidebarShortcut } from "./sidebarShortcutHints"
 

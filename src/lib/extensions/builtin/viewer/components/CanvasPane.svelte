@@ -1,4 +1,10 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const {
+        store: viewerStore,
+        search: searchStore,
+        notes: notesStore,
+    } = getViewerRuntimeContext()()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
@@ -9,11 +15,8 @@
         type ViewerPagedDocument,
     } from "../viewerDocument"
     import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "../viewerHost"
-    import { viewerStore } from "../stores/viewerStore.svelte"
     import { safeStorageGet } from "$lib/shared/state/safeStorage"
-    import { searchStore } from "../stores/searchStore.svelte"
     import {
-        notesStore,
         getGlobalOffset,
         getOffsetFromPoint,
         getTextNodeAndOffset,

@@ -2,8 +2,13 @@ import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../ext
 import { DocumentService } from "../../core/documents"
 import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
-import { getViewerDocumentLoader, installViewerDocumentService } from "./viewer/viewerDocument"
-import { activateLibrary, libraryStore, requestLibraryRelink, LibraryRelinkHost } from "./library"
+import {
+    createServiceLoader,
+    getViewerDocumentLoader,
+    installViewerDocumentService,
+} from "./viewer/viewerDocument"
+import { activateLibrary, libraryStore, LibraryRelinkHost } from "./library"
+import { RelinkRequestState } from "./library/state/relinkRequest.svelte"
 import { installDocumentService } from "./library/state/libraryStore.svelte"
 import { activatePrompt } from "./prompt"
 import { activateSettings } from "./settings"
@@ -29,82 +34,90 @@ const readonlyRecord = <T extends object>(record: T): Readonly<T> =>
 
 // The built-in library owns file handles, object URLs, and relink state. Expose only the
 // viewer's read capability and its explicitly typed mutation operations.
-const builtinViewerLibraryCapability: ViewerLibraryCapability = {
-    get nodes() {
-        return readonlyRecord(libraryStore.nodes) as ViewerLibraryCapability["nodes"]
-    },
-    get allFiles() {
-        return immutableSnapshot(libraryStore.allFiles) as ViewerLibraryCapability["allFiles"]
-    },
-    get isLockedMap() {
-        return readonlyRecord(libraryStore.isLockedMap) as ViewerLibraryCapability["isLockedMap"]
-    },
-    get initialized() {
-        return libraryStore.initialized
-    },
-    get isDisposed() {
-        return libraryStore.isDisposed
-    },
-    getFileUrl: (id) => libraryStore.getFileUrl(id),
-    getContentGeneration: (id) => libraryStore.getContentGeneration(id),
-    isCurrentContent: (id, generation) => libraryStore.isCurrentContent(id, generation),
-    isCurrentFileUrl: (id, url, generation) => libraryStore.isCurrentFileUrl(id, url, generation),
-    onNodesDeleted: (listener) => libraryStore.onNodesDeleted(listener),
-    onNodesDeleting: (listener) => libraryStore.onNodesDeleting(listener),
-    onNodeRelinked: (listener) => libraryStore.onNodeRelinked(listener),
-    onContentRestored: (listener) => libraryStore.onContentRestored(listener),
-    onNodeInvalidated: (listener) => libraryStore.onNodeInvalidated(listener),
-    isNodeDeleting: (id) => libraryStore.isNodeDeleting(id),
-    getIndexedTexts: (bookId) => libraryStore.getIndexedTexts(bookId),
-    getUserNotes: (bookId) => libraryStore.getUserNotes(bookId),
-    getBookmarks: () => libraryStore.getBookmarks(),
-    getPreviewUrl: (id) => libraryStore.getPreviewUrl(id),
-    getFolderPath: (id) => libraryStore.getFolderPath(id),
-}
+function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestState) {
+    const builtinViewerLibraryCapability: ViewerLibraryCapability = {
+        get nodes() {
+            return readonlyRecord(store.nodes) as ViewerLibraryCapability["nodes"]
+        },
+        get allFiles() {
+            return immutableSnapshot(store.allFiles) as ViewerLibraryCapability["allFiles"]
+        },
+        get isLockedMap() {
+            return readonlyRecord(store.isLockedMap) as ViewerLibraryCapability["isLockedMap"]
+        },
+        get initialized() {
+            return store.initialized
+        },
+        get isDisposed() {
+            return store.isDisposed
+        },
+        getFileUrl: (id) => store.getFileUrl(id),
+        getContentGeneration: (id) => store.getContentGeneration(id),
+        isCurrentContent: (id, generation) => store.isCurrentContent(id, generation),
+        isCurrentFileUrl: (id, url, generation) => store.isCurrentFileUrl(id, url, generation),
+        onNodesDeleted: (listener) => store.onNodesDeleted(listener),
+        onNodesDeleting: (listener) => store.onNodesDeleting(listener),
+        onNodeRelinked: (listener) => store.onNodeRelinked(listener),
+        onContentRestored: (listener) => store.onContentRestored(listener),
+        onNodeInvalidated: (listener) => store.onNodeInvalidated(listener),
+        isNodeDeleting: (id) => store.isNodeDeleting(id),
+        getIndexedTexts: (bookId) => store.getIndexedTexts(bookId),
+        getUserNotes: (bookId) => store.getUserNotes(bookId),
+        getBookmarks: () => store.getBookmarks(),
+        getPreviewUrl: (id) => store.getPreviewUrl(id),
+        getFolderPath: (id) => store.getFolderPath(id),
+    }
 
-const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
-    releaseFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
-    setActiveFileId: (id) => {
-        libraryStore.activeFileId = id
-    },
-    serializeBookMutation: (id, mutation) => libraryStore.serializeBookMutation(id, mutation),
-    serializeMetadataMutation: (mutation) => libraryStore.serializeMetadataMutation(mutation),
-    saveIndexedTexts: (id, records, generation) =>
-        libraryStore.saveIndexedTexts(id, records as never[], generation),
-    putUserNote: (note) => libraryStore.putUserNote(note),
-    deleteUserNote: (id) => libraryStore.deleteUserNote(id),
-    putBookmark: (bookmark) => libraryStore.putBookmark(bookmark),
-    deleteBookmark: (id) => libraryStore.deleteBookmark(id),
-    deleteBookmarks: (ids) => libraryStore.deleteBookmarks(ids),
-    revokePreviewUrl: (id) => libraryStore.revokePreviewUrl(id),
-    invalidatePreview: (id) => libraryStore.invalidatePreview(id),
-    updateFile: (id, changes, ...options) =>
-        libraryStore.updateFile(
-            id,
-            changes,
-            options[0] as boolean | undefined,
-            options[1] as number | undefined,
-        ),
-    pushForwardHistory: (id) => libraryStore.pushForwardHistory(id),
-    clearForwardHistory: () => libraryStore.clearForwardHistory(),
-}
+    const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
+        releaseFileUrl: (id, url) => store.revokeFileUrl(id, url),
+        setActiveFileId: (id) => {
+            store.activeFileId = id
+        },
+        serializeBookMutation: (id, mutation) => store.serializeBookMutation(id, mutation),
+        serializeMetadataMutation: (mutation) => store.serializeMetadataMutation(mutation),
+        saveIndexedTexts: (id, records, generation) =>
+            store.saveIndexedTexts(id, records as never[], generation),
+        putUserNote: (note) => store.putUserNote(note),
+        deleteUserNote: (id) => store.deleteUserNote(id),
+        putBookmark: (bookmark) => store.putBookmark(bookmark),
+        deleteBookmark: (id) => store.deleteBookmark(id),
+        deleteBookmarks: (ids) => store.deleteBookmarks(ids),
+        revokePreviewUrl: (id) => store.revokePreviewUrl(id),
+        invalidatePreview: (id) => store.invalidatePreview(id),
+        updateFile: (id, changes, ...options) =>
+            store.updateFile(
+                id,
+                changes,
+                options[0] as boolean | undefined,
+                options[1] as number | undefined,
+            ),
+        pushForwardHistory: (id) => store.pushForwardHistory(id),
+        clearForwardHistory: () => store.clearForwardHistory(),
+    }
 
-const builtinViewerFileCapability: ViewerFileCapability = {
-    get nodes() {
-        return readonlyRecord(libraryStore.nodes) as ViewerFileCapability["nodes"]
-    },
-    get isLockedMap() {
-        return readonlyRecord(libraryStore.isLockedMap) as ViewerFileCapability["isLockedMap"]
-    },
-    getFileUrl: (id) => libraryStore.getFileUrl(id),
-    restoreFileAccess: (id) => libraryStore.restoreFileAccess(id),
-    requestRelink: (id) => requestLibraryRelink(id),
-    waitForRelink: (id) => libraryStore.waitForRelink(id),
-    releaseFileUrl: (id, url) => libraryStore.revokeFileUrl(id, url),
-    getContentGeneration: (id) => libraryStore.getContentGeneration(id),
-    isCurrentContent: (id, generation) => libraryStore.isCurrentContent(id, generation),
-    isCurrentFileUrl: (id, url, generation) => libraryStore.isCurrentFileUrl(id, url, generation),
-    clearForwardHistory: () => libraryStore.clearForwardHistory(),
+    const builtinViewerFileCapability: ViewerFileCapability = {
+        get nodes() {
+            return readonlyRecord(store.nodes) as ViewerFileCapability["nodes"]
+        },
+        get isLockedMap() {
+            return readonlyRecord(store.isLockedMap) as ViewerFileCapability["isLockedMap"]
+        },
+        getFileUrl: (id) => store.getFileUrl(id),
+        restoreFileAccess: (id) => store.restoreFileAccess(id),
+        requestRelink: (id) => request.request(id),
+        waitForRelink: (id) => store.waitForRelink(id),
+        releaseFileUrl: (id, url) => store.revokeFileUrl(id, url),
+        getContentGeneration: (id) => store.getContentGeneration(id),
+        isCurrentContent: (id, generation) => store.isCurrentContent(id, generation),
+        isCurrentFileUrl: (id, url, generation) => store.isCurrentFileUrl(id, url, generation),
+        clearForwardHistory: () => store.clearForwardHistory(),
+    }
+
+    return {
+        files: builtinViewerFileCapability,
+        library: builtinViewerLibraryCapability,
+        mutations: builtinViewerLibraryMutations,
+    }
 }
 
 const manifest = (
@@ -182,61 +195,63 @@ export const BUILTIN_MANIFESTS = [
     }),
 ] as const
 
-const builtinExtensions: readonly AppExtension[] = [
-    {
-        manifest: BUILTIN_MANIFESTS[0],
-        activate: (context) =>
-            activateLibrary(context, context.host?.prompt?.promptStore, () =>
-                installViewerDocumentService(undefined),
-            ),
-    },
-    {
-        manifest: BUILTIN_MANIFESTS[1],
-        activate: activatePrompt,
-    },
-    {
-        manifest: BUILTIN_MANIFESTS[2],
-        activate: (context) =>
-            activateViewer(
-                context,
-                builtinViewerFileCapability,
-                builtinViewerLibraryCapability,
-                builtinViewerLibraryMutations,
-                undefined,
-                LibraryRelinkHost,
-            ),
-    },
-    {
-        manifest: BUILTIN_MANIFESTS[3],
-        activate: activateSettings,
-    },
-    {
-        manifest: BUILTIN_MANIFESTS[4],
-        activate: activatePdf,
-    },
-]
-
 export function createBuiltinHost(
     options: Omit<ExtensionHostOptions, "extensions"> = {},
 ): ExtensionHost {
-    return new ExtensionHost({ ...options, extensions: builtinExtensions })
-}
-
-/** Install the host-owned document capability used by the built-in viewer. */
-export function installBuiltinDocumentService(
-    documentService: DocumentService,
-    activateForDocumentType: (extension: string) => Promise<void>,
-): void {
+    const documentService = options.documentService ?? new DocumentService()
+    let host: ExtensionHost
+    let store: typeof libraryStore
+    const request = new RelinkRequestState()
     const documentCapability = {
         async open(source: DocumentSource, signal?: AbortSignal): Promise<OpenedDocument> {
             const extension = getDocumentExtension(source.name)
-            if (extension) await activateForDocumentType(extension)
+            if (extension) await host.activateForDocumentType(extension)
             return documentService.open(source, signal)
         },
         close: (document: OpenedDocument) => documentService.close(document),
     }
-    installViewerDocumentService(documentCapability)
-    installDocumentService(documentCapability)
+    const clearViewerDocuments = installViewerDocumentService(documentCapability)
+    const clearLibraryDocuments = installDocumentService(documentCapability)
+    const loader = createServiceLoader(documentCapability)
+    const extensions: readonly AppExtension[] = [
+        {
+            manifest: BUILTIN_MANIFESTS[0],
+            activate: async (context) => {
+                store = await activateLibrary(
+                    context,
+                    context.host?.prompt?.promptStore,
+                    () => {
+                        clearViewerDocuments()
+                        clearLibraryDocuments()
+                    },
+                    documentCapability,
+                    request,
+                )
+            },
+        },
+        { manifest: BUILTIN_MANIFESTS[1], activate: activatePrompt },
+        {
+            manifest: BUILTIN_MANIFESTS[2],
+            activate: (context) => {
+                const capabilities = viewerCapabilities(store, request)
+                const RelinkHost: typeof LibraryRelinkHost = (anchor, props) =>
+                    LibraryRelinkHost(anchor, { ...props, store, request })
+                return activateViewer(
+                    context,
+                    capabilities.files,
+                    capabilities.library,
+                    capabilities.mutations,
+                    undefined,
+                    RelinkHost,
+                    loader,
+                )
+            },
+        },
+        { manifest: BUILTIN_MANIFESTS[3], activate: activateSettings },
+        { manifest: BUILTIN_MANIFESTS[4], activate: activatePdf },
+    ]
+    host = new ExtensionHost({ ...options, documentService, extensions })
+    return host
 }
 
 export { getViewerDocumentLoader as getBuiltinDocumentLoader }

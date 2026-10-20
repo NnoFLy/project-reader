@@ -11,6 +11,7 @@ import {
     type UserNote,
 } from "../viewerHost"
 import { getViewerStorageErrorDiagnostic } from "../viewerDiagnostics"
+import { createViewerHighlights } from "./viewerHighlights"
 
 export interface SelectionState {
     bookId: string
@@ -48,7 +49,8 @@ export interface NoteEditorSession {
     saving: boolean
 }
 
-class NotesStore {
+export class NotesStore {
+    private readonly highlights = createViewerHighlights()
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
     notes = $state<UserNote[]>([])
@@ -143,7 +145,12 @@ class NotesStore {
     private bookLoadGenerations = new Map<string, number>()
     private readonly vfsUnsubscribers: (() => void)[] = []
 
-    constructor() {
+    constructor(
+        files = getViewerLibraryCapability() ?? vfsStore,
+        mutations = getViewerLibraryMutationCapability() ?? vfsMutations,
+    ) {
+        this.files = files
+        this.mutations = mutations
         this.attachLibraryListeners()
     }
 
@@ -606,16 +613,7 @@ class NotesStore {
     }
 
     private clearCSSHighlights() {
-        if (typeof CSS === "undefined" || !CSS.highlights) return
-        for (const name of [
-            "user-note-yellow",
-            "user-note-green",
-            "user-note-blue",
-            "user-note-pink",
-            "user-note-purple",
-            "user-note-active",
-        ])
-            CSS.highlights.delete(name)
+        this.highlights.clear()
     }
 
     private updateCSSHighlights() {
@@ -660,18 +658,12 @@ class NotesStore {
             }
 
             try {
-                // @ts-ignore - Highlight API is valid in browser but may lack typings
-                CSS.highlights.set("user-note-yellow", new Highlight(...yellowRanges))
-                // @ts-ignore
-                CSS.highlights.set("user-note-green", new Highlight(...greenRanges))
-                // @ts-ignore
-                CSS.highlights.set("user-note-blue", new Highlight(...blueRanges))
-                // @ts-ignore
-                CSS.highlights.set("user-note-pink", new Highlight(...pinkRanges))
-                // @ts-ignore
-                CSS.highlights.set("user-note-purple", new Highlight(...purpleRanges))
-                // @ts-ignore
-                CSS.highlights.set("user-note-active", new Highlight(...activeRanges))
+                this.highlights.set("user-note-yellow", yellowRanges)
+                this.highlights.set("user-note-green", greenRanges)
+                this.highlights.set("user-note-blue", blueRanges)
+                this.highlights.set("user-note-pink", pinkRanges)
+                this.highlights.set("user-note-purple", purpleRanges)
+                this.highlights.set("user-note-active", activeRanges)
             } catch (error) {
                 console.error(
                     "[NotesStore] Failed to update CSS Highlights:",
@@ -682,7 +674,11 @@ class NotesStore {
     }
 }
 
-export const notesStore = new NotesStore()
+export let notesStore = new NotesStore()
+
+export function installNotesStore(store: NotesStore): void {
+    notesStore = store
+}
 
 if (import.meta.hot) {
     import.meta.hot.dispose(() => notesStore.dispose())

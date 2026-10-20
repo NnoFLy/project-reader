@@ -9,18 +9,22 @@
         ViewerPagedDocument,
         ViewerReflowDocument,
     } from "../viewerDocument"
-    import { getViewerDocumentErrorDiagnostic, getViewerDocumentLoader } from "../viewerDocument"
+    import { getViewerDocumentErrorDiagnostic } from "../viewerDocument"
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import * as m from "$lib/paraglide/messages"
     import { untrack, onMount, onDestroy } from "svelte"
     import { on } from "svelte/events"
-    import { viewerStore } from "../stores/viewerStore.svelte"
-    import {
-        viewerLibraryCapability as vfsStore,
-        viewerLibraryMutationCapability as vfsMutations,
-    } from "../viewerHost"
-    import { searchStore } from "../stores/searchStore.svelte"
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const {
+        store: viewerStore,
+        notes: notesStore,
+        bookmarks: bookmarksStore,
+        search: searchStore,
+        executeCommand: executeViewerCommand,
+    } = getViewerRuntimeContext()()
+    const vfsStore = viewerStore.library
+    const vfsMutations = viewerStore.libraryMutations
     import { goto, replaceState } from "$app/navigation"
     import { page } from "$app/state"
     import { resolve } from "$app/paths"
@@ -31,9 +35,7 @@
     import ReflowDocumentView from "./ReflowDocumentView.svelte"
     import PageBitmapPreview from "./PageBitmapPreview.svelte"
     import ViewerFooter from "./ViewerFooter.svelte"
-    import { notesStore } from "../stores/notesStore.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
-    import { bookmarksStore } from "../stores/bookmarksStore.svelte"
     import ViewerModals from "./ViewerModals.svelte"
     import { mountViewerUIStore } from "../stores/viewerUIStore.svelte"
 
@@ -60,7 +62,7 @@
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
-    import { executeViewerCommand, viewerPromptCapability } from "../viewerHost"
+    import { viewerPromptCapability } from "../viewerHost"
     const { openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
     import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
@@ -186,6 +188,11 @@
         prompt: promptStore,
         scope: { onDestroy: (callback) => commandsNode.onDestroy(callback) },
         bookmarks: {
+            preview: {
+                getPreviewUrl: (id) => vfsStore.getPreviewUrl(id),
+                onNodeInvalidated: (listener) => vfsStore.onNodeInvalidated(listener),
+                revokePreviewUrl: (id) => vfsMutations.revokePreviewUrl(id),
+            },
             list: () => bookmarksStore.bookmarks,
             resolveBookName: (bookId) => vfsStore.nodes[bookId]?.name ?? m.unknown_book(),
             open: async (bookmarkId) => {
@@ -635,11 +642,10 @@
             return
         }
 
-        let canceled = false
-        let loadedDoc: ViewerDocument | null = null
-        let closeLoadedDoc: (() => Promise<void>) | null = null
-        const loadingBookId = bookId
+        const controller = new AbortController()
+        const workspace = viewerStore.workspace
         const loadingContentGeneration = vfsStore.getContentGeneration(bookId)
+        let loadedDoc: ViewerDocument | undefined
 
         untrack(() => {
             isLoaded = false
@@ -650,32 +656,10 @@
             viewerStore.currentPage = currentBook?.pageNumber || 1
             viewerStore.scrollPosition = currentBook?.scrollPosition || 0
 
-            const loadPdf = async (pdfUrl: string) => {
-                let doc: ViewerDocument | null = null
-                let closed = false
-                const closeDoc = async () => {
-                    if (closed || !doc) return
-                    closed = true
-                    await doc.close()
-                }
-                closeLoadedDoc = closeDoc
-
+            const loadDocument = async () => {
                 try {
-                    const currentDoc = await getViewerDocumentLoader().open({
-                        id: loadingBookId,
-                        name: viewerStore.getCurrentBook()?.name ?? "document",
-                        url: pdfUrl,
-                    })
-                    doc = currentDoc
-
-                    if (
-                        canceled ||
-                        viewerStore.getCurrentBook()?.id !== loadingBookId ||
-                        !vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
-                    ) {
-                        await closeDoc()
-                        return
-                    }
+                    const currentDoc = await workspace.loadDocument(controller.signal)
+                    if (!currentDoc) return
                     loadedDoc = currentDoc
                     if (currentDoc.kind === "reflowable") {
                         reflowDocument = currentDoc
@@ -685,25 +669,13 @@
                     pdf = currentDoc
                     const pagesCount = currentDoc.pageCount
                     const author = currentDoc.metadata.author
-                    if (
-                        canceled ||
-                        viewerStore.getCurrentBook()?.id !== loadingBookId ||
-                        !vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
-                    ) {
-                        loadedDoc = null
-                        await closeDoc()
-                        return
-                    }
                     totalPages = pagesCount
-                    if (viewerStore.currentPage > pagesCount) {
-                        viewerStore.currentPage = pagesCount
-                    }
-                    if (viewerStore.currentPage < 1) {
-                        viewerStore.currentPage = 1
-                    }
+                    viewerStore.currentPage = Math.max(
+                        1,
+                        Math.min(viewerStore.currentPage, pagesCount),
+                    )
                     isLoaded = true
                     searchStore.initDocument({ pdf: currentDoc, bookId })
-
                     const currentBook = viewerStore.getCurrentBook()
                     if (
                         currentBook &&
@@ -719,31 +691,30 @@
                             loadingContentGeneration,
                         )
                     }
-                } catch (err) {
-                    loadedDoc = loadedDoc === doc ? null : loadedDoc
-                    await closeDoc()
-                    console.error("Failed to load PDF:", getViewerDocumentErrorDiagnostic(err))
-                    if (
-                        !canceled &&
-                        viewerStore.getCurrentBook()?.id === loadingBookId &&
-                        vfsStore.isCurrentContent(loadingBookId, loadingContentGeneration)
-                    ) {
-                        isLoaded = false
-                        viewerStore.setCurrentBook(null)
-                        goto(resolve(localizedPath("/") as any))
-                    }
+                } catch (error) {
+                    if (controller.signal.aborted) return
+                    console.error(
+                        "Failed to load document:",
+                        getViewerDocumentErrorDiagnostic(error),
+                    )
+                    isLoaded = false
+                    await workspace.close()
+                    await goto(resolve(localizedPath("/") as any))
                 }
             }
-
-            loadPdf(currentUrl)
+            void loadDocument()
         })
 
         return () => {
-            canceled = true
-            loadedDoc = null
-            const closeDoc = closeLoadedDoc
-            closeLoadedDoc = null
-            void closeDoc?.()
+            controller.abort()
+            void loadedDoc
+                ?.close()
+                .catch((error) =>
+                    console.error(
+                        "Failed to close document:",
+                        getViewerDocumentErrorDiagnostic(error),
+                    ),
+                )
         }
     })
 

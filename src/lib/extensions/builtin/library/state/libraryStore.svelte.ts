@@ -37,8 +37,11 @@ let installedDocumentService: VfsDocumentService | undefined
 const documentServices = new WeakMap<object, VfsDocumentService>()
 
 /** Install the canonical host capability before VFS documents are opened. */
-export function installDocumentService(service: VfsDocumentService | undefined): void {
+export function installDocumentService(service: VfsDocumentService | undefined): () => void {
     installedDocumentService = service
+    return () => {
+        if (installedDocumentService === service) installedDocumentService = undefined
+    }
 }
 
 function isDocumentResourceLimitError(error: unknown): boolean {
@@ -55,8 +58,10 @@ function getDocumentService(): VfsDocumentService {
     return installedDocumentService
 }
 
-async function openDocument(source: DocumentSource): Promise<OpenedDocument> {
-    const service = await getDocumentService()
+async function openDocument(
+    source: DocumentSource,
+    service = getDocumentService(),
+): Promise<OpenedDocument> {
     let document: OpenedDocument
     try {
         document = await service.open(source)
@@ -72,17 +77,28 @@ async function openDocument(source: DocumentSource): Promise<OpenedDocument> {
     return document
 }
 
-async function openBlobDocument(blob: Blob, id: string, name: string): Promise<OpenedDocument> {
+async function openBlobDocument(
+    blob: Blob,
+    id: string,
+    name: string,
+    service?: VfsDocumentService,
+): Promise<OpenedDocument> {
     return openDocument(
         createBlobDocumentSource({ id, name, blob, mimeType: blob.type || undefined }),
+        service,
     )
 }
 
-async function openUrlDocument(url: string, id: string, name: string): Promise<OpenedDocument> {
+async function openUrlDocument(
+    url: string,
+    id: string,
+    name: string,
+    service?: VfsDocumentService,
+): Promise<OpenedDocument> {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Failed to read document source (${response.status})`)
     const blob = await response.blob()
-    return openBlobDocument(blob, id, name)
+    return openBlobDocument(blob, id, name, service)
 }
 
 async function closeDocument(document: OpenedDocument | null | undefined): Promise<void> {
@@ -299,7 +315,11 @@ export class VFSStore {
         else if (this.metadataEnrichmentOwners > 0) this.scheduleMetadataEnrichment()
     }
 
-    constructor(initialNodes: VFSNodes = {}, storage?: StorageNamespace) {
+    constructor(
+        initialNodes: VFSNodes = {},
+        storage?: StorageNamespace,
+        private readonly documentService = installedDocumentService,
+    ) {
         this.db = new LibraryStorage(storage ?? new MemoryLibraryStorageNamespace())
         this.disposalPromise = new Promise<void>((resolve) => {
             this.resolveDisposal = resolve
@@ -792,7 +812,7 @@ export class VFSStore {
 
         let doc: OpenedDocument | null = null
         try {
-            doc = await openUrlDocument(url, id, node.name)
+            doc = await openUrlDocument(url, id, node.name, this.documentService)
             this.activeMetadataDocument = doc
             if (signal.aborted || doc.kind !== "paged") return
             const { pageCount, author } = doc.metadata
@@ -970,7 +990,7 @@ export class VFSStore {
                 let doc: OpenedDocument | null = null
                 try {
                     const node = this.nodes[id]
-                    doc = await openUrlDocument(fileUrl, id, node?.name ?? id)
+                    doc = await openUrlDocument(fileUrl, id, node?.name ?? id, this.documentService)
                     if (this.disposed || doc.kind !== "paged") return ""
                     const renderedPage = await this.awaitUnlessDisposed(renderDocumentPage(doc, 1))
                     const pageUrl = renderedPage.url
@@ -1059,7 +1079,7 @@ export class VFSStore {
         }
         let document: OpenedDocument | null = null
         try {
-            document = await openUrlDocument(url, id, node.name)
+            document = await openUrlDocument(url, id, node.name, this.documentService)
             return document.kind === "paged" ? document.pageCount : null
         } finally {
             await closeDocument(document).catch(() => undefined)
@@ -2025,7 +2045,7 @@ export class VFSStore {
             // the existing render-bound validation; reflowable documents have no page data to
             // validate or synthesize.
             try {
-                document = await openBlobDocument(file, job.id, job.name)
+                document = await openBlobDocument(file, job.id, job.name, this.documentService)
                 if (document.kind === "paged") await validateRenderBounds(document)
                 this.throwIfDisposed()
             } catch (error) {
@@ -2206,7 +2226,7 @@ export class VFSStore {
                     ? source
                     : await this.awaitUnlessDisposed(source.getFile())
                 this.throwIfDisposed()
-                doc = await openBlobDocument(file, job.id, job.name)
+                doc = await openBlobDocument(file, job.id, job.name, this.documentService)
                 if (doc.kind === "paged") await awaitDocumentOperation(validateRenderBounds(doc))
                 this.throwIfDisposed()
             }
@@ -3049,6 +3069,7 @@ export class VFSStore {
                 fileObj,
                 id,
                 this.nodes[id]?.name ?? fileObj.name,
+                this.documentService,
             )
             try {
                 if (candidateDocument.kind === "paged") {
@@ -3570,14 +3591,13 @@ class PrefixedLibraryStorageNamespace implements ExtensionStorage {
 export let vfsStore = new VFSStore()
 export let libraryStore = vfsStore
 
-/** Reuses the initial store for the first activation and creates a fresh host store after disposal. */
-export function configureLibraryStore(storage: StorageNamespace): VFSStore {
-    if (vfsStore.isDisposed) {
-        vfsStore = new VFSStore({}, storage)
-        libraryStore = vfsStore
-    } else {
-        vfsStore.configureStorage(storage)
-    }
+/** Every activation owns its Library resources, even while another host is still live. */
+export function configureLibraryStore(
+    storage: StorageNamespace,
+    service?: VfsDocumentService,
+): VFSStore {
+    vfsStore = new VFSStore({}, storage, service)
+    libraryStore = vfsStore
     return vfsStore
 }
 

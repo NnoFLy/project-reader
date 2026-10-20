@@ -3,8 +3,12 @@
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
     import Input from "$lib/shared/ui/Input.svelte"
-    import { relinkRequest } from "../state/relinkRequest.svelte"
-    import { vfsStore } from "../state/libraryStore.svelte"
+    import { relinkRequest, type RelinkRequestState } from "../state/relinkRequest.svelte"
+    import { vfsStore, type VFSStore } from "../state/libraryStore.svelte"
+    let {
+        request = relinkRequest,
+        store = vfsStore,
+    }: { request?: RelinkRequestState; store?: VFSStore } = $props()
     import type { FileNode } from "../state/libraryStore.svelte"
     import { relinkLibraryNode } from "../commands/libraryRelinkExecution"
     import { commandsStore } from "../commands/commandsStore.svelte"
@@ -14,16 +18,16 @@
 
     let fileInput = $state<HTMLInputElement | null>(null)
     let locateButton = $state<HTMLButtonElement | null>(null)
-    const nodeId = $derived(relinkRequest.nodeId)
-    const node = $derived(nodeId ? (vfsStore.nodes[nodeId] as FileNode) : null)
+    const nodeId = $derived(request.nodeId)
+    const node = $derived(nodeId ? (store.nodes[nodeId] as FileNode) : null)
 
     function handleClose() {
-        relinkRequest.cancel()
+        request.cancel()
     }
 
     async function handleRelink(fileSource: File | FileSystemFileHandle) {
         if (!node) return
-        await relinkLibraryNode(node.id, fileSource)
+        await relinkLibraryNode(node.id, fileSource, store, request)
     }
 
     async function handleLocateClick() {

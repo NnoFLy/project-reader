@@ -11,9 +11,15 @@ import {
 } from "./state/libraryUI.svelte"
 import { configurePromptStorage } from "./commands/promptStore.svelte"
 import type { Disposable, PromptService } from "$lib/extension-api"
-import { configureLibraryStore, installDocumentService } from "./state/libraryStore.svelte"
+import {
+    configureLibraryStore,
+    libraryStore,
+    type VfsDocumentService,
+    type VFSStore,
+} from "./state/libraryStore.svelte"
 import { configureLibraryNotifications } from "./state/libraryNotifications"
 import { configureLibraryHostBridge } from "./state/libraryHostBridge"
+import { RelinkRequestState, installRelinkRequest } from "./state/relinkRequest.svelte"
 
 export { LibraryPage }
 export { default as LibraryRelinkHost } from "./components/LibraryRelinkHost.svelte"
@@ -28,10 +34,13 @@ export async function activateLibrary(
     context: ExtensionContext,
     prompt: PromptService | undefined,
     onDispose?: () => void,
-): Promise<void> {
+    documentService?: VfsDocumentService,
+    request = new RelinkRequestState(),
+): Promise<VFSStore> {
     const libraryStorage = context.storage.namespace("library")
     await context.migration?.migrateLibrary(libraryStorage)
-    const store = configureLibraryStore(libraryStorage)
+    const store = configureLibraryStore(libraryStorage, documentService)
+    installRelinkRequest(request)
     await store.init()
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
@@ -98,12 +107,14 @@ export async function activateLibrary(
         for (const registration of registrations) registration.dispose()
         for (const handle of notificationHandles) handle.dispose()
         notificationHandles.clear()
-        configureLibraryUIController(undefined)
-        configureLibraryHostBridge(undefined)
-        configurePromptStorage(undefined)
-        configureLibraryNotifications(undefined)
+        if (libraryStore === store) {
+            configureLibraryUIController(undefined)
+            configureLibraryHostBridge(undefined)
+            configurePromptStorage(undefined)
+            configureLibraryNotifications(undefined)
+        }
         context.host?.contextualStatus?.clear()
-        installDocumentService(undefined)
+        request.cancel()
         onDispose?.()
         await store.dispose()
     })
@@ -122,4 +133,5 @@ export async function activateLibrary(
         kind: "native",
         component: LibraryStatus,
     })
+    return store
 }

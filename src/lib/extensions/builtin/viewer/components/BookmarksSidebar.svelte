@@ -1,4 +1,10 @@
 <script lang="ts">
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const {
+        store: viewerStore,
+        bookmarks: bookmarksStore,
+        executeCommand: executeViewerCommand,
+    } = getViewerRuntimeContext()()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import {
@@ -10,9 +16,6 @@
     import { MediaQuery } from "svelte/reactivity"
     import Button from "$lib/shared/ui/Button.svelte"
     import { resolveSelectionIndex } from "$lib/shared/state/listSelection"
-    import { viewerStore } from "../stores/viewerStore.svelte"
-    import { bookmarksStore } from "../stores/bookmarksStore.svelte"
-    import { executeViewerCommand } from "../viewerHost"
     import type { Bookmark } from "$lib/core/documents"
     import type { ViewerBookmarkEditPayload } from "../commands/viewerCommandPayloads"
     import TrashIcon from "$lib/shared/icons/TrashIcon.svelte"

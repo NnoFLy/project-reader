@@ -75,6 +75,7 @@ describe("viewer command modules", () => {
                 {
                     id: "goto-page-12",
                     label: `${m.keymap_goto_page()} 12`,
+                    englishLabel: "Go to page 12",
                     category: "navigation",
                     value: 12,
                 },

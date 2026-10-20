@@ -1,195 +1,149 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
+import { createExtensionStorage, MemoryStorageBackend } from "$lib/core/storage"
+import type {
+    ViewerFileCapability,
+    ViewerLibraryCapability,
+    ViewerLibraryMutationCapability,
+} from "../viewerHost"
+import { ViewerStore } from "./viewerStore.svelte"
 
-vi.mock("$app/environment", () => ({ browser: false }))
-
-import { viewerLibraryCapability as vfsStore } from "../viewerHost"
-import { viewerStore } from "./viewerStore.svelte"
-
-vi.mock("../viewerHost", async () => {
-    const actual = await vi.importActual<typeof import("../viewerHost")>("../viewerHost")
-    const { vfsStore } = await import("$lib/modules/documents")
-    Object.assign(vfsStore, {
-        setActiveFileId: (id: string | null) => {
-            vfsStore.activeFileId = id
-        },
-        releaseFileUrl: (id: string, url?: string) => vfsStore.revokeFileUrl(id, url),
-    })
-    return {
-        ...actual,
-        viewerLibraryCapability: vfsStore,
-        viewerLibraryMutationCapability: vfsStore,
-        isViewerLibraryCapabilityInstalled: () => true,
-        getViewerLibraryMutationCapability: () => vfsStore,
+function reader() {
+    const released: string[] = []
+    const acquisitions: string[] = []
+    const nodes = {
+        book: { id: "book", name: "Book", type: "file" as const, updatedAt: 1, metadata: {} },
+        next: { id: "next", name: "Next", type: "file" as const, updatedAt: 1, metadata: {} },
     }
-})
-
-const bookNode = {
-    id: "book",
-    name: "book.pdf",
-    type: "file" as const,
-    parentId: null,
-    size: 1,
-    createdAt: 1,
-    updatedAt: 1,
-    isPinned: false,
-    metadata: { pageNumber: 1 },
+    const files: ViewerFileCapability = {
+        nodes,
+        isLockedMap: {},
+        getFileUrl: async (id) => {
+            acquisitions.push(id)
+            return `blob:${id}`
+        },
+        restoreFileAccess: async () => undefined,
+        requestRelink() {},
+        waitForRelink: async () => undefined,
+        releaseFileUrl: (_id, url) => {
+            released.push(url)
+            return true
+        },
+        getContentGeneration: () => 0,
+        isCurrentContent: () => true,
+        isCurrentFileUrl: () => true,
+        clearForwardHistory() {},
+    }
+    const library: ViewerLibraryCapability = {
+        ...files,
+        isLockedMap: {},
+        allFiles: Object.values(nodes),
+        initialized: true,
+        isDisposed: false,
+        onNodesDeleted: () => () => undefined,
+        onNodesDeleting: () => () => undefined,
+        onNodeRelinked: () => () => undefined,
+        onContentRestored: () => () => undefined,
+        onNodeInvalidated: () => () => undefined,
+        isNodeDeleting: () => false,
+        getIndexedTexts: async () => [],
+        getUserNotes: async () => [],
+        getBookmarks: async () => [],
+        getPreviewUrl: async () => "",
+        getFolderPath: () => "",
+    }
+    const mutations: ViewerLibraryMutationCapability = {
+        releaseFileUrl: (id, url) => files.releaseFileUrl(id, url ?? ""),
+        setActiveFileId() {},
+        serializeBookMutation: async (_id, mutation) => mutation(),
+        serializeMetadataMutation: async (mutation) => mutation(),
+        saveIndexedTexts: async () => true,
+        putUserNote: async () => "",
+        deleteUserNote: async () => undefined,
+        putBookmark: async () => "",
+        deleteBookmark: async () => undefined,
+        deleteBookmarks: async () => undefined,
+        revokePreviewUrl() {},
+        invalidatePreview: async () => undefined,
+        updateFile: async () => undefined,
+        pushForwardHistory() {},
+        clearForwardHistory() {},
+    }
+    const store = new ViewerStore({ files, library, mutations })
+    const storage = createExtensionStorage(new MemoryStorageBackend(), "builtin.viewer").namespace(
+        "viewer",
+    )
+    const savedBook = {
+        id: "book",
+        name: "Book",
+        pageNumber: 7,
+        scrollPosition: 0.35,
+        totalPages: 12,
+        updatedAt: 1,
+        url: "",
+    }
+    return { store, storage, savedBook, files, mutations, released, acquisitions }
 }
 
-beforeEach(() => {
-    ;(viewerStore as any).disposed = false
-    ;(viewerStore as any).disposalEpoch = 0
-    ;(viewerStore as any).bookSwitchGeneration = 0
-    ;(viewerStore as any).syncPromise = null
-    ;(viewerStore as any).book = null
-    ;(viewerStore as any).pendingBookSwitches.clear()
-    ;(viewerStore as any).deferredStaleUrls.clear()
-})
-
-afterEach(() => {
-    viewerStore.dispose()
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-})
-
-describe("ViewerStore URL synchronization", () => {
-    it("does not publish a stale URL after a concurrent real book switch", async () => {
-        let releaseUrl!: () => void
-        const urlReady = new Promise<void>((resolve) => (releaseUrl = resolve))
-        const getFileUrl = vi.spyOn(vfsStore, "getFileUrl").mockImplementation(async () => {
-            await urlReady
-            return "blob:old"
-        })
-        vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
-        vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
-        vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        const releaseFileUrl = vi
-            .spyOn(vfsStore as any, "releaseFileUrl")
-            .mockImplementation(() => true)
-        ;(vfsStore as any).nodes = {
-            old: { ...bookNode, id: "old" },
-            next: { ...bookNode, id: "next", name: "next.pdf" },
-        }
-        ;(vfsStore as any).isLockedMap = {}
-        ;(viewerStore as any).book = {
-            id: "old",
-            name: "old.pdf",
-            url: "",
-            pageNumber: 1,
-            scrollPosition: 0,
-            totalPages: 0,
-            previewDataUrl: "",
-        }
-
-        const syncing = viewerStore.syncWithBooks()
-        await vi.waitFor(() => expect(getFileUrl).toHaveBeenCalledOnce())
-        await viewerStore.setCurrentBook({
-            id: "next",
-            name: "next.pdf",
-            url: "blob:next",
-            pageNumber: 1,
-            scrollPosition: 0,
-            totalPages: 0,
-            previewDataUrl: "",
-            updatedAt: 1,
-        })
-        releaseUrl()
-        await syncing
-
-        expect(viewerStore.getCurrentBook()).toMatchObject({ id: "next", url: "blob:next" })
-        expect(releaseFileUrl).toHaveBeenCalledWith("old", "blob:old")
-    })
-
-    it("does not update metadata after disposal when defaults are omitted", async () => {
-        const updateFile = vi.spyOn(vfsStore as any, "updateFile")
-        const getContentGeneration = vi.spyOn(vfsStore, "getContentGeneration")
-        viewerStore.dispose()
-
-        await viewerStore.updateBook({
-            id: "book",
-            name: "book.pdf",
-            url: "",
-            pageNumber: 1,
-            scrollPosition: 0,
-            totalPages: 0,
-            previewDataUrl: "",
-            updatedAt: 1,
-        })
-
-        expect(getContentGeneration).not.toHaveBeenCalled()
-        expect(updateFile).not.toHaveBeenCalled()
-    })
-
-    it("restores persisted state before synchronizing the host-owned file URL", async () => {
-        const savedBook = {
-            id: "book",
-            name: "book.pdf",
-            url: "",
+describe("Viewer synchronization through the Reading workspace", () => {
+    it("preserves restored reading position when acquiring a fresh source", async () => {
+        const { store, storage, savedBook, acquisitions } = reader()
+        await storage.set("book", savedBook)
+        await store.configureStorage(storage)
+        expect(store.getCurrentBook()).toMatchObject({ pageNumber: 7, url: "" })
+        await store.syncWithBooks()
+        expect(store.getCurrentBook()).toMatchObject({
             pageNumber: 7,
             scrollPosition: 0.35,
-            totalPages: 12,
-            previewDataUrl: "",
-            updatedAt: 1,
-        }
-        const storage = {
-            get: vi.fn(async () => savedBook),
-            set: vi.fn(),
-            delete: vi.fn(),
-        }
-        vi.spyOn(vfsStore, "getFileUrl").mockResolvedValue("blob:persisted")
-        vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
-        vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
-        vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        ;(vfsStore as any).nodes = { book: bookNode }
-        ;(vfsStore as any).isLockedMap = {}
-
-        await viewerStore.configureStorage(storage as never)
-        expect(viewerStore.getCurrentBook()).toMatchObject({
-            id: "book",
-            pageNumber: 7,
-            scrollPosition: 0.35,
-            url: "",
+            url: "blob:book",
         })
-
-        await viewerStore.syncWithBooks()
-
-        expect(viewerStore.getCurrentBook()).toMatchObject({
-            id: "book",
-            pageNumber: 7,
-            scrollPosition: 0.35,
-            url: "blob:persisted",
-        })
-        expect(vfsStore.getFileUrl).toHaveBeenCalledWith("book")
+        expect(acquisitions).toEqual(["book"])
+        await store.dispose()
     })
 
-    it("arbitrates concurrent syncs through the real ViewerStore", async () => {
-        let releaseUrl!: () => void
-        const urlReady = new Promise<void>((resolve) => (releaseUrl = resolve))
-        const getFileUrl = vi.spyOn(vfsStore, "getFileUrl").mockImplementation(async () => {
-            await urlReady
-            return "blob:book"
+    it("shares synchronization and never publishes it over a newer document selection", async () => {
+        const { store, storage, savedBook, files, released } = reader()
+        await storage.set("book", savedBook)
+        await store.configureStorage(storage)
+        let finish!: (url: string) => void
+        files.getFileUrl = (id) =>
+            id === "book"
+                ? new Promise<string>((resolve) => {
+                      finish = resolve
+                  })
+                : Promise.resolve("blob:next")
+        const first = store.syncWithBooks()
+        const second = store.syncWithBooks()
+        await store.setCurrentBook({ ...savedBook, id: "next", name: "Next" })
+        finish("blob:stale")
+        await Promise.all([first, second])
+        expect(store.getCurrentBook()).toMatchObject({ id: "next", url: "blob:next" })
+        expect(released).toEqual(["blob:stale"])
+        await store.dispose()
+    })
+
+    it("discards saved transient URLs and cleans up the reacquired claim", async () => {
+        const { store, storage, savedBook, released } = reader()
+        await storage.set("book", {
+            ...savedBook,
+            url: "blob:previous-process",
+            previewDataUrl: "blob:previous-preview",
         })
-        vi.spyOn(vfsStore, "getContentGeneration").mockReturnValue(0)
-        vi.spyOn(vfsStore, "isCurrentContent").mockReturnValue(true)
-        vi.spyOn(vfsStore, "isCurrentFileUrl").mockReturnValue(true)
-        ;(vfsStore as any).nodes = { book: bookNode }
-        ;(vfsStore as any).isLockedMap = {}
-        ;(viewerStore as any).book = {
-            id: "book",
-            name: "book.pdf",
-            url: "",
-            pageNumber: 1,
-            scrollPosition: 0,
-            totalPages: 0,
-            previewDataUrl: "",
+        await store.configureStorage(storage)
+        expect(store.getCurrentBook()).toMatchObject({ url: "", previewDataUrl: "" })
+        await store.syncWithBooks()
+        await store.dispose()
+        expect(released).toEqual(["blob:book"])
+    })
+
+    it("does not access Library resources from late metadata callbacks after disposal", async () => {
+        const { store, savedBook, mutations, files } = reader()
+        await store.dispose()
+        files.getContentGeneration = () => {
+            throw new Error("Disposed access")
         }
-
-        const firstSync = viewerStore.syncWithBooks()
-        const secondSync = viewerStore.syncWithBooks()
-        releaseUrl()
-
-        await Promise.all([firstSync, secondSync])
-
-        expect(getFileUrl).toHaveBeenCalledOnce()
-        expect(viewerStore.getCurrentBook()).toMatchObject({ id: "book", url: "blob:book" })
+        mutations.updateFile = async () => {
+            throw new Error("Disposed mutation")
+        }
+        await expect(store.updateBook(savedBook)).resolves.toBeUndefined()
     })
 })

@@ -5,7 +5,8 @@ import ViewerPage from "./ViewerPage.svelte"
 import ViewerStatus from "./ViewerStatus.svelte"
 import { createViewerOpenCommand } from "./commands/viewerOpenCommand"
 import { isViewerBookmarkOpenPayload, isViewerOpenPayload } from "./commands/viewerCommandPayloads"
-import { viewerStore } from "./stores/viewerStore.svelte"
+import { ViewerStore, viewerStore } from "./stores/viewerStore.svelte"
+import { createViewerRuntime, installViewerRuntime, setViewerRuntimeContext } from "./viewerRuntime"
 import {
     installViewerHostCapabilities,
     type ViewerFileCapability,
@@ -13,11 +14,7 @@ import {
     type ViewerLibraryMutationCapability,
     type ViewerPromptCapability,
 } from "./viewerHost"
-import { bookmarksStore } from "./stores/bookmarksStore.svelte"
-import { notesStore } from "./stores/notesStore.svelte"
-import { searchStore } from "./stores/searchStore.svelte"
-import { getViewerDocumentErrorDiagnostic } from "./viewerDocument"
-import { installViewerRelinkHost } from "./viewerRelinkHost"
+import { getViewerDocumentErrorDiagnostic, type ViewerDocumentLoader } from "./viewerDocument"
 import { buildBookmarkItems } from "./commands/viewerPromptItems"
 import { openViewerBookmark } from "./commands/viewerBookmarkCommandFactory"
 import * as m from "$lib/paraglide/messages"
@@ -69,9 +66,9 @@ export async function activateViewer(
     libraryMutationCapability?: ViewerLibraryMutationCapability,
     promptCapability?: ViewerPromptCapability,
     relinkHost?: Component,
+    loader?: ViewerDocumentLoader,
 ): Promise<void> {
     const viewerStorage = context.storage.namespace("viewer")
-    installViewerRelinkHost(relinkHost)
     installViewerHostCapabilities({
         files: fileCapability,
         library: libraryCapability,
@@ -82,24 +79,36 @@ export async function activateViewer(
         host: context.host,
         commandExecutor: (commandId, payload) => context.commands.execute(commandId, payload),
     })
-    viewerStore.reset()
-    bookmarksStore.reset()
-    notesStore.reset()
-    searchStore.resetLifecycle()
-    context.lifecycle.onDispose(() => {
+    const store = new ViewerStore({
+        files: fileCapability,
+        library: libraryCapability,
+        mutations: libraryMutationCapability,
+        loader,
+    })
+    const runtime = createViewerRuntime(
+        store,
+        (id, payload) => context.commands.execute(id, payload),
+        relinkHost,
+    )
+    const { notes: notesStore, bookmarks: bookmarksStore, search: searchStore } = runtime
+    installViewerRuntime(runtime)
+    context.lifecycle.onDispose(async () => {
         searchStore.dispose()
         notesStore.dispose()
         bookmarksStore.dispose()
-        viewerStore.dispose()
+        if (viewerStore === store) {
+            installViewerHostCapabilities({})
+        }
         context.host?.contextualStatus?.clear()
-        installViewerHostCapabilities({})
-        installViewerRelinkHost(undefined)
+        await store.dispose()
     })
-    await viewerStore.configureStorage(viewerStorage)
-    await viewerStore.syncWithBooks()
+    await store.configureStorage(viewerStorage)
+    await store.syncWithBooks()
     await bookmarksStore.loadAllBookmarks()
     const notificationHandles = new Set<Disposable>()
     const openCommand = createViewerOpenCommand({
+        workspace: store.workspace,
+        clearForwardHistory: () => fileCapability?.clearForwardHistory(),
         executeCommand: (commandId, payload) => context.commands.execute(commandId, payload),
         onFileAccessFailure: ({ bookId, error }) => {
             console.error("[Viewer] Unable to open document", {
@@ -192,7 +201,7 @@ export async function activateViewer(
             await openViewerBookmark({
                 open: () => executeHostCommand("viewer.open", { bookId: bookmark.bookId }),
                 pageNumber: bookmark.pageNumber,
-                goToPage: (pageNumber, options) => viewerStore.goToPage?.(pageNumber, options),
+                goToPage: (pageNumber, options) => store.goToPage(pageNumber, options),
             })
         },
         validatePayload: isViewerBookmarkOpenPayload,
@@ -210,13 +219,17 @@ export async function activateViewer(
         slot: "viewer.toolbar",
         title: "Viewer",
         kind: "native",
-        component: ViewerPage,
+        component: ((anchor, props) =>
+            ViewerPage(anchor, { ...props, runtime })) satisfies typeof ViewerPage,
     })
     context.views.registerNative({
         id: "viewer.status",
         slot: "host.status",
         title: "Viewer status",
         kind: "native",
-        component: ViewerStatus,
+        component: ((anchor, props) => {
+            setViewerRuntimeContext(() => runtime)
+            return ViewerStatus(anchor, props)
+        }) satisfies typeof ViewerStatus,
     })
 }

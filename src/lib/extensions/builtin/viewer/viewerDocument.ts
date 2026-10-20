@@ -86,9 +86,17 @@ let installedDocumentService: ViewerDocumentService | undefined
 let defaultLoader: ViewerDocumentLoader | undefined
 
 /** Install the canonical host capability before viewer documents are opened. */
-export function installViewerDocumentService(service: ViewerDocumentService | undefined): void {
+export function installViewerDocumentService(
+    service: ViewerDocumentService | undefined,
+): () => void {
     installedDocumentService = service
     defaultLoader = undefined
+    return () => {
+        if (installedDocumentService === service) {
+            installedDocumentService = undefined
+            defaultLoader = undefined
+        }
+    }
 }
 
 function requireDocumentService(): ViewerDocumentService {
@@ -133,7 +141,7 @@ function asViewerDocument(
     }
 }
 
-function createServiceLoader(service: ViewerDocumentService): ViewerDocumentLoader {
+export function createServiceLoader(service: ViewerDocumentService): ViewerDocumentLoader {
     return {
         async open(input, signal) {
             const response = await fetch(input.url, { signal })

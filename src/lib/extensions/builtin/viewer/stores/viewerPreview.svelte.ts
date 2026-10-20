@@ -1,31 +1,37 @@
-import { getViewerLibraryCapability, getViewerLibraryMutationCapability } from "../viewerHost"
+export interface ViewerPreviewCapability {
+    getPreviewUrl(id: string): Promise<string>
+    onNodeInvalidated(listener: (id: string) => void): () => void
+    revokePreviewUrl(id: string): void
+}
 
-export function useViewerPreviewUrl(nodeId: () => string) {
+export function useViewerPreviewUrl(
+    nodeId: () => string,
+    getAccess: () => ViewerPreviewCapability | undefined,
+) {
     let url = $state("")
     let requestGeneration = 0
     $effect(() => {
         const id = nodeId()
-        const files = getViewerLibraryCapability()
-        const mutations = getViewerLibraryMutationCapability()
+        const access = getAccess()
         requestGeneration++
-        if (!id || !files || !mutations) return
+        if (!id || !access) return
         const load = () => {
             const generation = ++requestGeneration
-            void files.getPreviewUrl(id).then((value) => {
+            void access.getPreviewUrl(id).then((value) => {
                 if (generation === requestGeneration) url = value
             })
         }
-        const stop = files.onNodeInvalidated((invalidatedId) => {
+        const stop = access.onNodeInvalidated((invalidatedId) => {
             if (invalidatedId !== id) return
             url = ""
-            mutations.revokePreviewUrl(id)
+            access.revokePreviewUrl(id)
             load()
         })
         load()
         return () => {
             requestGeneration++
             stop()
-            mutations.revokePreviewUrl(id)
+            access.revokePreviewUrl(id)
         }
     })
     return {
