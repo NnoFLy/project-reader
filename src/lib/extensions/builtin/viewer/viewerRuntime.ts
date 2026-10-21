@@ -1,4 +1,5 @@
 import { createContext, type Component } from "svelte"
+import type { SettingsCapability } from "$lib/extension-api"
 import { ViewerStore, installViewerStore } from "./stores/viewerStore.svelte"
 import { NotesStore, installNotesStore } from "./stores/notesStore.svelte"
 import { BookmarksStore, installBookmarksStore } from "./stores/bookmarksStore.svelte"
@@ -10,6 +11,8 @@ export interface ViewerRuntime {
     readonly bookmarks: BookmarksStore
     readonly search: SearchStore
     readonly relinkHost?: Component
+    /** Captured once by activation; compatibility globals must not replace this owner. */
+    readonly settings?: SettingsCapability
     readonly executeCommand: (id: string, payload?: unknown) => Promise<unknown>
 }
 
@@ -22,6 +25,7 @@ export function createViewerRuntime(
     executeCommand: ViewerRuntime["executeCommand"],
     relinkHost?: Component,
     writeSignal?: AbortSignal,
+    settings?: SettingsCapability,
 ): ViewerRuntime {
     const notes = new NotesStore(store.library, store.libraryMutations)
     const bookmarks = new BookmarksStore(store.library, store.libraryMutations)
@@ -32,7 +36,7 @@ export function createViewerRuntime(
         store.libraryMutations,
         writeSignal,
     )
-    return { store, notes, bookmarks, search, executeCommand, relinkHost }
+    return { store, notes, bookmarks, search, executeCommand, relinkHost, settings }
 }
 
 /** Compatibility exports select the visible activation; they never own another activation's disposal. */

@@ -181,7 +181,7 @@ export const BUILTIN_MANIFESTS = [
                 { id: "viewer.status", slot: "host.status", title: "Viewer status" },
             ],
         },
-        { "builtin.library": "*" },
+        { "builtin.library": "*", "builtin.settings": "*" },
     ),
     manifest("builtin.settings", "Settings", [{ type: "startup" }], {
         views: [{ id: "settings.panel", slot: "workbench.sidebar", title: "Settings" }],

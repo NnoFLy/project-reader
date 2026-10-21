@@ -11,8 +11,14 @@ import {
 } from "../viewerHost"
 import { type Book } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
-import { getViewerDocumentErrorDiagnostic, type ViewerDocumentLoader } from "../viewerDocument"
-import { ReadingWorkspace } from "../readingWorkspace"
+import type { ViewerDocumentLoader } from "../viewerDocument"
+import { ReadingWorkspace, type ReadingSnapshot } from "../readingWorkspace"
+import {
+    ReadingStorage,
+    type ReadingDocumentState,
+    type ReadingLayout,
+    type ReadingStorageError,
+} from "../readingStorage"
 import {
     viewerFileCapability,
     type ViewerFileCapability,
@@ -25,44 +31,55 @@ export interface ViewerStoreOptions {
     library?: ViewerLibraryCapability
     mutations?: ViewerLibraryMutationCapability
     loader?: ViewerDocumentLoader
+    writeSignal?: AbortSignal
+    defaults?: () => Pick<ReadingDocumentState, "scale" | "layout">
+    onStorageError?: (error: ReadingStorageError) => void
 }
 
 export class ViewerStore {
     private files = getViewerLibraryCapability() ?? vfsStore
     private mutations = getViewerLibraryMutationCapability() ?? vfsMutations
-    private storage: StorageNamespace | undefined
-    private storageGeneration = 0
-    private persistenceQueue: Promise<void> = Promise.resolve()
-
     async configureStorage(storage: StorageNamespace): Promise<void> {
-        this.storage = storage
-        const generation = ++this.storageGeneration
-        const bookSwitchGeneration = this.bookSwitchGeneration
-        try {
-            const savedBook = await storage.get<Book>("book")
-            if (
-                this.disposed ||
-                generation !== this.storageGeneration ||
-                bookSwitchGeneration !== this.bookSwitchGeneration ||
-                this.book ||
-                !savedBook
-            )
-                return
-            this.book = {
-                ...savedBook,
-                url: savedBook.url?.startsWith("blob:") ? "" : savedBook.url,
-                previewDataUrl: savedBook.previewDataUrl?.startsWith("blob:")
-                    ? ""
-                    : savedBook.previewDataUrl,
-            }
-            this.currentPage = savedBook.pageNumber || 1
-            this.scrollPosition = savedBook.scrollPosition || 0
-        } catch (error) {
-            console.error(
-                "[ViewerStore] Failed to restore book:",
-                getViewerDocumentErrorDiagnostic(error, "Unable to restore viewer state"),
-            )
-        }
+        await this.workspace.restore(new ReadingStorage(storage))
+    }
+
+    reading = $state.raw<ReadingSnapshot>({
+        documentId: null,
+        state: { pageNumber: 1, scrollPosition: 0, scale: 1.5, layout: "scroll" },
+        status: "closed",
+    })
+    private pageNumber = $state(1)
+    private pageScroll = $state(0)
+
+    get currentPage() {
+        return this.pageNumber
+    }
+    set currentPage(value: number) {
+        if (this.disposed) return
+        this.workspace.setPosition(value, this.pageScroll)
+    }
+    get scrollPosition() {
+        return this.pageScroll
+    }
+    set scrollPosition(value: number) {
+        if (this.disposed) return
+        this.workspace.setPosition(this.pageNumber, value)
+    }
+    get scale() {
+        return this.reading.state.scale
+    }
+    set scale(value: number) {
+        this.workspace.setScale(value)
+    }
+    get layout(): ReadingLayout {
+        return this.reading.state.layout
+    }
+    set layout(value: ReadingLayout) {
+        this.workspace.setLayout(value)
+    }
+
+    flushReadingState(): Promise<void> {
+        return this.workspace.flush()
     }
 
     private book = $state<Book | null>(null)
@@ -70,8 +87,6 @@ export class ViewerStore {
     private totalPages = $state<number>(0)
     isOutlineLoading = $state(false)
 
-    currentPage = $state(1)
-    scrollPosition = $state(0)
     private _isRestoringHistory = false
     lastSetPageState = $state<any>(null)
     private listening = false
@@ -80,7 +95,9 @@ export class ViewerStore {
     private disposed = false
     workspace: ReadingWorkspace
     private readonly vfsUnsubscribers: (() => void)[] = []
-    private readonly flush = () => this.persistViewerState(true)
+    private readonly flush = () => {
+        void this.workspace.flush()
+    }
     private readonly handleVisibilityChange = () => {
         if (document.visibilityState === "hidden") this.flush()
     }
@@ -115,6 +132,18 @@ export class ViewerStore {
                 clearForwardHistory: () => mutations.clearForwardHistory(),
             },
             loader: this.options.loader,
+            writeSignal: this.options.writeSignal,
+            defaults: this.options.defaults,
+            onStorageError: this.options.onStorageError,
+            onChange: (snapshot) => {
+                this.reading = snapshot
+                this.pageNumber = snapshot.state.pageNumber
+                this.pageScroll = snapshot.state.scrollPosition
+                if (this.book && this.book.id === snapshot.documentId) {
+                    this.book.pageNumber = snapshot.state.pageNumber
+                    this.book.scrollPosition = snapshot.state.scrollPosition
+                }
+            },
             getCurrentBook: () => this.book,
             publish: (book) => this.publishBook(book),
         })
@@ -125,10 +154,9 @@ export class ViewerStore {
         this.mutations.setActiveFileId(book?.id ?? null)
         this.bookSwitchGeneration++
         this.book = book
-        this.currentPage = book?.pageNumber || 1
-        this.scrollPosition = book?.scrollPosition || 0
+        this.pageNumber = book?.pageNumber || 1
+        this.pageScroll = book?.scrollPosition || 0
         this.totalPages = book?.totalPages || 0
-        this.persistViewerState(true)
         return true
     }
 
@@ -165,8 +193,9 @@ export class ViewerStore {
         this.book = null
         this.outlineList = null
         this.totalPages = 0
-        this.currentPage = 1
-        this.scrollPosition = 0
+        this.pageNumber = 1
+        this.pageScroll = 0
+        this.reading = this.workspace.snapshot
         this.attachLibraryListeners()
     }
 
@@ -176,10 +205,6 @@ export class ViewerStore {
         this.disposalEpoch++
         this.bookSwitchGeneration++
         for (const unsubscribe of this.vfsUnsubscribers.splice(0)) unsubscribe()
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout)
-            this.saveTimeout = null
-        }
         if (browser && this.listening) {
             window.removeEventListener("visibilitychange", this.handleVisibilityChange)
             window.removeEventListener("beforeunload", this.flush)
@@ -301,44 +326,6 @@ export class ViewerStore {
         return this.workspace.synchronize()
     }
 
-    private saveTimeout: ReturnType<typeof setTimeout> | null = null
-
-    private persistViewerState(immediate = false) {
-        if (!browser) return
-
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout)
-            this.saveTimeout = null
-        }
-
-        const save = () => {
-            const storage = this.storage
-            if (!storage) return
-            let savedBook: Book | undefined
-            if (this.book) {
-                const clean = { ...this.book }
-                // Never persist blob URLs
-                if (clean.url?.startsWith("blob:")) clean.url = ""
-                if (clean.previewDataUrl?.startsWith("blob:")) clean.previewDataUrl = ""
-                savedBook = clean
-            }
-            this.persistenceQueue = this.persistenceQueue
-                .then(() => (savedBook ? storage.set("book", savedBook) : storage.delete("book")))
-                .catch((error) => {
-                    console.error(
-                        "[ViewerStore] Failed to persist book:",
-                        getViewerDocumentErrorDiagnostic(error, "Unable to save viewer state"),
-                    )
-                })
-        }
-
-        if (immediate) {
-            save()
-        } else {
-            this.saveTimeout = setTimeout(save, 500)
-        }
-    }
-
     setCurrentBook(book: Book | null): Promise<boolean> {
         return this.workspace.setCurrentBook(book)
     }
@@ -376,8 +363,6 @@ export class ViewerStore {
                 name: book.name,
                 isLocked: book.isLocked,
                 metadata: {
-                    pageNumber: book.pageNumber,
-                    scrollPosition: book.scrollPosition,
                     pdfDest: book.pdfDest,
                     totalPages: book.totalPages,
                     author: book.author,
@@ -398,8 +383,6 @@ export class ViewerStore {
         if (this.book && this.book.id === book.id) {
             // Avoid redundant state updates if data is identical
             if (
-                this.book.pageNumber === book.pageNumber &&
-                this.book.scrollPosition === book.scrollPosition &&
                 this.book.name === book.name &&
                 this.book.isLocked === book.isLocked &&
                 this.book.pdfDest === book.pdfDest &&
@@ -409,8 +392,11 @@ export class ViewerStore {
                 return
             }
 
-            this.book = book
-            this.persistViewerState(false)
+            this.book = {
+                ...book,
+                pageNumber: this.currentPage,
+                scrollPosition: this.scrollPosition,
+            }
         }
     }
 }

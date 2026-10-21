@@ -17,6 +17,7 @@
     import { on } from "svelte/events"
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
+        settings,
         store: viewerStore,
         notes: notesStore,
         bookmarks: bookmarksStore,
@@ -40,9 +41,14 @@
     import { mountViewerUIStore } from "../stores/viewerUIStore.svelte"
 
     const viewerUIStore = mountViewerUIStore()
-    import { localizedPath } from "$lib/core/settings"
-    import { DEFAULT_SETTINGS, settingsStore } from "$lib/core/settings"
-    import { motionPreferences } from "$lib/shared/state/motion.svelte"
+    import {
+        localizedPath as legacyLocalizedPath,
+        DEFAULT_SETTINGS as legacyDefaultSettings,
+        settingsStore as legacySettingsStore,
+    } from "$lib/core/settings"
+    const settingsStore = settings?.settingsStore ?? legacySettingsStore
+    const DEFAULT_SETTINGS = settings?.DEFAULT_SETTINGS ?? legacyDefaultSettings
+    const localizedPath = settings?.localizedPath ?? legacyLocalizedPath
     import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
     import { cubicInOut } from "svelte/easing"
@@ -58,14 +64,18 @@
     import SearchIcon from "$lib/shared/icons/SearchIcon.svelte"
     import ChevronIcon from "$lib/shared/icons/ChevronIcon.svelte"
     import { Slider, type SliderDirection } from "$lib/shared/ui/slider"
-    import { settingsCommands } from "$lib/core/settings"
     import { createViewerNavigationCommands } from "../commands/viewerNavigationCommands"
     import { createViewerSearchCommands } from "../commands/viewerSearchCommands"
     import { createViewerDisplayCommands } from "../commands/viewerDisplayCommands"
     import { viewerPromptCapability } from "../viewerHost"
     const { openCommandPalette, promptStore } = viewerPromptCapability
     import { createViewerMutationCommands } from "../commands/viewerMutationCommands"
-    import { viewerSettingsCommands } from "../commands/viewerSettingsCommands"
+    import { createViewerSettingsCommands } from "../commands/viewerSettingsCommands"
+    const viewerSettingsCommands = createViewerSettingsCommands(
+        viewerStore,
+        executeViewerCommand,
+        settings,
+    )
     import {
         createViewerBookmarkCommands,
         openViewerBookmark,
@@ -319,7 +329,7 @@
                 !(notesStore.editingNote && "id" in notesStore.editingNote),
         },
 
-        { ...settingsCommands["settings.layout"], keymap: "shift+l" },
+        { ...viewerSettingsCommands.layout, keymap: "shift+l" },
         viewerSettingsCommands.zoomIn,
         viewerSettingsCommands.zoomOut,
         viewerSettingsCommands.qualityIn,
@@ -461,7 +471,11 @@
     onMount(() => {
         gestureHintDismissed = safeStorageGet("viewer-gesture-hint-dismissed") === "1"
         vfsMutations.clearForwardHistory()
-        if (vfsStore.initialized && !viewerStore.getCurrentBook()) {
+        if (
+            vfsStore.initialized &&
+            !viewerStore.getCurrentBook() &&
+            !viewerStore.reading.documentId
+        ) {
             goto(resolve(localizedPath("/") as any))
             return
         }
@@ -493,7 +507,7 @@
     $effect(() => {
         if (vfsStore.initialized) {
             const currentBook = viewerStore.getCurrentBook()
-            if (!currentBook || currentBook.isLocked) {
+            if (!currentBook && !viewerStore.reading.documentId) {
                 goto(resolve(localizedPath("/") as any))
             }
         }
@@ -724,7 +738,7 @@
         const currentPdf = pdf
         const loaded = isLoaded
         const pageNo = viewerStore.currentPage
-        const mode = settingsStore.layout
+        const mode = viewerStore.layout
         const quality = settingsStore.quality
         const pageCount = totalPages
         const includeAdjacent = viewport.isCompact
@@ -877,7 +891,7 @@
     $effect(() => {
         const currentPdf = pdf
         const loaded = isLoaded
-        const layout = settingsStore.layout
+        const layout = viewerStore.layout
         const pageNo = viewerStore.currentPage
         const quality = settingsStore.quality
 
@@ -1001,7 +1015,7 @@
     }
 
     function getPageSliderTarget(direction: SliderDirection) {
-        return getPageTarget(viewerStore.currentPage, totalPages, settingsStore.layout, direction)
+        return getPageTarget(viewerStore.currentPage, totalPages, viewerStore.layout, direction)
     }
 
     function nextPage() {
@@ -1062,13 +1076,13 @@
     }
 
     function resolvePageMove(direction: SliderDirection) {
-        if (isPageLoading || settingsStore.layout === "scroll") return undefined
+        if (isPageLoading || viewerStore.layout === "scroll") return undefined
         const targetPage = getPageSliderTarget(direction)
         if (targetPage === undefined) return undefined
 
         const image = direction === "previous" ? prevPageImage : nextPageImage
         const secondImage = direction === "previous" ? prevPageImage2 : nextPageImage2
-        const needsSecondImage = settingsStore.layout === "split" && targetPage + 1 <= totalPages
+        const needsSecondImage = viewerStore.layout === "split" && targetPage + 1 <= totalPages
         if (!image || (needsSecondImage && !secondImage)) return undefined
 
         return () => {
@@ -1142,7 +1156,28 @@
     }
 </script>
 
-{#if viewerStore.getCurrentBook()}
+{#if viewerStore.reading.status === "unavailable" || viewerStore.reading.status === "missing"}
+    <section class="reading-access-state" role="status" aria-label="Reading access">
+        <h1>
+            {viewerStore.reading.status === "missing"
+                ? "Document no longer in Library"
+                : "Document access unavailable"}
+        </h1>
+        <p>
+            {viewerStore.reading.status === "missing"
+                ? "The saved document reference is absent or has been deleted. Choose another document from Library."
+                : "Your reading position is retained. Retry access or relink the file in Library."}
+        </p>
+        <div class="reading-access-actions">
+            <Button onclick={() => void viewerStore.workspace.retry()}>Retry</Button>
+            {#if viewerStore.reading.status === "unavailable"}
+                <Button onclick={() => viewerStore.workspace.requestRelink()}>Relink file</Button>
+            {/if}
+            <Button onclick={() => void goto(resolve(localizedPath("/") as any))}>Library</Button>
+            <Button onclick={() => void viewerStore.workspace.close()}>Close document</Button>
+        </div>
+    </section>
+{:else if viewerStore.getCurrentBook()}
     <div class="fullscreen-viewer">
         <div class="reader-card">
             <div class="viewer-layout">
@@ -1150,7 +1185,7 @@
                     <div
                         style="position: relative; z-index: 250;"
                         transition:slideHeader={{
-                            duration: motionPreferences.enabled ? 250 : 0,
+                            duration: settingsStore.animations ? 250 : 0,
                         }}
                     >
                         <ViewerHeader
@@ -1213,7 +1248,7 @@
                             <div class="reflow-pane-wrapper">
                                 <ReflowDocumentView document={reflowDocument} />
                             </div>
-                        {:else if viewport.isCompact && settingsStore.layout !== "scroll"}
+                        {:else if viewport.isCompact && viewerStore.layout !== "scroll"}
                             <Slider
                                 enabled={!isPageLoading &&
                                     !modalManager.hasBlockingModal &&
@@ -1232,13 +1267,10 @@
                                             currentPageImage2={prevPageImage2}
                                             currentPageDim1={prevPageDim1}
                                             currentPageDim2={prevPageDim2}
-                                            layoutMode={settingsStore.layout === "split"
+                                            layoutMode={viewerStore.layout === "split"
                                                 ? "split"
                                                 : "single"}
-                                            effectiveScale={viewport.innerWidth <=
-                                            viewport.innerHeight
-                                                ? DEFAULT_SETTINGS.scale
-                                                : settingsStore.scale}
+                                            effectiveScale={viewerStore.scale}
                                             defaultScale={DEFAULT_SETTINGS.scale}
                                             defaultPageDimension={{
                                                 width: 612,
@@ -1253,14 +1285,14 @@
                                 {#snippet current()}
                                     <CanvasPane
                                         {pdf}
-                                        scale={settingsStore.scale}
+                                        scale={viewerStore.scale}
                                         bind:currentPage={viewerStore.currentPage}
                                         bind:scrollPosition={viewerStore.scrollPosition}
                                         bind:container={scrollContainer}
                                         {isPageLoading}
                                         {currentPageImage}
                                         {currentPageImage2}
-                                        layoutMode={settingsStore.layout}
+                                        layoutMode={viewerStore.layout}
                                         {currentPageDim1}
                                         {currentPageDim2}
                                     />
@@ -1275,13 +1307,10 @@
                                             currentPageImage2={nextPageImage2}
                                             currentPageDim1={nextPageDim1}
                                             currentPageDim2={nextPageDim2}
-                                            layoutMode={settingsStore.layout === "split"
+                                            layoutMode={viewerStore.layout === "split"
                                                 ? "split"
                                                 : "single"}
-                                            effectiveScale={viewport.innerWidth <=
-                                            viewport.innerHeight
-                                                ? DEFAULT_SETTINGS.scale
-                                                : settingsStore.scale}
+                                            effectiveScale={viewerStore.scale}
                                             defaultScale={DEFAULT_SETTINGS.scale}
                                             defaultPageDimension={{
                                                 width: 612,
@@ -1297,14 +1326,14 @@
                             <div class="canvas-pane-wrapper">
                                 <CanvasPane
                                     {pdf}
-                                    scale={settingsStore.scale}
+                                    scale={viewerStore.scale}
                                     bind:currentPage={viewerStore.currentPage}
                                     bind:scrollPosition={viewerStore.scrollPosition}
                                     bind:container={scrollContainer}
                                     {isPageLoading}
                                     {currentPageImage}
                                     {currentPageImage2}
-                                    layoutMode={settingsStore.layout}
+                                    layoutMode={viewerStore.layout}
                                     {currentPageDim1}
                                     {currentPageDim2}
                                 />
@@ -1451,7 +1480,7 @@
                     <div
                         style="position: relative; z-index: 250;"
                         transition:slideFooter={{
-                            duration: motionPreferences.enabled ? 250 : 0,
+                            duration: settingsStore.animations ? 250 : 0,
                         }}
                     >
                         <ViewerFooter
@@ -1490,6 +1519,22 @@
 {/if}
 
 <style>
+    .reading-access-state {
+        max-inline-size: 42rem;
+        margin: 12vh auto;
+        padding: 2rem;
+        border: var(--border-inline) solid var(--border-color);
+        border-radius: 1rem;
+        background: var(--viewer-chrome-color);
+        color: var(--text-color);
+    }
+
+    .reading-access-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
     :global(body:has(.fullscreen-viewer)) {
         background-color: var(--viewer-chrome-color);
     }

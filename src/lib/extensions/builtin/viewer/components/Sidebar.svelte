@@ -1,11 +1,12 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
-    const { notes: notesStore } = getViewerRuntimeContext()()
+    const { notes: notesStore, settings } = getViewerRuntimeContext()()
     import * as m from "$lib/paraglide/messages"
     import MenuIcon from "$lib/shared/icons/MenuIcon.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
     import BookmarkIcon from "$lib/shared/icons/BookmarkIcon.svelte"
-    import { settingsStore } from "$lib/core/settings"
+    import { settingsStore as legacySettingsStore } from "$lib/core/settings"
+    const settingsStore = settings?.settingsStore ?? legacySettingsStore
     import { commandsStore, getShortcutHint, useCommands } from "$lib/core/commands"
     import { createViewerSidebarCloseCommand } from "../commands/viewerSidebarCloseCommand"
     import { untrack } from "svelte"

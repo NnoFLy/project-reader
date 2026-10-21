@@ -1,6 +1,7 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
+        settings,
         store: viewerStore,
         search: searchStore,
         notes: notesStore,
@@ -16,7 +17,8 @@
     import Spinner from "$lib/shared/ui/Spinner.svelte"
     import * as m from "$lib/paraglide/messages"
     import { untrack } from "svelte"
-    import { settingsStore } from "$lib/core/settings"
+    import { settingsStore as legacySettingsStore } from "$lib/core/settings"
+    const settingsStore = settings?.settingsStore ?? legacySettingsStore
     import {
         getOffsetFromPoint,
         getTextNodeAndOffset,

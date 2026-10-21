@@ -2,7 +2,9 @@ import type { ExtensionContext, SettingContribution, SettingsCapability } from "
 import SettingsView from "./SettingsView.svelte"
 import {
     configureSettingsCommandHost,
+    createSettingsCommands,
     settingsCommands,
+    runSettingsCommand,
     type SettingsCommandPayload,
 } from "./commands/settingsCommands"
 import { installSettingsCapability } from "$lib/core/settings"
@@ -11,6 +13,8 @@ import {
     CONSTANTS,
     DEFAULT_SETTINGS,
     settingsStore,
+    SettingsStore,
+    installSettingsStore,
 } from "./state/settingsStore.svelte"
 import { getLocalizedCurrentHref, localizedPath } from "./language/language"
 import { getLanguageName } from "./language/locale"
@@ -72,25 +76,28 @@ const settingDefinitions = [
     },
 ] as const
 
-export function activateSettings(context: ExtensionContext): void {
+export async function activateSettings(context: ExtensionContext): Promise<void> {
+    const store = new SettingsStore()
+    installSettingsStore(store)
+    const commands = createSettingsCommands(() => store)
+    context.lifecycle.onDispose(() => store.dispose())
     configureSettingsCommandHost(context.host)
-    context.lifecycle.onDispose(() => configureSettingsCommandHost())
+    context.lifecycle.onDispose(() => configureSettingsCommandHost(undefined, context.host))
     if (context.host) {
         const capability: SettingsCapability = {
-            settingsStore,
+            settingsStore: store,
             CONSTANTS,
             DEFAULT_SETTINGS,
-            settingsCommands,
+            settingsCommands: commands,
             localizedPath,
             getLanguageName,
             getLocalizedCurrentHref,
         }
         context.host.settings = capability
-        installSettingsCapability(capability)
+        const uninstallCapability = installSettingsCapability(capability)
         context.lifecycle.onDispose(() => {
-            if (context.host?.settings?.settingsStore === settingsStore)
-                context.host.settings = undefined
-            installSettingsCapability(undefined)
+            if (context.host?.settings === capability) context.host.settings = undefined
+            uninstallCapability()
         })
     }
     context.views.registerNative({
@@ -102,7 +109,7 @@ export function activateSettings(context: ExtensionContext): void {
     })
     for (const setting of settingDefinitions)
         context.settings.register(setting as SettingContribution)
-    for (const command of Object.values(settingsCommands)) {
+    for (const command of Object.values(commands)) {
         const keymap = "keymap" in command ? command.keymap : undefined
         context.commands.register({
             id: command.id,
@@ -110,10 +117,27 @@ export function activateSettings(context: ExtensionContext): void {
             englishLabel: command.englishLabel,
             keybinding:
                 keymap === undefined ? undefined : Array.isArray(keymap) ? keymap : [keymap],
-            execute: (payload) => command.run(payload as SettingsCommandPayload | undefined),
+            execute: (payload) =>
+                runSettingsCommand(
+                    command,
+                    context.host,
+                    payload as SettingsCommandPayload | undefined,
+                ),
         })
     }
-    configureSettings(context.settings, context.storage)
+    // Readiness must not hold activation (and therefore host disposal) behind a stuck backend.
+    // The settings store handles late completion; Viewer captures defaults only when opening.
+    let readinessTimeout: ReturnType<typeof setTimeout> | undefined
+    try {
+        await Promise.race([
+            store.configure(context.settings, context.storage),
+            new Promise<void>((resolve) => {
+                readinessTimeout = setTimeout(resolve, 250)
+            }),
+        ])
+    } finally {
+        clearTimeout(readinessTimeout)
+    }
 }
 
 export { settingsCommands, settingsStore, configureSettings }

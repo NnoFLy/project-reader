@@ -14,7 +14,7 @@ import {
     type ViewerLibraryMutationCapability,
     type ViewerPromptCapability,
 } from "./viewerHost"
-import { getViewerDocumentErrorDiagnostic, type ViewerDocumentLoader } from "./viewerDocument"
+import type { ViewerDocumentLoader } from "./viewerDocument"
 import { buildBookmarkItems } from "./commands/viewerPromptItems"
 import { openViewerBookmark } from "./commands/viewerBookmarkCommandFactory"
 import * as m from "$lib/paraglide/messages"
@@ -79,17 +79,48 @@ export async function activateViewer(
         host: context.host,
         commandExecutor: (commandId, payload) => context.commands.execute(commandId, payload),
     })
+    const notificationHandles = new Set<Disposable>()
     const store = new ViewerStore({
         files: fileCapability,
         library: libraryCapability,
         mutations: libraryMutationCapability,
         loader,
+        writeSignal: context.host?.writeSignal,
+        defaults: () => ({
+            scale: context.host?.settings?.settingsStore.scale ?? 1.5,
+            layout: context.host?.settings?.settingsStore.layout ?? "scroll",
+        }),
+        onStorageError: (error) => {
+            const notification = context.notifications.error(
+                `[Viewer:${error.code}] ${error.message}`,
+            )
+            notificationHandles.add(notification)
+        },
     })
+    const readingDisplay = {
+        get active() {
+            return store.workspace.snapshot.documentId !== null
+        },
+        get scale() {
+            return store.scale
+        },
+        set scale(value: number) {
+            store.scale = value
+        },
+        get layout() {
+            return store.layout
+        },
+        set layout(value: typeof store.layout) {
+            store.layout = value
+        },
+    }
+    if (context.host) context.host.readingDisplay = readingDisplay
     const runtime = createViewerRuntime(
         store,
         (id, payload) => context.commands.execute(id, payload),
         relinkHost,
         context.host?.writeSignal,
+        context.host?.settings,
     )
     const { notes: notesStore, bookmarks: bookmarksStore, search: searchStore } = runtime
     installViewerRuntime(runtime)
@@ -100,23 +131,21 @@ export async function activateViewer(
         if (viewerStore === store) {
             installViewerHostCapabilities({})
         }
+        if (context.host?.readingDisplay === readingDisplay) context.host.readingDisplay = undefined
         context.host?.contextualStatus?.clear()
         await store.dispose()
     })
     await store.configureStorage(viewerStorage)
     await store.syncWithBooks()
     await bookmarksStore.loadAllBookmarks()
-    const notificationHandles = new Set<Disposable>()
     const openCommand = createViewerOpenCommand({
         workspace: store.workspace,
         clearForwardHistory: () => fileCapability?.clearForwardHistory(),
         executeCommand: (commandId, payload) => context.commands.execute(commandId, payload),
-        onFileAccessFailure: ({ bookId, error }) => {
-            console.error("[Viewer] Unable to open document", {
-                bookId,
-                error: getViewerDocumentErrorDiagnostic(error),
-            })
-            const notification = context.notifications.error("Unable to open document")
+        onFileAccessFailure: () => {
+            const notification = context.notifications.error(
+                "[Viewer:reading.access.unavailable] Unable to open document",
+            )
             notificationHandles.add(notification)
         },
     })

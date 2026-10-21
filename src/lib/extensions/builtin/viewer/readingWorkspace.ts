@@ -1,16 +1,33 @@
 import { DocumentAccess, DocumentAccessUnavailableError } from "$lib/core/documents/document-access"
 import type { ViewerFileCapability } from "./viewerHost"
-import { getViewerDocumentErrorDiagnostic, type ViewerDocumentLoader } from "./viewerDocument"
+import type { ViewerDocumentLoader } from "./viewerDocument"
 import { fileNodeToBook, type Book } from "./stores/viewerStore.types"
+import {
+    ReadingStorageError,
+    type ReadingDocumentState,
+    type ReadingLayout,
+    type ReadingStorage,
+} from "./readingStorage"
 
 export interface ViewerOpenFailure {
     readonly bookId: string
     readonly error: unknown
 }
 
+export interface ReadingSnapshot {
+    readonly documentId: string | null
+    readonly state: ReadingDocumentState
+    readonly status: "closed" | "ready" | "unavailable" | "missing"
+}
+
 export interface ReadingWorkspaceOptions {
     readonly files: ViewerFileCapability
     readonly loader?: ViewerDocumentLoader
+    readonly storage?: ReadingStorage
+    readonly writeSignal?: AbortSignal
+    readonly defaults?: () => Pick<ReadingDocumentState, "scale" | "layout">
+    readonly onChange?: (snapshot: ReadingSnapshot) => void
+    readonly onStorageError?: (error: ReadingStorageError) => void
     readonly getCurrentBook: () => Book | null
     /** Synchronous, atomic publication: false or a throw rejects ownership transfer. */
     readonly publish: (book: Book | null) => boolean | void
@@ -21,21 +38,156 @@ export class ReadingWorkspace {
     private readonly access: DocumentAccess
     private synchronization?: Promise<void>
     private relinkPending = false
+    private storage?: ReadingStorage
+    private revision = 0
+    private disposed = false
+    private writesClosed = false
+    private disposal?: Promise<void>
+    private queue: Promise<void> = Promise.resolve()
+    private readonly states = new Map<string, ReadingDocumentState>()
+    private current: ReadingSnapshot
 
     constructor(private readonly options: ReadingWorkspaceOptions) {
         this.access = new DocumentAccess(options.files)
+        this.storage = options.storage
+        this.current = { documentId: null, state: this.defaultState(), status: "closed" }
+    }
+
+    get snapshot(): ReadingSnapshot {
+        return this.current
+    }
+
+    private defaultState(): ReadingDocumentState {
+        return Object.freeze({
+            pageNumber: 1,
+            scrollPosition: 0,
+            scale: 1.5,
+            layout: "scroll",
+            ...this.options.defaults?.(),
+        })
+    }
+
+    private change(
+        documentId: string | null,
+        state: ReadingDocumentState,
+        status: ReadingSnapshot["status"],
+    ): void {
+        this.current = Object.freeze({ documentId, state: Object.freeze({ ...state }), status })
+        if (documentId) this.states.set(documentId, this.current.state)
+        this.options.onChange?.(this.current)
+    }
+
+    /** Readiness is bounded; "pending" leaves a fenced restoration running, not a successful restore. */
+    async restore(storage = this.storage): Promise<"complete" | "pending"> {
+        if (this.disposed || !storage) return "complete"
+        this.storage = storage
+        if (this.revision !== 0) {
+            this.save(true)
+            return "complete"
+        }
+        const revision = this.revision
+        const restore = async () => {
+            try {
+                const id = await storage.readCurrent()
+                if (this.disposed || revision !== this.revision || !id) return
+                await this.select(id, true, undefined, false, revision, true)
+            } catch (error) {
+                this.report(error, "reading.storage.read")
+            }
+        }
+        return (await this.bounded(restore())) ? "complete" : "pending"
     }
 
     open(
         id: string,
         onFailure?: (failure: ViewerOpenFailure) => void | Promise<void>,
     ): Promise<boolean> {
-        return this.select(id, undefined, true, onFailure)
+        return this.select(id, true, onFailure, false, ++this.revision)
     }
 
     setCurrentBook(book: Book | null): Promise<boolean> {
         if (!book) return this.close().then(() => true)
-        return this.select(book.id, book)
+        // Library metadata is not a reading-state fallback.
+        return this.open(book.id)
+    }
+
+    setPosition(pageNumber: number, scrollPosition = 0): void {
+        if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || !Number.isFinite(scrollPosition))
+            return
+        this.update({ pageNumber, scrollPosition })
+    }
+
+    setScale(scale: number): void {
+        if (!Number.isFinite(scale) || scale < 0.25 || scale > 5) return
+        this.update({ scale })
+    }
+
+    setLayout(layout: ReadingLayout): void {
+        if (layout !== "single" && layout !== "split" && layout !== "scroll") return
+        this.update({ layout })
+    }
+
+    private update(changes: Partial<ReadingDocumentState>): void {
+        if (this.disposed || !this.current.documentId) return
+        const state = { ...this.current.state, ...changes }
+        if (
+            Object.entries(changes).every(
+                ([key, value]) => this.current.state[key as keyof ReadingDocumentState] === value,
+            )
+        )
+            return
+        this.change(this.current.documentId, state, this.current.status)
+        this.save(false)
+    }
+
+    private save(pointer: boolean): void {
+        const storage = this.storage
+        const { documentId, state } = this.current
+        if (!storage || this.disposed || this.options.writeSignal?.aborted) return
+        // Capture immutable identity/state now, never read the visible document in queued work.
+        this.queue = this.queue.then(async () => {
+            if (this.writesClosed || this.options.writeSignal?.aborted) return
+            if (documentId) {
+                try {
+                    await storage.writeDocument(documentId, state)
+                } catch (error) {
+                    this.report(error, "reading.storage.write")
+                }
+            }
+            if (pointer && !this.writesClosed && !this.options.writeSignal?.aborted) {
+                try {
+                    await storage.writeCurrent(documentId)
+                } catch (error) {
+                    this.report(error, "reading.storage.write")
+                }
+            }
+        })
+    }
+
+    private report(error: unknown, fallback: ReadingStorageError["code"]): void {
+        if (!this.disposed && !this.options.writeSignal?.aborted)
+            this.options.onStorageError?.(
+                error instanceof ReadingStorageError ? error : new ReadingStorageError(fallback),
+            )
+    }
+
+    /** Bounded drain; a stuck backend stays serialized and cannot delay host writer fencing. */
+    flush(): Promise<void> {
+        return this.bounded(this.queue).then(() => undefined)
+    }
+
+    private async bounded(operation: Promise<unknown>): Promise<boolean> {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+            return await Promise.race([
+                operation.then(() => true),
+                new Promise<false>((resolve) => {
+                    timer = setTimeout(() => resolve(false), 250)
+                }),
+            ])
+        } finally {
+            clearTimeout(timer)
+        }
     }
 
     synchronize(relinked = false): Promise<void> {
@@ -46,8 +198,9 @@ export class ReadingWorkspace {
                 const refresh = this.relinkPending
                 this.relinkPending = false
                 const book = this.options.getCurrentBook()
-                if (!book) return
-                await this.select(book.id, refresh ? undefined : book, false, undefined, true)
+                const id = book?.id ?? this.current.documentId
+                if (!id) return
+                await this.select(id, refresh, undefined, true, this.revision)
             } while (this.relinkPending)
         }
         const operation = synchronize()
@@ -62,62 +215,110 @@ export class ReadingWorkspace {
 
     private async select(
         id: string,
-        position?: Book,
         restoreAccess = false,
         onFailure?: (failure: ViewerOpenFailure) => void | Promise<void>,
         maintenance = false,
+        revision = this.revision,
+        restoring = false,
     ): Promise<boolean> {
+        const current = () => !this.disposed && revision === this.revision
+        if (!current()) return false
+        let state = this.states.get(id)
+        if (!state && this.storage) {
+            try {
+                state = (await this.storage.readDocument(id)) ?? undefined
+            } catch (error) {
+                this.report(error, "reading.storage.read")
+            }
+            if (!current()) return false
+        }
+        state ??= this.defaultState()
+        const selectedState = state
         try {
             const accepted = await this.access.select(
                 id,
                 (url) => {
+                    if (!current()) return false
                     const node = this.options.files.nodes[id]
                     if (!node || node.type !== "file") return false
-                    return this.options.publish({
+                    const latest = this.states.get(id) ?? selectedState
+                    const accepted = this.options.publish({
                         ...fileNodeToBook(node),
-                        ...(position
-                            ? {
-                                  pageNumber: position.pageNumber,
-                                  scrollPosition: position.scrollPosition,
-                              }
-                            : {}),
+                        pageNumber: latest.pageNumber,
+                        scrollPosition: latest.scrollPosition,
                         url: url ?? "",
                         isLocked: url ? this.options.files.isLockedMap[id] : true,
                     })
+                    if (accepted === false) return false
+                    this.change(id, latest, url ? "ready" : "unavailable")
+                    if (!restoring) this.save(true)
+                    return true
                 },
                 restoreAccess,
                 maintenance,
             )
             if (
                 !accepted &&
+                current() &&
                 this.options.files.nodes[id]?.type !== "file" &&
-                this.options.getCurrentBook()?.id === id
+                (restoring ||
+                    this.current.documentId === id ||
+                    this.options.getCurrentBook()?.id === id)
             ) {
                 const closing = this.access.close(false)
                 this.options.publish(null)
+                this.change(id, selectedState, "missing")
                 await closing
             }
             return accepted
         } catch (error) {
             if (!(error instanceof DocumentAccessUnavailableError)) throw error
-            if (restoreAccess) {
-                console.error(
-                    "[Viewer] Unable to access document",
-                    getViewerDocumentErrorDiagnostic(error),
+            if (!current()) return false
+            if (
+                restoring ||
+                this.current.documentId === id ||
+                this.options.getCurrentBook()?.id === id
+            ) {
+                const closing = this.access.close(false)
+                const node = this.options.files.nodes[id]
+                this.options.publish(
+                    node
+                        ? {
+                              ...fileNodeToBook(node),
+                              pageNumber: selectedState.pageNumber,
+                              scrollPosition: selectedState.scrollPosition,
+                              url: "",
+                              isLocked: true,
+                          }
+                        : null,
                 )
+                this.change(
+                    id,
+                    this.states.get(id) ?? selectedState,
+                    node ? "unavailable" : "missing",
+                )
+                await closing
+            }
+            if (restoreAccess && !restoring) {
                 this.options.files.requestRelink(id)
                 await onFailure?.({ bookId: id, error })
-            } else if (this.options.getCurrentBook()?.id === id) {
-                const book = this.options.getCurrentBook()!
-                const closing = this.access.close(false)
-                this.options.publish({ ...book, url: "", isLocked: true })
-                await closing
             }
             return false
         }
     }
 
+    async retry(): Promise<boolean> {
+        const id = this.current.documentId
+        return id ? this.open(id) : false
+    }
+
+    requestRelink(): void {
+        if (!this.disposed && this.current.documentId)
+            this.options.files.requestRelink(this.current.documentId)
+    }
+
     loadDocument(signal?: AbortSignal) {
+        // Core fences loads by source ownership, not by same-session selection attempts.
         return this.access.load((claim, signal) => {
             const loader = this.options.loader
             if (!loader) throw new Error("The workspace document loader is unavailable")
@@ -133,12 +334,27 @@ export class ReadingWorkspace {
     }
 
     async close(): Promise<void> {
+        if (this.disposed) return
+        this.revision++
         const closing = this.access.close()
         this.options.publish(null)
+        this.change(null, this.defaultState(), "closed")
+        this.save(true)
         await closing
     }
 
     dispose(): Promise<void> {
-        return this.access.dispose()
+        if (!this.disposal) {
+            this.revision++
+            // Fence publication and new mutations synchronously. The host has already revoked
+            // its write signal on shutdown; never revive that lifetime to finish saving.
+            this.disposed = true
+            this.disposal = this.bounded(Promise.all([this.queue, this.access.dispose()]))
+                .then(() => undefined)
+                .finally(() => {
+                    this.writesClosed = true
+                })
+        }
+        return this.disposal
     }
 }

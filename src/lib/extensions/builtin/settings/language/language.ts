@@ -1,7 +1,7 @@
 import { resolve } from "$app/paths"
 import { browser } from "$app/environment"
 import { localizeHref, setLocale } from "$lib/paraglide/runtime"
-import { settingsStore } from "../state/settingsStore.svelte"
+import { settingsStore, type Settings } from "../state/settingsStore.svelte"
 
 export type AppLocale = "ru" | "en"
 
@@ -14,8 +14,12 @@ export function localizedPath(href: string): string {
     return resolve(localizeHref(href) as any)
 }
 
-export function switchLanguage(locale: AppLocale, url: URL): void {
-    settingsStore.language = locale
+export function switchLanguage(
+    locale: AppLocale,
+    url: URL,
+    store: Pick<Settings, "language"> = settingsStore,
+): void {
+    store.language = locale
     setLocale(locale, { reload: false })
 
     const href = resolve(getLocalizedCurrentHref(url, locale) as any)

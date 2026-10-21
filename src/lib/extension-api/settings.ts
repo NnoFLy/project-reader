@@ -80,7 +80,15 @@ export interface PromptHostCapability {
     ) => Promise<void>
 }
 
+/** Viewer supplies only the active document's display preferences to host adapters. */
+export interface ReadingDisplayCapability {
+    readonly active: boolean
+    scale: number
+    layout: SettingsLayout
+}
+
 export interface HostContext {
+    readingDisplay?: ReadingDisplayCapability
     /** Permanently revoked when this host loses permission to persist shared data. */
     readonly writeSignal?: AbortSignal
     /** Host-wide command discovery and execution for cross-extension UI surfaces. */

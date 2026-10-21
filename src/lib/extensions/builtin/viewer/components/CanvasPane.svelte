@@ -1,6 +1,7 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
+        settings,
         store: viewerStore,
         search: searchStore,
         notes: notesStore,
@@ -14,8 +15,12 @@
         renderViewerPageLayers,
         type ViewerPagedDocument,
     } from "../viewerDocument"
-    import { CONSTANTS, DEFAULT_SETTINGS, settingsStore } from "../viewerHost"
-    import { safeStorageGet } from "$lib/shared/state/safeStorage"
+    import {
+        DEFAULT_SETTINGS as legacyDefaultSettings,
+        settingsStore as legacySettingsStore,
+    } from "../viewerHost"
+    const settingsStore = settings?.settingsStore ?? legacySettingsStore
+    const DEFAULT_SETTINGS = settings?.DEFAULT_SETTINGS ?? legacyDefaultSettings
     import {
         getGlobalOffset,
         getOffsetFromPoint,
@@ -53,7 +58,7 @@
         scrollPosition = $bindable(),
         container = $bindable(null),
         layoutMode = "single",
-        scale = settingsStore.scale,
+        scale = viewerStore.scale,
         pdf,
         currentPageDim1: propPageDim1 = null,
         currentPageDim2: propPageDim2 = null,
@@ -78,14 +83,13 @@
     let isCompactPortrait = $derived(
         viewport.isCompact && viewport.innerWidth <= viewport.innerHeight,
     )
-    let effectiveScale = $derived(isCompactPortrait ? DEFAULT_SETTINGS.scale : scale)
-    let hasInitiallyFit = false
+    let effectiveScale = $derived(scale)
     let hasRestoredScroll = false
 
     function fitToWidth() {
         if (!pdf || containerWidth <= 0) return
         if (viewport.isCompact) {
-            if (!isCompactPortrait) settingsStore.scale = DEFAULT_SETTINGS.scale
+            if (!isCompactPortrait) viewerStore.scale = DEFAULT_SETTINGS.scale
             return
         }
 
@@ -110,33 +114,8 @@
             targetScale = cappedAvailableWidth / pageDimension.width
         }
 
-        settingsStore.scale = Math.max(
-            CONSTANTS.minScale,
-            Math.min(CONSTANTS.maxScale, targetScale),
-        )
+        viewerStore.scale = Math.max(0.25, Math.min(5, targetScale))
     }
-
-    $effect(() => {
-        if (pdf && containerWidth > 0 && !hasInitiallyFit) {
-            hasInitiallyFit = true
-            if (!viewport.isCompact) {
-                const hasSavedScale = (() => {
-                    try {
-                        const saved = safeStorageGet("settings")
-                        if (saved) {
-                            const parsed = JSON.parse(saved)
-                            return typeof parsed.scale === "number"
-                        }
-                    } catch {}
-                    return false
-                })()
-
-                if (!hasSavedScale) {
-                    fitToWidth()
-                }
-            }
-        }
-    })
 
     useCommands([createViewerFitWidthCommand(fitToWidth)])
 

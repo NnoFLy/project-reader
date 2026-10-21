@@ -1,3 +1,4 @@
+import { SvelteSet } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import type { SettingsRegistry, StorageNamespace } from "$lib/extension-api"
 import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
@@ -129,12 +130,14 @@ export function sanitizeSettings(parsed: unknown): Partial<Settings> {
  * Keeping this adapter here lets existing app consumers use the same synchronous settings API
  * without bypassing the extension's registered controls or its durable storage namespace.
  */
-class SettingsStore {
+export class SettingsStore {
     private settings = $state<Settings>({
         ...DEFAULT_SETTINGS,
         animations: readLegacySettings().animations ?? DEFAULT_SETTINGS.animations,
     })
-    private registeredIds = $state<ReadonlySet<string>>(new Set())
+    private registeredIds = $state<ReadonlySet<string>>(new SvelteSet<string>())
+    private disposed = false
+    private configuration = new AbortController()
     private registry: SettingsRegistry | undefined
     private storage: StorageNamespace | undefined
     private colorSchemeQuery: MediaQueryList | null = null
@@ -152,11 +155,16 @@ class SettingsStore {
         }
     }
 
-    configure(registry: SettingsRegistry, storage: StorageNamespace): void {
+    configure(registry: SettingsRegistry, storage: StorageNamespace): Promise<void> {
+        if (this.disposed) return Promise.resolve()
+        this.configuration.abort()
+        this.configuration = new AbortController()
         this.registry = registry
         this.storage = storage
-        this.registeredIds = new Set(registry.list().map(({ id }) => id))
-        void this.loadRegisteredValues(registry, storage).catch(() => undefined)
+        this.registeredIds = new SvelteSet(registry.list().map(({ id }) => id))
+        return this.loadRegisteredValues(registry, storage, this.configuration.signal).catch(
+            () => undefined,
+        )
     }
 
     isRegistered(id: SettingId): boolean {
@@ -164,6 +172,8 @@ class SettingsStore {
     }
 
     dispose() {
+        this.disposed = true
+        this.configuration.abort()
         this.colorSchemeQuery?.removeEventListener("change", this.handleColorSchemeChange)
         this.colorSchemeQuery = null
     }
@@ -173,6 +183,7 @@ class SettingsStore {
     }
 
     updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
+        if (this.disposed) return
         this.settings[key] = value
         if (key === "theme") persistBootstrapSetting("theme", value as Theme)
         if (key === "animations") {
@@ -223,6 +234,7 @@ class SettingsStore {
     }
 
     set language(value: Settings["language"]) {
+        if (this.disposed) return
         this.updateSetting("language", value)
         if (browser) {
             document.cookie = `PARAGLIDE_LOCALE=${value}; path=/; max-age=31536000; SameSite=Lax`
@@ -256,7 +268,7 @@ class SettingsStore {
     }
 
     updateDOM() {
-        if (!browser) return
+        if (!browser || this.disposed) return
         const isDark =
             this.theme === "dark" ||
             (this.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
@@ -305,13 +317,14 @@ class SettingsStore {
     private async loadRegisteredValues(
         registry: SettingsRegistry,
         storage: StorageNamespace,
+        signal: AbortSignal,
     ): Promise<void> {
         const legacySettings = readLegacySettings()
         for (const [key, id] of Object.entries(SETTING_IDS) as [keyof Settings, SettingId][]) {
             const setting = registry.get(id)
             if (!setting) continue
             const stored = await storage.get<unknown>(id)
-            if (!registry.get(id)) return
+            if (signal.aborted || !registry.get(id)) return
 
             let value: unknown
             if (stored === undefined && legacySettings[key] !== undefined) {
@@ -319,6 +332,7 @@ class SettingsStore {
                 if (!setting.validate || setting.validate(migrated)) {
                     value = migrated
                     await registry.setValue(id, migrated)
+                    if (signal.aborted) return
                     await storage.set(id, migrated)
                 } else {
                     value = await registry.getValue(id)
@@ -327,6 +341,7 @@ class SettingsStore {
                 value = stored === undefined ? await registry.getValue(id) : stored
             }
 
+            if (signal.aborted) return
             if (setting.validate && !setting.validate(value)) continue
             this.settings[key] = value as never
             if (key === "animations") {
@@ -351,15 +366,31 @@ class SettingsStore {
     }
 
     private async persist(id: SettingId, value: unknown): Promise<void> {
-        await this.registry?.setValue(id, value)
-        await this.storage?.set(id, value)
+        const { registry, storage } = this
+        const { signal } = this.configuration
+        if (this.disposed || signal.aborted) return
+        await registry?.setValue(id, value)
+        if (!signal.aborted) await storage?.set(id, value)
     }
 }
 
-export const settingsStore = new SettingsStore()
+export let settingsStore = new SettingsStore()
+let bootstrapStore: SettingsStore | undefined = settingsStore
 
-export function configureSettings(registry: SettingsRegistry, storage: StorageNamespace): void {
-    settingsStore.configure(registry, storage)
+/** Select the UI-facing adapter without changing any previous application's ownership. */
+export function installSettingsStore(store: SettingsStore): void {
+    if (bootstrapStore && bootstrapStore !== store) {
+        bootstrapStore.dispose()
+        bootstrapStore = undefined
+    }
+    settingsStore = store
+}
+
+export function configureSettings(
+    registry: SettingsRegistry,
+    storage: StorageNamespace,
+): Promise<void> {
+    return settingsStore.configure(registry, storage)
 }
 
 if (import.meta.hot) {

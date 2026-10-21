@@ -2,8 +2,11 @@ import type { SettingsCapability } from "$lib/extension-api"
 
 let installed: SettingsCapability | undefined
 
-export function installSettingsCapability(capability?: SettingsCapability): void {
+export function installSettingsCapability(capability?: SettingsCapability): () => void {
     installed = capability
+    return () => {
+        if (installed === capability) installed = undefined
+    }
 }
 
 export const settingsStore = new Proxy({} as SettingsCapability["settingsStore"], {

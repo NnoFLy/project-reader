@@ -12,26 +12,42 @@
     import MoonIcon from "$lib/shared/icons/MoonIcon.svelte"
     import SystemIcon from "$lib/shared/icons/SystemIcon.svelte"
     import Toggle from "$lib/shared/ui/Toggle.svelte"
-    import { CONSTANTS, settingsStore, type Theme } from "$lib/core/settings"
-    import { locales, getLocale } from "$lib/paraglide/runtime"
-    import { resolve } from "$app/paths"
+    import {
+        CONSTANTS as legacyConstants,
+        settingsStore as legacySettingsStore,
+        getLanguageName as legacyGetLanguageName,
+        getLocalizedCurrentHref as legacyGetLocalizedCurrentHref,
+        type Theme,
+        type AppLocale,
+    } from "$lib/core/settings"
+    import { locales } from "$lib/paraglide/runtime"
     import { page } from "$app/state"
     import GlobeIcon from "$lib/shared/icons/GlobeIcon.svelte"
-    import { getLanguageName } from "$lib/core/settings"
-    import { getLocalizedCurrentHref, type AppLocale } from "$lib/core/settings"
-    import { commandsStore } from "$lib/core/commands"
+
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { store: viewerStore, executeCommand, settings } = getViewerRuntimeContext()()
+    const settingsStore = settings?.settingsStore ?? legacySettingsStore
+    const CONSTANTS = settings?.CONSTANTS ?? legacyConstants
+    const getLanguageName = settings?.getLanguageName ?? legacyGetLanguageName
+    const getLocalizedCurrentHref =
+        settings?.getLocalizedCurrentHref ?? legacyGetLocalizedCurrentHref
 
     let isShortHeight = $derived(viewport.isShortHeight)
+
+    function languageHref(locale: AppLocale): string {
+        const url = new URL(getLocalizedCurrentHref(page.url, locale), page.url)
+        return url.pathname + url.search + url.hash
+    }
 
     function handleScaleChange(e: Event) {
         const input = e.target as HTMLInputElement
         const value = parseInt(input.value, 10)
         if (!isNaN(value)) {
-            const clamped = Math.max(50, Math.min(300, value))
-            commandsStore.execute("settings.zoom.in", { value: clamped / 100 })
+            const clamped = Math.max(25, Math.min(500, value))
+            executeCommand("settings.zoom.in", { value: clamped / 100 })
             input.value = clamped.toString()
         } else {
-            input.value = Math.round(settingsStore.scale * 100).toString()
+            input.value = Math.round(viewerStore.scale * 100).toString()
         }
     }
 
@@ -53,31 +69,31 @@
         <h4 class="section-title">{m.layout()}</h4>
         <div class="layout-options" role="group" aria-label={m.layout()}>
             <Button
-                class={"option-btn" + (settingsStore.layout === "single" ? " active" : "")}
+                class={"option-btn" + (viewerStore.layout === "single" ? " active" : "")}
                 variant="action"
                 size="default"
-                onclick={() => commandsStore.execute("settings.layout", { value: "single" })}
-                aria-pressed={settingsStore.layout === "single"}
+                onclick={() => executeCommand("settings.layout", { value: "single" })}
+                aria-pressed={viewerStore.layout === "single"}
             >
                 <SinglePageIcon />
                 <span>{m.single_page()}</span>
             </Button>
             <Button
-                class={"option-btn" + (settingsStore.layout === "split" ? " active" : "")}
+                class={"option-btn" + (viewerStore.layout === "split" ? " active" : "")}
                 variant="action"
                 size="default"
-                onclick={() => commandsStore.execute("settings.layout", { value: "split" })}
-                aria-pressed={settingsStore.layout === "split"}
+                onclick={() => executeCommand("settings.layout", { value: "split" })}
+                aria-pressed={viewerStore.layout === "split"}
             >
                 <SplitPagesIcon />
                 <span>{m.split_pages()}</span>
             </Button>
             <Button
-                class={"option-btn" + (settingsStore.layout === "scroll" ? " active" : "")}
+                class={"option-btn" + (viewerStore.layout === "scroll" ? " active" : "")}
                 variant="action"
                 size="default"
-                onclick={() => commandsStore.execute("settings.layout", { value: "scroll" })}
-                aria-pressed={settingsStore.layout === "scroll"}
+                onclick={() => executeCommand("settings.layout", { value: "scroll" })}
+                aria-pressed={viewerStore.layout === "scroll"}
             >
                 <ScrollPagesIcon />
                 <span>{m.scroll_pages()}</span>
@@ -94,7 +110,7 @@
                         variant="action"
                         size="default"
                         square={true}
-                        onclick={() => commandsStore.execute("settings.zoom.out")}
+                        onclick={() => executeCommand("settings.zoom.out")}
                         aria-label={m.zoom_out()}
                         class="zoom-btn"
                     >
@@ -104,11 +120,11 @@
                         <Input
                             unstyled
                             type="number"
-                            value={Math.round(settingsStore.scale * 100)}
+                            value={Math.round(viewerStore.scale * 100)}
                             onchange={handleScaleChange}
                             onkeydown={handleKeyDown}
-                            min={Math.round(CONSTANTS.minScale * 100)}
-                            max={Math.round(CONSTANTS.maxScale * 100)}
+                            min={25}
+                            max={500}
                             class="scale-input"
                             aria-label={m.zoom_scale()}
                         />
@@ -118,7 +134,7 @@
                         variant="action"
                         size="default"
                         square={true}
-                        onclick={() => commandsStore.execute("settings.zoom.in")}
+                        onclick={() => executeCommand("settings.zoom.in")}
                         aria-label={m.zoom_in()}
                         class="zoom-btn"
                     >
@@ -129,14 +145,14 @@
                     <Input
                         unstyled
                         type="range"
-                        min={Math.round(CONSTANTS.minScale * 100)}
-                        max={Math.round(CONSTANTS.maxScale * 100)}
+                        min={25}
+                        max={500}
                         step="5"
-                        value={Math.round(settingsStore.scale * 100)}
+                        value={Math.round(viewerStore.scale * 100)}
                         oninput={(e) => {
                             const val = parseInt((e.target as HTMLInputElement).value, 10)
                             if (!isNaN(val)) {
-                                commandsStore.execute("settings.zoom.in", { value: val / 100 })
+                                executeCommand("settings.zoom.in", { value: val / 100 })
                             }
                         }}
                         class="sidebar-slider"
@@ -156,7 +172,7 @@
                     variant="action"
                     size="default"
                     square={true}
-                    onclick={() => commandsStore.execute("settings.quality.out")}
+                    onclick={() => executeCommand("settings.quality.out")}
                     aria-label={m.quality_down()}
                     class="zoom-btn"
                 >
@@ -169,7 +185,7 @@
                     variant="action"
                     size="default"
                     square={true}
-                    onclick={() => commandsStore.execute("settings.quality.in")}
+                    onclick={() => executeCommand("settings.quality.in")}
                     aria-label={m.quality_up()}
                     class="zoom-btn"
                 >
@@ -187,7 +203,7 @@
                     oninput={(e) => {
                         const val = parseInt((e.target as HTMLInputElement).value, 10)
                         if (!isNaN(val)) {
-                            commandsStore.execute("settings.quality.in", { value: val })
+                            executeCommand("settings.quality.in", { value: val })
                         }
                     }}
                     class="sidebar-slider"
@@ -205,7 +221,7 @@
                     class={"option-btn" + (settingsStore.theme === value ? " active" : "")}
                     variant="action"
                     size="default"
-                    onclick={() => commandsStore.execute("settings.theme", { value })}
+                    onclick={() => executeCommand("settings.theme", { value })}
                     aria-pressed={settingsStore.theme === value}
                 >
                     <Icon class="theme-icon" />
@@ -220,7 +236,7 @@
         <div class="animation-options">
             <Toggle
                 checked={settingsStore.animations}
-                onchange={() => commandsStore.execute("settings.animations.toggle")}
+                onchange={() => executeCommand("settings.animations.toggle")}
                 label={settingsStore.animations ? m.animations_enabled() : m.animations_disabled()}
             />
         </div>
@@ -231,7 +247,7 @@
         <div class="animation-options">
             <Toggle
                 checked={settingsStore.preferPdfTitle}
-                onchange={() => commandsStore.execute("settings.pdf-title.toggle")}
+                onchange={() => executeCommand("settings.pdf-title.toggle")}
                 label={settingsStore.preferPdfTitle ? m.use_pdf_title() : m.use_filename()}
             />
         </div>
@@ -243,13 +259,13 @@
             {#each locales as locale (locale)}
                 <Button
                     data-sveltekit-reload
-                    href={resolve(getLocalizedCurrentHref(page.url, locale as AppLocale) as any)}
-                    class={"option-btn" + (getLocale() === locale ? " active" : "")}
+                    href={languageHref(locale as AppLocale)}
+                    class={"option-btn" + (settingsStore.language === locale ? " active" : "")}
                     variant="action"
                     size="default"
                     onclick={(event: MouseEvent) => {
                         event.preventDefault()
-                        void commandsStore.execute("settings.language", {
+                        void executeCommand("settings.language", {
                             value: locale as AppLocale,
                         })
                     }}
