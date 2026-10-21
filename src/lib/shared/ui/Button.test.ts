@@ -35,7 +35,9 @@ describe("Button flat interaction states", () => {
 
     it("reserves press feedback for enabled buttons", () => {
         expect(declaration(".button:active:not(:disabled)", "transform")).toBe("scale(0.97)")
-        expect(declaration(".button", "transition")).toContain("transform 120ms ease")
+        expect(declaration(".button", "transition")).toContain(
+            "transform var(--motion-duration-fast) ease",
+        )
         expect(declaration(".button:disabled", "color")).toBe("var(--color-on-disabled)")
         expect(declaration(".button:disabled", "cursor")).toBe("not-allowed")
     })
@@ -43,6 +45,17 @@ describe("Button flat interaction states", () => {
     it("uses one shape and prevents button labels wrapping", () => {
         expect(declaration(".button", "border-radius")).toBe("999px")
         expect(declaration(".button", "white-space")).toBe("nowrap")
-        expect(declaration(".button.square", "height")).toBe("var(--button-height)")
+        expect(declaration(".button.square", "block-size")).toBe("var(--button-height)")
+        expect(declaration(".button.square", "inline-size")).toBe("var(--button-height)")
+    })
+
+    it("protects square buttons from parent chrome padding overrides", () => {
+        let protectedPadding = false
+        styles.walkRules(".button.square", (rule) => {
+            rule.walkDecls("padding", (decl) => {
+                protectedPadding = decl.value === "0" && decl.important === true
+            })
+        })
+        expect(protectedPadding).toBe(true)
     })
 })

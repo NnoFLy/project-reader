@@ -106,6 +106,9 @@
     --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus-color) 65%, transparent);
     --selected-surface: color-mix(in srgb, var(--selection-color) 18%, var(--surface-color));
 
+    /* Shared short feedback and theme transitions. */
+    --motion-duration-fast: 120ms;
+
     /* Nested controls, overlays, then reading panels. */
     --radius-sm: 6px;
     --radius-md: 12px;
@@ -155,39 +158,20 @@
     --color-viewer-chrome: #000000;
     --color-overlay: rgb(0 0 0 / 0.24);
 
-    --bg-color: var(--color-canvas);
-    --surface-color: var(--color-surface);
     --surface-hover-color: #222222;
-    --text-color: var(--color-text);
-    --faded-text-color: var(--color-text-muted);
-    --border-color: var(--color-rule);
     --outline-item-border: rgb(228 228 231 / 0.2);
     --shadow-color: #000000;
-    --primary-color: var(--color-action);
-    --primary-text-color: var(--color-on-action);
-    --active-color: var(--color-marker);
-    --active-text-color: var(--color-on-marker);
-    --selection-color: var(--color-action);
-    --selection-text-color: var(--color-on-action);
     --progress-color: #69bce9;
-    --focus-color: var(--color-focus);
-    --viewer-chrome-color: var(--color-viewer-chrome);
-    --canvas-bg-color: var(--color-viewer-canvas);
-    --accent-color: var(--color-action);
-    --accent-active-color: var(--color-marker);
-    --danger-color: var(--color-danger);
     --danger-active-color: #e9909b;
-    --danger-text-color: var(--color-on-danger);
     --muted-bg-color: #ffffff;
     --muted-text-color: #000000;
-    --disabled-bg-color: var(--color-disabled);
-    --overlay-color: var(--color-overlay);
     --faded-color: rgb(228 228 231 / 0.08);
     --selected-surface: color-mix(in srgb, var(--selection-color) 22%, var(--surface-color));
 }
 
 @media (forced-colors: active) {
-    :root {
+    :root,
+    :global(html.dark) {
         --color-canvas: Canvas;
         --color-surface: Canvas;
         --color-surface-raised: Canvas;

@@ -102,41 +102,39 @@
         --speed-fast: 0.4s;
     }
 
+    .spinner-element.speed-slow {
+        --spinner-duration: var(--speed-slow);
+    }
+
+    .spinner-element.speed-normal {
+        --spinner-duration: var(--speed-normal);
+    }
+
+    .spinner-element.speed-fast {
+        --spinner-duration: var(--speed-fast);
+    }
+
+    .spinner-element.stepped {
+        --spinner-timing: steps(8);
+    }
+
+    /* One cycle introduces each variant, then leaves a stable loading indicator. */
     .spinner-element.classic {
-        width: var(--spinner-size);
-        height: var(--spinner-size);
+        inline-size: var(--spinner-size);
+        block-size: var(--spinner-size);
         border: var(--thickness) solid var(--border-color);
         border-radius: var(--radius-full);
         border-top-color: var(--danger-active-color);
         border-right-color: var(--danger-active-color);
         box-sizing: border-box;
         flex-shrink: 0;
+        animation: spin var(--spinner-duration) var(--spinner-timing, linear);
         transition: border-color 0.3s ease;
     }
 
-    .spinner-element.classic.speed-slow {
-        animation: spin var(--speed-slow) linear infinite;
-    }
-    .spinner-element.classic.speed-normal {
-        animation: spin var(--speed-normal) linear infinite;
-    }
-    .spinner-element.classic.speed-fast {
-        animation: spin var(--speed-fast) linear infinite;
-    }
-
-    .spinner-element.classic.speed-slow.stepped {
-        animation: spin var(--speed-slow) steps(8) infinite;
-    }
-    .spinner-element.classic.speed-normal.stepped {
-        animation: spin var(--speed-normal) steps(8) infinite;
-    }
-    .spinner-element.classic.speed-fast.stepped {
-        animation: spin var(--speed-fast) steps(8) infinite;
-    }
-
     .spinner-element.square {
-        width: var(--spinner-size);
-        height: var(--spinner-size);
+        inline-size: var(--spinner-size);
+        block-size: var(--spinner-size);
         position: relative;
         box-sizing: border-box;
         flex-shrink: 0;
@@ -146,8 +144,9 @@
     }
 
     .square-outer {
-        width: 100%;
-        height: 100%;
+        animation: spin var(--spinner-duration) var(--spinner-timing, linear);
+        inline-size: 100%;
+        block-size: 100%;
         border: var(--thickness) solid var(--border-color);
         background-color: var(--surface-color);
         box-shadow: 2px 2px 0 var(--shadow-color);
@@ -163,52 +162,13 @@
     }
 
     .square-inner {
-        width: 42%;
-        height: 42%;
+        animation: spin-counter-clockwise var(--spinner-duration) var(--spinner-timing, linear);
+        inline-size: 42%;
+        block-size: 42%;
         background-color: var(--danger-active-color);
         border: calc(var(--thickness) * 0.7) solid var(--border-color);
         box-sizing: border-box;
         transition: border-color 0.3s ease;
-    }
-
-    .spinner-element.square.speed-slow .square-outer {
-        animation: spin-clockwise var(--speed-slow) linear infinite;
-    }
-    .spinner-element.square.speed-normal .square-outer {
-        animation: spin-clockwise var(--speed-normal) linear infinite;
-    }
-    .spinner-element.square.speed-fast .square-outer {
-        animation: spin-clockwise var(--speed-fast) linear infinite;
-    }
-
-    .spinner-element.square.speed-slow.stepped .square-outer {
-        animation: spin-clockwise var(--speed-slow) steps(8) infinite;
-    }
-    .spinner-element.square.speed-normal.stepped .square-outer {
-        animation: spin-clockwise var(--speed-normal) steps(8) infinite;
-    }
-    .spinner-element.square.speed-fast.stepped .square-outer {
-        animation: spin-clockwise var(--speed-fast) steps(8) infinite;
-    }
-
-    .spinner-element.square.speed-slow .square-inner {
-        animation: spin-counter-clockwise var(--speed-slow) linear infinite;
-    }
-    .spinner-element.square.speed-normal .square-inner {
-        animation: spin-counter-clockwise var(--speed-normal) linear infinite;
-    }
-    .spinner-element.square.speed-fast .square-inner {
-        animation: spin-counter-clockwise var(--speed-fast) linear infinite;
-    }
-
-    .spinner-element.square.speed-slow.stepped .square-inner {
-        animation: spin-counter-clockwise var(--speed-slow) steps(8) infinite;
-    }
-    .spinner-element.square.speed-normal.stepped .square-inner {
-        animation: spin-counter-clockwise var(--speed-normal) steps(8) infinite;
-    }
-    .spinner-element.square.speed-fast.stepped .square-inner {
-        animation: spin-counter-clockwise var(--speed-fast) steps(8) infinite;
     }
 
     .spinner-element.dots {
@@ -216,13 +176,14 @@
         gap: var(--dot-gap);
         align-items: center;
         justify-content: center;
-        height: var(--spinner-size);
+        block-size: var(--spinner-size);
         flex-shrink: 0;
     }
 
     .dot {
-        width: var(--dot-size);
-        height: var(--dot-size);
+        animation: dot-pulse var(--spinner-duration);
+        inline-size: var(--dot-size);
+        block-size: var(--dot-size);
         background-color: var(--text-color);
         border: calc(var(--thickness) * 0.5) solid var(--border-color);
         box-shadow: 1px 1px 0 var(--shadow-color);
@@ -234,43 +195,12 @@
             box-shadow 0.3s ease;
     }
 
-    .spinner-element.dots.speed-slow .dot-1 {
-        animation: dot-pulse var(--speed-slow) infinite;
-        animation-delay: 0s;
-    }
-    .spinner-element.dots.speed-slow .dot-2 {
-        animation: dot-pulse var(--speed-slow) infinite;
-        animation-delay: calc(var(--speed-slow) / 4);
-    }
-    .spinner-element.dots.speed-slow .dot-3 {
-        animation: dot-pulse var(--speed-slow) infinite;
-        animation-delay: calc(var(--speed-slow) / 2);
+    .dot-2 {
+        animation-delay: calc(var(--spinner-duration) / 4);
     }
 
-    .spinner-element.dots.speed-normal .dot-1 {
-        animation: dot-pulse var(--speed-normal) infinite;
-        animation-delay: 0s;
-    }
-    .spinner-element.dots.speed-normal .dot-2 {
-        animation: dot-pulse var(--speed-normal) infinite;
-        animation-delay: calc(var(--speed-normal) / 4);
-    }
-    .spinner-element.dots.speed-normal .dot-3 {
-        animation: dot-pulse var(--speed-normal) infinite;
-        animation-delay: calc(var(--speed-normal) / 2);
-    }
-
-    .spinner-element.dots.speed-fast .dot-1 {
-        animation: dot-pulse var(--speed-fast) infinite;
-        animation-delay: 0s;
-    }
-    .spinner-element.dots.speed-fast .dot-2 {
-        animation: dot-pulse var(--speed-fast) infinite;
-        animation-delay: calc(var(--speed-fast) / 4);
-    }
-    .spinner-element.dots.speed-fast .dot-3 {
-        animation: dot-pulse var(--speed-fast) infinite;
-        animation-delay: calc(var(--speed-fast) / 2);
+    .dot-3 {
+        animation-delay: calc(var(--spinner-duration) / 2);
     }
 
     .spinner-label {
@@ -286,15 +216,6 @@
     }
 
     @keyframes spin {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
-    @keyframes spin-clockwise {
         from {
             transform: rotate(0deg);
         }

@@ -150,9 +150,9 @@
         align-items: center;
         gap: 12px;
         background: var(--viewer-chrome-color);
-        border-bottom: var(--border-inline) solid var(--border-color);
-        min-height: calc(52px + env(safe-area-inset-top));
-        max-height: calc(52px + env(safe-area-inset-top));
+        border-block-end: var(--border-inline) solid var(--border-color);
+        min-block-size: calc(52px + env(safe-area-inset-top));
+        max-block-size: calc(52px + env(safe-area-inset-top));
         box-sizing: border-box;
         padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px
             calc(16px + env(safe-area-inset-left));
@@ -170,7 +170,7 @@
 
     .doc-info {
         gap: 10px;
-        min-width: 0;
+        min-inline-size: 0;
         flex: 1;
     }
 
@@ -186,7 +186,7 @@
     }
 
     .file-name {
-        min-width: 0;
+        min-inline-size: 0;
         margin: 0;
         font-size: var(--font-size-base);
         font-weight: 500;
@@ -199,12 +199,11 @@
 
     @media (--mobile) {
         .viewer-header {
-            min-height: calc(46px + env(safe-area-inset-top));
+            min-block-size: calc(46px + env(safe-area-inset-top));
             box-sizing: border-box;
             gap: 8px;
             padding: calc(4px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px
                 calc(8px + env(safe-area-inset-left));
-            border-bottom-width: var(--border-inline);
         }
 
         .doc-info {

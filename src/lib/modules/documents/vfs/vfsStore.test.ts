@@ -12,7 +12,6 @@ const {
     documentDimensions,
     documentRenderBounds,
     documentClose,
-    createDocument,
     documentService,
 } = vi.hoisted(() => {
     const documentConstructed = vi.fn()

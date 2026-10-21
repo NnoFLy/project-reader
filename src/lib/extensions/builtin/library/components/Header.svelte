@@ -106,11 +106,11 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
-        min-height: 56px;
-        padding-bottom: 22px;
-        margin-bottom: 22px;
-        border-bottom: 1px solid var(--color-rule);
+        gap: var(--space-4);
+        min-block-size: 56px;
+        padding-block-end: 22px;
+        margin-block-end: 22px;
+        border-block-end: 1px solid var(--color-rule);
     }
     .title-wrapper,
     .wordmark,
@@ -121,11 +121,12 @@
         align-items: center;
     }
     .title-wrapper {
-        gap: 24px;
-        min-width: 0;
+        gap: var(--space-5);
+        min-inline-size: 0;
     }
     .wordmark {
-        gap: 8px;
+        flex-shrink: 0;
+        gap: var(--space-2);
         font-weight: 600;
         font-size: var(--font-size-lg);
     }
@@ -134,6 +135,8 @@
         height: 22px;
     }
     .title {
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
         margin: 0;
         font-size: var(--font-size-3xl);
         font-weight: 500;
@@ -142,19 +145,19 @@
     }
     .header-btn-wrapper,
     .switchers-group {
-        gap: 4px;
+        gap: var(--space-1);
     }
     .current-label {
         white-space: nowrap;
     }
     @media (--mobile-width) {
         header {
-            gap: 8px;
-            padding-bottom: 16px;
-            margin-bottom: 16px;
+            gap: var(--space-2);
+            padding-block-end: var(--space-4);
+            margin-block-end: var(--space-4);
         }
         .title-wrapper {
-            gap: 12px;
+            gap: var(--space-3);
         }
         .title {
             font-size: var(--font-size-2xl);
@@ -169,7 +172,7 @@
             display: none;
         }
         .header-btn-wrapper :global(.settings-trigger) {
-            width: 44px;
+            inline-size: var(--control-height-regular);
             padding: 0;
         }
         .header-btn-wrapper:has(:global(.app-update-button)) {

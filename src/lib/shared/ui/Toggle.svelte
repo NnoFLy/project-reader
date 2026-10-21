@@ -47,9 +47,9 @@
     .toggle-label-wrapper {
         position: relative;
         display: flex;
-        min-height: var(--control-height-compact);
+        min-block-size: var(--control-height-compact);
         align-items: center;
-        gap: 12px;
+        gap: var(--space-3);
         color: var(--text-color);
         font-family: var(--ui-font);
         font-size: var(--font-size-base);
@@ -64,7 +64,7 @@
         padding: 0;
         margin: -1px;
         overflow: hidden;
-        clip: rect(0, 0, 0, 0);
+        clip-path: inset(50%);
         white-space: nowrap;
         border: 0;
     }
@@ -143,9 +143,16 @@
         cursor: not-allowed;
     }
 
+    @media (forced-colors: active) {
+        .toggle-input:focus-visible + .toggle-track {
+            outline: 2px solid Highlight;
+            outline-offset: 2px;
+        }
+    }
+
     @media (--mobile-width) {
         .toggle-label-wrapper {
-            min-height: var(--control-height-regular);
+            min-block-size: var(--control-height-regular);
         }
     }
 </style>

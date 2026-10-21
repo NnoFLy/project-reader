@@ -192,8 +192,8 @@
 
 <style>
     .modal-content {
-        min-width: 0;
-        min-height: 0;
+        min-inline-size: 0;
+        min-block-size: 0;
         padding: 24px max(24px, var(--float-safe-area-inset-right, 0px)) 24px
             max(24px, var(--float-safe-area-inset-left, 0px));
         overflow-x: hidden;
@@ -203,18 +203,18 @@
 
     .shortcuts-grid {
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 16px;
     }
 
     .shortcut-row {
-        min-width: 0;
+        min-inline-size: 0;
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 8px 12px;
-        border-bottom: 1px dashed var(--border-color);
-        transition: background 0.15s ease;
+        border-block-end: 1px dashed var(--border-color);
+        transition: background-color 0.15s ease;
         gap: 16px;
     }
 
@@ -225,7 +225,7 @@
     }
 
     .key-combo {
-        min-width: 0;
+        min-inline-size: 0;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
@@ -258,7 +258,7 @@
     }
 
     .shortcut-desc {
-        min-width: 0;
+        min-inline-size: 0;
         overflow-wrap: anywhere;
         font-size: var(--font-size-xl);
         color: var(--text-color);
@@ -279,7 +279,7 @@
         padding: 12px max(24px, var(--float-safe-area-inset-right, 0px)) 12px
             max(24px, var(--float-safe-area-inset-left, 0px));
         background: var(--bg-color);
-        border-bottom: 2px solid var(--border-color);
+        border-block-end: 2px solid var(--border-color);
         display: flex;
         align-items: center;
         flex-shrink: 0;

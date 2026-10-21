@@ -53,7 +53,7 @@
     .breadcrumbs-nav {
         --font-size: clamp(var(--font-size-sm), 2vw, var(--font-size-base));
         --gap: clamp(6px, 1.5vw, 10px);
-        margin-bottom: 12px;
+        margin-block-end: var(--space-3);
     }
 
     .breadcrumbs-list {
@@ -67,6 +67,7 @@
     }
 
     .breadcrumb-item {
+        min-inline-size: 0;
         display: flex;
         align-items: center;
         gap: var(--gap);
@@ -80,6 +81,7 @@
     }
 
     .breadcrumb-text-btn {
+        min-inline-size: 0;
         font-size: var(--font-size);
         font-weight: normal;
         margin: 0;
@@ -92,16 +94,16 @@
         font-family: var(--ui-font);
         overflow-wrap: anywhere;
         transition: opacity 0.12s ease;
-    }
 
-    .breadcrumb-text-btn:not(.active):hover {
-        opacity: 0.7;
-        text-decoration: underline;
-    }
+        &:not(.active):hover {
+            opacity: 0.7;
+            text-decoration: underline;
+        }
 
-    .breadcrumb-text-btn.active {
-        font-weight: 600;
-        cursor: default;
+        &.active {
+            font-weight: 600;
+            cursor: default;
+        }
     }
 
     @media (--phone) {
@@ -112,11 +114,15 @@
         }
 
         .breadcrumbs-list {
-            width: max-content;
-            max-width: none;
+            inline-size: max-content;
+            max-inline-size: none;
             flex-wrap: nowrap;
             overflow-wrap: normal;
             white-space: nowrap;
+        }
+
+        .breadcrumb-item {
+            flex-shrink: 0;
         }
     }
 </style>

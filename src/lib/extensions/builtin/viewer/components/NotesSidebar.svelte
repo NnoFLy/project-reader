@@ -380,24 +380,24 @@
         gap: 6px;
         background: var(--surface-color);
         border: var(--border-inline) solid var(--border-color);
-        border-left-width: 3px;
+        border-inline-start-width: 3px;
         border-radius: var(--radius-md);
         transition: background-color 0.12s ease;
-    }
 
-    .note-card:hover,
-    .note-card:focus-within {
-        background: var(--surface-hover-color);
-    }
+        &:hover,
+        &:focus-within {
+            background: var(--surface-hover-color);
+        }
 
-    .note-card.selected {
-        background: var(--selected-surface);
-        outline: 1px solid var(--selection-color);
+        &.selected {
+            background: var(--selected-surface);
+            outline: 1px solid var(--selection-color);
+        }
     }
 
     .note-primary {
         display: flex;
-        min-width: 0;
+        min-inline-size: 0;
         flex-direction: column;
         align-items: stretch;
         gap: 6px;
@@ -406,7 +406,7 @@
         background: transparent;
         color: var(--text-color);
         font: inherit;
-        text-align: left;
+        text-align: start;
         cursor: pointer;
     }
 
@@ -417,19 +417,19 @@
 
     /* Colors mapped */
     .note-card.color-yellow {
-        border-left-color: #c49b00;
+        border-inline-start-color: #c49b00;
     }
     .note-card.color-green {
-        border-left-color: #1f9669;
+        border-inline-start-color: #1f9669;
     }
     .note-card.color-blue {
-        border-left-color: #1d6fd3;
+        border-inline-start-color: #1d6fd3;
     }
     .note-card.color-pink {
-        border-left-color: #d63384;
+        border-inline-start-color: #d63384;
     }
     .note-card.color-purple {
-        border-left-color: #815ab2;
+        border-inline-start-color: #815ab2;
     }
 
     .note-card-header {
@@ -460,8 +460,8 @@
         color: var(--text-color);
         background: var(--faded-color);
         padding: 4px 8px;
-        border-left: 2px solid var(--border-color);
-        max-height: 120px;
+        border-inline-start: 2px solid var(--border-color);
+        max-block-size: 120px;
         overflow-y: auto;
         word-break: break-word;
     }
@@ -480,7 +480,7 @@
         justify-content: center;
         gap: 4px;
         align-self: stretch;
-        padding-right: 8px;
+        padding-inline-end: 8px;
         opacity: 0.72;
         transition: opacity 0.15s ease;
     }
@@ -491,8 +491,8 @@
     }
 
     .action-btn {
-        width: 28px;
-        height: 28px;
+        inline-size: 28px;
+        block-size: 28px;
         background: var(--surface-color);
         cursor: pointer;
         padding: 4px;
@@ -532,21 +532,21 @@
         }
 
         .action-btn {
-            width: 34px;
-            height: 34px;
+            inline-size: 34px;
+            block-size: 34px;
             padding: 8px;
         }
 
         .note-primary {
-            min-height: 48px;
+            min-block-size: 48px;
             padding: 12px 14px;
         }
     }
 
     @media (max-width: 480px) {
         .action-btn :global(svg) {
-            width: 16px !important;
-            height: 16px !important;
+            inline-size: 16px !important;
+            block-size: 16px !important;
         }
     }
 </style>

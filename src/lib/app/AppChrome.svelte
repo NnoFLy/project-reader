@@ -280,7 +280,7 @@
         inset: auto auto 1.25rem 1.25rem;
         display: grid;
         gap: 0.1rem;
-        min-width: 5.5rem;
+        min-inline-size: 5.5rem;
         padding: 0.6rem 0.85rem;
         border: var(--border-inline) solid var(--border-color);
         border-radius: var(--radius-md);
@@ -309,11 +309,12 @@
         inset: auto 1.25rem 1.25rem auto;
         display: grid;
         gap: 0.65rem;
-        width: min(24rem, calc(100vw - 2.5rem));
+        inline-size: min(24rem, calc(100vw - 2.5rem));
         pointer-events: none;
     }
 
     .host-notification {
+        overflow-wrap: anywhere;
         border: var(--border-inline) solid var(--border-color);
         border-radius: var(--radius-md);
         padding: 0.7rem 0.85rem;

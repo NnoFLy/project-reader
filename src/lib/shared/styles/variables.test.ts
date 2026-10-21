@@ -156,3 +156,40 @@ describe.each([":root", ":global(html.dark)"])("%s semantic contrast", (selector
         expect(contrast(tokens.get(foreground)!, tokens.get(background)!)).toBeGreaterThanOrEqual(3)
     })
 })
+
+describe("theme compatibility aliases", () => {
+    it.each([":root", ":global(html.dark)"])(
+        "resolves aliases against %s semantics",
+        (selector) => {
+            const tokens = new Map([...declarations(":root"), ...declarations(selector)])
+            for (const [alias, semantic] of [
+                ["--bg-color", "--color-canvas"],
+                ["--surface-color", "--color-surface"],
+                ["--text-color", "--color-text"],
+                ["--primary-color", "--color-action"],
+                ["--focus-color", "--color-focus"],
+                ["--danger-color", "--color-danger"],
+            ]) {
+                expect(resolveToken(`var(${alias})`, tokens)).toBe(tokens.get(semantic))
+            }
+        },
+    )
+
+    it("gives forced-color tokens equal specificity to the dark theme", () => {
+        const styles = parse(css)
+        let selectors: string[] = []
+        styles.walkAtRules("media", (media) => {
+            if (media.params !== "(forced-colors: active)") return
+            media.walkRules((rule) => {
+                selectors = rule.selectors
+                const tokens = new Map<string, string>()
+                rule.walkDecls((decl) => {
+                    tokens.set(decl.prop, decl.value)
+                })
+                expect(tokens.get("--color-text")).toBe("CanvasText")
+                expect(tokens.get("--color-focus")).toBe("Highlight")
+            })
+        })
+        expect(selectors).toEqual([":root", ":global(html.dark)"])
+    })
+})

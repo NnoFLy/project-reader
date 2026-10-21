@@ -61,24 +61,25 @@
         flex-shrink: 0;
         align-items: center;
         box-sizing: border-box;
-        border-bottom: var(--border-inline) solid var(--border-color);
+        border-block-end: var(--border-inline) solid var(--border-color);
         background: var(--surface-color);
         font-family: var(--ui-font);
     }
 
     .sidebar-search :global(.sidebar-search-icon) {
         position: absolute;
-        left: 14px;
-        width: 18px;
-        height: 18px;
+        inset-inline-start: 14px;
+        inline-size: 18px;
+        block-size: 18px;
         color: var(--faded-text-color);
         pointer-events: none;
     }
 
     .sidebar-search :global(.sidebar-search-input) {
-        width: 100%;
+        inline-size: 100%;
         box-sizing: border-box;
-        padding: 12px 36px 12px 42px;
+        padding-block: var(--space-3);
+        padding-inline: 42px 36px;
         border: 0;
         outline: 0;
         background: var(--surface-color);
@@ -86,7 +87,7 @@
         font-family: var(--ui-font);
         font-weight: 600;
         transition:
-            background 0.15s ease,
+            background-color 0.15s ease,
             box-shadow 0.15s ease;
         appearance: none;
     }
@@ -103,10 +104,10 @@
     .sidebar-search-clear {
         position: absolute;
         top: 50%;
-        right: 12px;
+        inset-inline-end: 12px;
         display: flex;
-        width: 18px;
-        height: 18px;
+        inline-size: 18px;
+        block-size: 18px;
         align-items: center;
         justify-content: center;
         padding: 0;
@@ -122,7 +123,7 @@
         opacity: 0.6;
         transition:
             opacity 0.15s ease,
-            background 0.15s ease,
+            background-color 0.15s ease,
             color 0.15s ease;
     }
 
@@ -140,25 +141,32 @@
         }
     }
 
+    @media (forced-colors: active) {
+        .sidebar-search :global(.sidebar-search-input:focus-visible) {
+            outline: 2px solid Highlight;
+            outline-offset: -2px;
+        }
+    }
+
     @media (max-width: 640px) {
         .sidebar-search {
-            border-bottom-width: 1px;
+            border-block-end-width: 1px;
         }
 
         .sidebar-search :global(.sidebar-search-input) {
-            min-height: 48px;
+            min-block-size: 48px;
             padding: 11px 42px;
             font-size: max(1rem, var(--font-size-input));
         }
 
         .sidebar-search :global(.sidebar-search-icon) {
-            left: 14px;
+            inset-inline-start: 14px;
         }
 
         .sidebar-search-clear {
-            right: 8px;
-            width: 32px;
-            height: 32px;
+            inset-inline-end: 8px;
+            inline-size: 32px;
+            block-size: 32px;
         }
     }
 </style>

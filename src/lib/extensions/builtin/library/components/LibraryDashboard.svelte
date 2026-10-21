@@ -515,24 +515,25 @@
 
 <style>
     .container {
-        max-width: 1280px;
-        margin: 0 auto;
-        width: 100%;
+        max-inline-size: 1280px;
+        margin-block: 0;
+        margin-inline: auto;
+        inline-size: 100%;
         display: flex;
         flex-direction: column;
-        padding-bottom: 64px;
+        padding-block-end: 64px;
     }
 
     .library-actions {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-bottom: 24px;
+        gap: var(--space-2);
+        margin-block-end: var(--space-5);
         font-family: var(--ui-font);
     }
 
     .library-actions :global(.button) {
-        min-height: var(--control-height-regular);
+        min-block-size: var(--control-height-regular);
     }
 
     .card_list {
@@ -543,12 +544,12 @@
 
     .card_item {
         position: relative;
-        scroll-margin-bottom: 120px;
+        scroll-margin-block-end: 120px;
     }
 
     :global(.card_inner) {
-        min-width: 100%;
-        min-height: 100%;
+        min-inline-size: 100%;
+        min-block-size: 100%;
     }
 
     .grid {
@@ -557,7 +558,7 @@
             auto-fill,
             minmax(min(100%, var(--library-card-min, 11rem)), 1fr)
         );
-        gap: 24px;
+        gap: var(--space-5);
     }
 
     main.selection-mode .grid {
@@ -568,19 +569,18 @@
         .library-actions {
             display: grid;
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            gap: 8px;
         }
 
         .library-actions :global(.import-action),
         .library-actions :global(.button) {
-            width: 100%;
-            min-width: 0;
-            padding-inline: 8px;
+            inline-size: 100%;
+            min-inline-size: 0;
+            padding-inline: var(--space-2);
         }
 
         .grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
+            gap: var(--space-4);
         }
     }
 
@@ -591,7 +591,7 @@
 
         .grid {
             grid-template-columns: minmax(0, 1fr);
-            gap: 12px;
+            gap: var(--space-3);
         }
     }
 
@@ -600,11 +600,11 @@
         bottom: 24px;
         left: 50%;
         transform: translateX(-50%);
-        padding: 8px 12px;
+        padding: var(--space-2) var(--space-3);
         display: flex;
         align-items: center;
         z-index: var(--z-modal);
-        max-width: 90dvw;
+        max-inline-size: 90dvw;
         box-sizing: border-box;
         background: var(--surface-color);
         border: 1px solid var(--color-rule);
@@ -614,13 +614,13 @@
     .selection-actions {
         display: flex;
         align-items: stretch;
-        gap: 8px;
+        gap: var(--space-2);
         flex: 1;
         justify-content: center;
     }
 
     .selection-actions :global(.button) {
-        height: auto;
+        block-size: auto;
         align-self: stretch;
     }
 
@@ -631,9 +631,9 @@
     @media (--mobile-width) {
         .selection-bar {
             bottom: 16px;
-            padding: 8px 16px;
-            gap: 8px;
-            min-width: auto;
+            padding: var(--space-2) var(--space-4);
+            gap: var(--space-2);
+            min-inline-size: auto;
             flex-direction: row;
             align-items: center;
         }
@@ -641,7 +641,6 @@
         .selection-actions {
             justify-content: flex-end;
             flex-wrap: nowrap;
-            gap: 8px;
         }
 
         .selection-actions :global(.button span) {
@@ -663,7 +662,7 @@
         transform: translateX(-50%);
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: var(--space-4);
         z-index: var(--z-sticky);
     }
 

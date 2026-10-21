@@ -269,15 +269,16 @@
         width: min(44rem, calc(var(--float-viewport-width) - 2.5rem));
         max-width: 100%;
         max-height: 100%;
-        margin-top: 80px;
-        margin-bottom: auto;
+        margin-block-start: 80px;
+        margin-block-end: auto;
         border: var(--border-elevated) solid var(--border-color);
         box-shadow: var(--shadow-elevated);
     }
 
     .prompt-container {
         display: flex;
-        width: 100%;
+        inline-size: 100%;
+        min-block-size: 0;
         flex-direction: column;
         overflow: hidden;
         background: var(--surface-color);
@@ -290,7 +291,7 @@
         display: flex;
         align-items: center;
         padding: 1rem;
-        border-bottom: var(--border-inline) solid var(--border-color);
+        border-block-end: var(--border-inline) solid var(--border-color);
     }
 
     .input-wrapper::after {
@@ -306,7 +307,7 @@
 
     .input-wrapper.loading::after {
         opacity: 1;
-        animation: loading 1.2s ease-in-out infinite alternate;
+        animation: loading 1.2s ease-in-out;
     }
 
     @keyframes loading {
@@ -318,12 +319,12 @@
     :global(.search-icon) {
         width: 1.25rem;
         height: 1.25rem;
-        margin-right: 0.75rem;
+        margin-inline-end: 0.75rem;
         opacity: 0.6;
     }
 
     .prompt-input {
-        min-width: 0;
+        min-inline-size: 0;
         flex: 1;
         padding: 0;
         border: 0;
@@ -336,7 +337,7 @@
 
     .results-list {
         display: flex;
-        max-height: 380px;
+        max-block-size: 380px;
         flex-direction: column;
         gap: 0.25rem;
         overflow-y: auto;
@@ -345,7 +346,7 @@
 
     .empty-state {
         display: grid;
-        min-height: 10rem;
+        min-block-size: 10rem;
         place-items: center;
         align-content: center;
         color: var(--text-color);
@@ -363,7 +364,7 @@
         border: 3px solid var(--border-color);
         border-top-color: transparent;
         border-radius: 50%;
-        animation: spin 0.8s linear infinite;
+        animation: spin 0.8s linear;
     }
 
     @keyframes spin {
@@ -377,7 +378,7 @@
         align-items: center;
         justify-content: space-between;
         padding: 0.65rem 1rem;
-        border-top: var(--border-inline) solid var(--border-color);
+        border-block-start: var(--border-inline) solid var(--border-color);
         background: var(--surface-hover-color);
         color: var(--text-color);
         font-size: var(--font-size-sm);
@@ -419,8 +420,7 @@
         }
 
         .prompt-container {
-            height: 100%;
-            min-height: 0;
+            block-size: 100%;
         }
 
         .input-wrapper {
@@ -434,7 +434,7 @@
             padding: 6px calc(8px + env(safe-area-inset-right))
                 calc(6px + var(--float-safe-area-inset-bottom, env(safe-area-inset-bottom)))
                 calc(14px + env(safe-area-inset-left));
-            border-bottom: 1px solid var(--border-color);
+            border-block-end: 1px solid var(--border-color);
             background: var(--surface-color);
         }
 
@@ -456,8 +456,8 @@
         }
 
         .results-list {
-            min-height: 0;
-            max-height: none;
+            min-block-size: 0;
+            max-block-size: none;
             flex: 1;
             flex-direction: column-reverse;
             padding: 24px calc(8px + env(safe-area-inset-right)) 12px
@@ -472,7 +472,7 @@
         }
 
         .empty-state {
-            min-height: 100%;
+            min-block-size: 100%;
             padding: 24px;
             box-sizing: border-box;
             font-family: var(--ui-font);

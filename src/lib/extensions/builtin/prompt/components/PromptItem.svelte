@@ -110,7 +110,7 @@
     .result-item {
         display: flex;
         align-items: center;
-        width: 100%;
+        inline-size: 100%;
         gap: 0.75rem;
         padding: 0.65rem 0.75rem;
         border: var(--border-inline) solid transparent;
@@ -124,8 +124,7 @@
         transition:
             background-color 120ms ease,
             border-color 120ms ease,
-            box-shadow 120ms ease,
-            transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+            box-shadow 120ms ease;
     }
 
     .result-item:hover,
@@ -141,8 +140,8 @@
 
     .option-mark {
         display: grid;
-        width: 2rem;
-        height: 2rem;
+        inline-size: 2rem;
+        block-size: 2rem;
         flex: 0 0 auto;
         place-items: center;
         overflow: hidden;
@@ -151,9 +150,7 @@
         background: var(--bg-color);
         font-weight: 800;
         text-transform: uppercase;
-        transition:
-            transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
-            background-color 150ms ease;
+        transition: background-color 150ms ease;
     }
 
     .result-item.selected .option-mark {
@@ -167,21 +164,21 @@
 
     .meta {
         display: grid;
-        min-width: 0;
+        min-inline-size: 0;
         flex: 1;
         gap: 0.2rem;
     }
 
     .title-line {
         display: flex;
-        min-width: 0;
+        min-inline-size: 0;
         flex-wrap: wrap;
         align-items: baseline;
         gap: 0.15rem 0.45rem;
     }
 
     .label {
-        min-width: 0;
+        min-inline-size: 0;
         overflow-wrap: anywhere;
         font-size: var(--font-size-xl);
         font-weight: 650;
@@ -189,7 +186,7 @@
 
     .english-label,
     .description {
-        min-width: 0;
+        min-inline-size: 0;
         overflow-wrap: anywhere;
         opacity: 0.55;
     }
@@ -209,7 +206,7 @@
     }
 
     .action {
-        max-width: 48%;
+        max-inline-size: 48%;
         flex-wrap: wrap;
         justify-content: flex-end;
     }
@@ -229,7 +226,7 @@
     }
 
     kbd {
-        min-width: 1.2rem;
+        min-inline-size: 1.2rem;
         padding: 0.2rem 0.35rem;
         border: var(--border-inline) solid var(--border-color);
         border-radius: var(--radius-sm);

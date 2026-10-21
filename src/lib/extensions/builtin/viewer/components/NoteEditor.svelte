@@ -173,13 +173,6 @@
 </Modal>
 
 <style>
-    @media (--mobile) {
-        .editor-textarea {
-            font-size: var(--font-size-xl) !important;
-            height: 200px !important;
-        }
-    }
-
     .editor-header .modal-title {
         margin: 0;
         font-family: var(--ui-font);
@@ -195,7 +188,7 @@
     }
 
     .editor-body {
-        min-height: 0;
+        min-block-size: 0;
         padding: 16px max(24px, var(--float-safe-area-inset-right, 0px)) 16px
             max(24px, var(--float-safe-area-inset-left, 0px));
         background: var(--bg-color);
@@ -215,7 +208,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        width: 100%;
+        inline-size: 100%;
         padding: 0;
         background: var(--bg-color);
         position: relative;
@@ -240,14 +233,14 @@
 
     .editor-quote {
         margin: 0;
-        margin-bottom: 8px;
+        margin-block-end: 8px;
         font-style: italic;
         font-size: var(--font-size-md);
         color: var(--text-color);
         background: rgba(0, 0, 0, 0.03);
         padding: 12px 16px;
-        border-left: 4px solid var(--border-color);
-        max-height: 100px;
+        border-inline-start: 4px solid var(--border-color);
+        max-block-size: 100px;
         overflow-y: auto;
         overscroll-behavior: contain;
         word-break: break-word;
@@ -257,13 +250,13 @@
     @media (--mobile) {
         .editor-quote {
             padding: 8px 12px;
-            margin-bottom: 4px;
+            margin-block-end: 4px;
         }
     }
 
     .editor-textarea {
-        width: 100%;
-        height: 160px;
+        inline-size: 100%;
+        block-size: 160px;
         font-family: inherit;
         font-size: var(--font-size-xl);
         font-weight: 600;
@@ -274,7 +267,7 @@
         resize: none;
         outline: none;
         box-sizing: border-box;
-        margin-bottom: 8px;
+        margin-block-end: 8px;
         transition:
             background-color 0.1s ease,
             border-color 0.1s ease,
@@ -283,8 +276,9 @@
 
     @media (--mobile) {
         .editor-textarea {
+            block-size: 200px;
             padding: 12px;
-            margin-bottom: 4px;
+            margin-block-end: 4px;
         }
     }
 

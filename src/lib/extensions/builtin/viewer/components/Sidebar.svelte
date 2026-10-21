@@ -238,14 +238,14 @@
 <style>
     :global(.sidebar-tabs-list) {
         flex: 1;
-        min-width: 0;
+        min-inline-size: 0;
     }
 
     .sidebar-panel {
         display: flex;
         flex: 1;
-        width: 100%;
-        min-height: 0;
+        inline-size: 100%;
+        min-block-size: 0;
         flex-direction: column;
     }
 

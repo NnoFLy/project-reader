@@ -116,7 +116,7 @@
         justify-content: center;
         box-sizing: border-box;
         gap: var(--control-gap);
-        min-height: var(--button-height);
+        min-block-size: var(--button-height);
         padding: 6px var(--control-padding-inline);
         border: 1px solid transparent;
         border-radius: 999px;
@@ -132,9 +132,9 @@
         cursor: pointer;
         user-select: none;
         transition:
-            background-color 120ms ease,
-            color 120ms ease,
-            transform 120ms ease;
+            background-color var(--motion-duration-fast) ease,
+            color var(--motion-duration-fast) ease,
+            transform var(--motion-duration-fast) ease;
     }
 
     .brutalist-btn {
@@ -144,22 +144,23 @@
 
     .fab-btn {
         --button-height: 44px;
-        width: 44px;
+        inline-size: 44px;
         padding: 0;
         background: var(--surface-color);
     }
 
     .button.square {
         flex: 0 0 var(--button-height);
-        width: var(--button-height);
-        height: var(--button-height);
+        inline-size: var(--button-height);
+        block-size: var(--button-height);
+        /* Keep square hit areas intact when parent chrome adds inline padding. */
         padding: 0 !important;
     }
 
     .button :global(svg) {
         flex-shrink: 0;
-        width: 18px;
-        height: 18px;
+        inline-size: 18px;
+        block-size: 18px;
         stroke-width: 1.75;
     }
 
@@ -202,8 +203,8 @@
 
     .none-btn,
     .size-none {
-        min-height: 0;
-        min-width: 0;
+        min-block-size: 0;
+        min-inline-size: 0;
         padding: 0;
         border: 0;
         border-radius: 0;
@@ -212,7 +213,7 @@
     @media (--mobile-width) {
         .button:not(.size-none):not(.none-btn) {
             --button-height: var(--control-height-regular);
-            min-height: var(--button-height);
+            min-block-size: var(--button-height);
         }
     }
 </style>

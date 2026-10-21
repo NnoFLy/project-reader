@@ -55,8 +55,8 @@
     .input-group {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        width: 100%;
+        gap: var(--space-2);
+        inline-size: 100%;
     }
 
     .input-group.unstyled {
@@ -75,7 +75,7 @@
     }
 
     .input-field {
-        min-height: var(--control-height-regular);
+        min-block-size: var(--control-height-regular);
         box-sizing: border-box;
         padding: 8px var(--control-padding-inline);
         border: 1px solid var(--color-control-border);
@@ -86,14 +86,21 @@
         font-family: var(--ui-font);
         outline: none;
         transition:
-            border-color 0.12s ease,
-            box-shadow 0.12s ease,
-            background-color 0.12s ease;
+            border-color var(--motion-duration-fast) ease,
+            box-shadow var(--motion-duration-fast) ease,
+            background-color var(--motion-duration-fast) ease;
     }
 
     .input-field:focus-visible {
         border-color: var(--accent-color);
         box-shadow: var(--focus-ring);
+    }
+
+    @media (forced-colors: active) {
+        .input-field:focus-visible {
+            outline: 2px solid Highlight;
+            outline-offset: 2px;
+        }
     }
 
     .input-field::placeholder {

@@ -108,17 +108,17 @@
         align-items: center;
         gap: 10px;
         background: var(--viewer-chrome-color);
-        border-top: var(--border-inline) solid var(--border-color);
+        border-block-start: var(--border-inline) solid var(--border-color);
         font-family: var(--ui-font);
-        min-height: calc(52px + env(safe-area-inset-bottom));
-        max-height: calc(52px + env(safe-area-inset-bottom));
+        min-block-size: calc(52px + env(safe-area-inset-bottom));
+        max-block-size: calc(52px + env(safe-area-inset-bottom));
         box-sizing: border-box;
         padding: 6px calc(16px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom))
             calc(16px + env(safe-area-inset-left));
     }
 
     .viewer-footer :global(.action-btn) {
-        min-width: 0;
+        min-inline-size: 0;
         flex: 0 1 auto;
         padding-inline: 16px;
         font-weight: 500;
@@ -137,8 +137,8 @@
     }
 
     .pagination-indicator :global(.page-input) {
-        width: 65px;
-        height: 38px;
+        inline-size: 65px;
+        block-size: 38px;
         border: 1px solid var(--color-control-border);
         border-radius: var(--radius-sm);
         text-align: center;
@@ -167,7 +167,7 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        min-width: 0;
+        min-inline-size: 0;
     }
 
     .btn-arrow {
@@ -182,11 +182,10 @@
             gap: 12px;
             padding: 6px calc(10px + env(safe-area-inset-right))
                 calc(6px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
-            border-top-width: var(--border-inline);
         }
 
         .viewer-footer :global(.action-btn) {
-            width: var(--control-height-regular);
+            inline-size: var(--control-height-regular);
             flex: 0 0 var(--control-height-regular);
             padding: 0;
         }
@@ -202,7 +201,7 @@
         }
 
         .pagination-indicator {
-            min-width: 0;
+            min-inline-size: 0;
             justify-content: center;
             font-size: max(0.875rem, var(--font-size-base));
             gap: 6px;
@@ -210,16 +209,14 @@
         }
 
         .pagination-indicator :global(.page-input) {
-            width: 3rem;
-            height: 32px;
+            inline-size: 3rem;
+            block-size: 32px;
             border-width: 1px;
             border-radius: var(--radius-sm);
             box-shadow: none;
             font-size: 1rem;
         }
-    }
 
-    @media (--mobile) {
         .page-label {
             display: none;
         }
