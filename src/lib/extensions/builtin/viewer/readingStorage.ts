@@ -1,4 +1,10 @@
 import type { StorageNamespace } from "$lib/extension-api/storage"
+import {
+    freezeAnnotations,
+    readNote,
+    readBookmark,
+    type ReadingAnnotations,
+} from "./readingAnnotations"
 
 export type ReadingLayout = "single" | "split" | "scroll"
 
@@ -30,6 +36,7 @@ export class ReadingStorageError extends Error {
 const VERSION = 1
 const CURRENT_KEY = "reading-v1-current"
 const DOCUMENT_PREFIX = "reading-v1-document-"
+const ANNOTATIONS_PREFIX = "reading-v1-annotations-"
 const MAX_DOCUMENT_ID_LENGTH = 1024
 
 function isDocumentId(value: unknown): value is string {
@@ -64,19 +71,67 @@ function readState(value: Record<string, unknown>): ReadingDocumentState | null 
     return { pageNumber, scrollPosition, scale, layout }
 }
 
-function documentKey(documentId: string): string {
+function documentKey(documentId: string, prefix = DOCUMENT_PREFIX): string {
     if (!isDocumentId(documentId)) throw new ReadingStorageError("reading.storage.invalid-input")
     // Fixed-width UTF-16 encoding is injective, including lone surrogates, and key-safe.
     let encoded = ""
     for (let index = 0; index < documentId.length; index++) {
         encoded += documentId.charCodeAt(index).toString(16).padStart(4, "0")
     }
-    return `${DOCUMENT_PREFIX}${encoded}`
+    return `${prefix}${encoded}`
+}
+
+function readAnnotations(value: unknown, documentId: string): ReadingAnnotations | null {
+    if (
+        !isRecord(value) ||
+        !Array.isArray(value.notes) ||
+        value.notes.length > 10_000 ||
+        !Array.isArray(value.bookmarks) ||
+        value.bookmarks.length > 10_000
+    )
+        return null
+    const notes = Array.from(value.notes, (note) => readNote(note, documentId))
+    const bookmarks = Array.from(value.bookmarks, (bookmark) => readBookmark(bookmark, documentId))
+    if (!notes.every((note) => note !== null) || !bookmarks.every((bookmark) => bookmark !== null))
+        return null
+    if (
+        new Set(notes.map((note) => note.id)).size !== notes.length ||
+        new Set(bookmarks.map((bookmark) => bookmark.id)).size !== bookmarks.length
+    )
+        return null
+    return freezeAnnotations(notes, bookmarks)
 }
 
 /** New records only; the injected host namespace owns writer fencing and lifetime. */
 export class ReadingStorage {
     constructor(private readonly storage: StorageNamespace) {}
+
+    async readAnnotations(documentId: string): Promise<ReadingAnnotations> {
+        const key = documentKey(documentId, ANNOTATIONS_PREFIX)
+        try {
+            const value = await this.storage.get<unknown>(key)
+            if (value === undefined) return freezeAnnotations([])
+            const state =
+                isRecord(value) && value.version === VERSION && value.documentId === documentId
+                    ? readAnnotations(value, documentId)
+                    : null
+            if (!state) throw new ReadingStorageError("reading.storage.read")
+            return state
+        } catch {
+            throw new ReadingStorageError("reading.storage.read")
+        }
+    }
+
+    async writeAnnotations(documentId: string, state: ReadingAnnotations): Promise<void> {
+        const key = documentKey(documentId, ANNOTATIONS_PREFIX)
+        const validated = readAnnotations(state, documentId)
+        if (!validated) throw new ReadingStorageError("reading.storage.invalid-input")
+        try {
+            await this.storage.set(key, { version: VERSION, documentId, ...validated })
+        } catch {
+            throw new ReadingStorageError("reading.storage.write")
+        }
+    }
 
     async readCurrent(): Promise<string | null> {
         try {

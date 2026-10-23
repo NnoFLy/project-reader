@@ -211,7 +211,10 @@
                 await openViewerBookmark({
                     open: () => executeViewerCommand("viewer.open", { bookId: bookmark.bookId }),
                     pageNumber: bookmark.pageNumber,
-                    goToPage: (pageNumber, options) => viewerStore.goToPage?.(pageNumber, options),
+                    goToPage: (pageNumber, options) => {
+                        if (viewerStore.workspace.snapshot.documentId === bookmark.bookId)
+                            viewerStore.goToPage(pageNumber, options)
+                    },
                 })
             },
             isToggleBlocked: () =>
@@ -231,18 +234,23 @@
     })
     const viewerMutationCommands = createViewerMutationCommands({
         addBookmark: async (payload: { page?: number; name?: string } | undefined) => {
-            if (payload?.name && currentBookId) {
-                await bookmarksStore.addBookmark(
-                    currentBookId,
-                    payload.page ?? viewerStore.currentPage,
-                    payload.name,
-                )
-                viewerUIStore.closeBookmarkAddModal()
+            const documentId = currentBookId
+            if (!documentId) return
+            const page = payload?.page ?? viewerStore.currentPage
+            if (payload?.name) {
+                const result = await bookmarksStore.saveBookmark(documentId, page, payload.name)
+                if (!result?.ok) {
+                    const retainedId =
+                        result?.value &&
+                        bookmarksStore.bookmarks.some((item) => item.id === result.value?.id)
+                            ? result.value.id
+                            : undefined
+                    viewerUIStore.openBookmarkAddModal(payload.name, documentId, page, retainedId)
+                    viewerUIStore.bookmarkFailed = true
+                }
                 return
             }
-            viewerUIStore.openBookmarkAddModal(
-                `${m.page()} ${payload?.page ?? viewerStore.currentPage}`,
-            )
+            viewerUIStore.openBookmarkAddModal(`${m.page()} ${page}`, documentId, page)
         },
         editBookmark: async (payload: { bookmarkId?: string; name?: string } | undefined) => {
             if (payload?.bookmarkId && payload.name?.trim()) {
@@ -258,8 +266,8 @@
                 viewerUIStore.bookmarkToDeleteId = bookmarkId
                 return
             }
-            await bookmarksStore.deleteBookmark(bookmarkId)
-            viewerUIStore.bookmarkToDeleteId = null
+            if (await bookmarksStore.deleteBookmark(bookmarkId))
+                viewerUIStore.bookmarkToDeleteId = null
         },
         addNote: () => {
             const selection = notesStore.activeSelection
@@ -297,8 +305,7 @@
                 notesStore.activePopup = null
                 return
             }
-            await notesStore.deleteNote(noteId)
-            viewerUIStore.noteToDeleteId = null
+            if (await notesStore.deleteNote(noteId)) viewerUIStore.noteToDeleteId = null
         },
     })
 
@@ -464,7 +471,12 @@
                 viewerUIStore.bookmarkToDeleteId = currentPageBookmark.id
             }
         } else {
-            viewerUIStore.openBookmarkAddModal(`${m.page()} ${currentPage}`)
+            if (currentBookId)
+                viewerUIStore.openBookmarkAddModal(
+                    `${m.page()} ${currentPage}`,
+                    currentBookId,
+                    currentPage,
+                )
         }
     }
 
@@ -1510,10 +1522,10 @@
                 </div>
             {/if}
 
-            <ViewerModals
-                currentBookId={currentBookId ?? null}
-                currentPage={viewerStore.currentPage}
-            />
+            {#if notesStore.failed || bookmarksStore.failed}
+                <p role="alert">{m.reading_annotations_error()}</p>
+            {/if}
+            <ViewerModals />
         </div>
     </div>
 {/if}

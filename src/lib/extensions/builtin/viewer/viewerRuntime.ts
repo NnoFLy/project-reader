@@ -27,8 +27,8 @@ export function createViewerRuntime(
     writeSignal?: AbortSignal,
     settings?: SettingsCapability,
 ): ViewerRuntime {
-    const notes = new NotesStore(store.library, store.libraryMutations)
-    const bookmarks = new BookmarksStore(store.library, store.libraryMutations)
+    const notes = new NotesStore(store.workspace)
+    const bookmarks = new BookmarksStore(store.workspace, store.library)
     const search = new SearchStore(
         undefined,
         store,

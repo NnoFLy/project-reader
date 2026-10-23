@@ -269,6 +269,12 @@ export class ExtensionHost {
                     set prompt(value: HostContext["prompt"]) {
                         hostContext.prompt = value
                     },
+                    get readingSummaries() {
+                        return hostContext.readingSummaries
+                    },
+                    set readingSummaries(value: HostContext["readingSummaries"]) {
+                        hostContext.readingSummaries = value
+                    },
                     get readingDisplay() {
                         return hostContext.readingDisplay
                     },

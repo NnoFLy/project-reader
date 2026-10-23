@@ -8,6 +8,12 @@ export class ViewerUIStore {
 
     isBookmarkAddModalOpen = $state(false)
     bookmarkName = $state("")
+    bookmarkDocumentId = $state<string | null>(null)
+    bookmarkPage = $state(1)
+    bookmarkSaveId = $state<string | undefined>()
+    bookmarkSaving = $state(false)
+    bookmarkFailed = $state(false)
+    bookmarkRequestId = 0
     bookmarkToDeleteId = $state<string | null>(null)
     noteToDeleteId = $state<string | null>(null)
 
@@ -65,12 +71,23 @@ export class ViewerUIStore {
         this.activeSidebar = null
     }
 
-    openBookmarkAddModal(defaultName: string) {
+    openBookmarkAddModal(defaultName: string, documentId: string, page: number, savedId?: string) {
+        this.bookmarkRequestId++
+        this.bookmarkDocumentId = documentId
+        this.bookmarkPage = page
+        this.bookmarkSaveId = savedId
+        this.bookmarkSaving = false
+        this.bookmarkFailed = savedId !== undefined
         this.bookmarkName = defaultName
         this.isBookmarkAddModalOpen = true
     }
 
     closeBookmarkAddModal() {
+        if (this.bookmarkSaving) return
+        this.bookmarkRequestId++
+        this.bookmarkDocumentId = null
+        this.bookmarkSaveId = undefined
+        this.bookmarkFailed = false
         this.isBookmarkAddModalOpen = false
         this.bookmarkName = ""
     }

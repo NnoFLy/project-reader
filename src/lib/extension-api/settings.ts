@@ -87,7 +87,17 @@ export interface ReadingDisplayCapability {
     layout: SettingsLayout
 }
 
+/** Minimal document-linked counts; annotation material remains owned by Viewer. */
+export interface ReadingSummaryCapability {
+    getSummary(documentId: string): Promise<{
+        readonly documentId: string
+        readonly noteCount: number
+        readonly bookmarkCount: number
+    } | null>
+}
+
 export interface HostContext {
+    readingSummaries?: ReadingSummaryCapability
     readingDisplay?: ReadingDisplayCapability
     /** Permanently revoked when this host loses permission to persist shared data. */
     readonly writeSignal?: AbortSignal

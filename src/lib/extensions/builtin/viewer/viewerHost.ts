@@ -4,7 +4,6 @@ import type {
     SettingsCapability,
     StorageNamespace,
 } from "$lib/extension-api"
-import type { Bookmark, UserNote } from "$lib/core/documents"
 export type { PromptItem, PromptService } from "$lib/extension-api"
 
 export type ViewerPromptCapability = PromptHostCapability
@@ -28,8 +27,6 @@ export interface ViewerLibraryCapability {
     onNodeInvalidated(listener: (id: string) => void): () => void
     isNodeDeleting(id: string): boolean
     getIndexedTexts(bookId: string): Promise<readonly IndexedText[]>
-    getUserNotes(bookId: string): Promise<readonly UserNote[]>
-    getBookmarks(): Promise<readonly Bookmark[]>
     getPreviewUrl(id: string): Promise<string>
     getFolderPath(id: string): string
 }
@@ -42,11 +39,6 @@ export interface ViewerLibraryMutationCapability {
     serializeBookMutation<T>(id: string, mutation: () => Promise<T>): Promise<T | undefined>
     serializeMetadataMutation<T>(mutation: () => Promise<T>): Promise<T | undefined>
     saveIndexedTexts(id: string, records: unknown[], generation?: number): Promise<boolean>
-    putUserNote(note: UserNote): Promise<string>
-    deleteUserNote(id: string): Promise<void>
-    putBookmark(bookmark: Bookmark): Promise<string>
-    deleteBookmark(id: string): Promise<void>
-    deleteBookmarks(ids: string[]): Promise<void>
     revokePreviewUrl(id: string): void
     invalidatePreview(id: string): Promise<void>
     updateFile(

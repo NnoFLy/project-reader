@@ -39,7 +39,11 @@ export async function activateLibrary(
 ): Promise<VFSStore> {
     const libraryStorage = context.storage.namespace("library")
     await context.migration?.migrateLibrary(libraryStorage)
-    const store = configureLibraryStore(libraryStorage, documentService)
+    const store = configureLibraryStore(
+        libraryStorage,
+        documentService,
+        (id) => context.host?.readingSummaries?.getSummary(id) ?? Promise.resolve(null),
+    )
     installRelinkRequest(request)
     await store.init()
     configureLibraryUIStorage(libraryStorage)

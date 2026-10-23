@@ -75,6 +75,9 @@ describe("Reading workspace browser persistence", () => {
     const ready = "!!document.querySelector('#app-root')"
     const bindings = `(async () => {
         window.reader = (await import('/src/lib/extensions/builtin/viewer/stores/viewerStore.svelte.ts')).viewerStore;
+        window.notes = (await import('/src/lib/extensions/builtin/viewer/stores/notesStore.svelte.ts')).notesStore;
+        window.bookmarks = (await import('/src/lib/extensions/builtin/viewer/stores/bookmarksStore.svelte.ts')).bookmarksStore;
+        window.ui = (await import('/src/lib/core/commands/index.ts')).commandsStore;
         window.library = (await import('/src/lib/extensions/builtin/library/state/libraryStore.svelte.ts')).libraryStore;
         window.command = (await import('/src/lib/extensions/builtin/viewer/viewerHost.ts')).executeViewerCommand;
         return true;
@@ -101,9 +104,11 @@ describe("Reading workspace browser persistence", () => {
         ]
         for (let page = 0; page < 8; page++)
             objects.push(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << >> /Contents 11 0 R >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /F1 12 0 R >> >> /Contents 11 0 R >>",
             )
-        objects.push("<< /Length 0 >>\nstream\n\nendstream")
+        const passage = "BT /F1 14 Tf 30 300 Td (Reading passage) Tj ET\n"
+        objects.push(`<< /Length ${passage.length} >>\nstream\n${passage}endstream`)
+        objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
         let text = "%PDF-1.4\n"
         const offsets = [0]
         for (const [index, object] of objects.entries()) {
@@ -240,6 +245,225 @@ describe("Reading workspace browser persistence", () => {
                 documentId: ids.A,
                 state: { pageNumber: 5, scrollPosition: 0.3, scale: 2, layout: "split" },
             })
+        } finally {
+            await browser!.closeTarget(page.targetId)
+        }
+    }, 120000)
+
+    it("keeps saved annotations keyboard-accessible on a narrow screen through document changes and reload", async () => {
+        const page = await browser!.page()
+        const key = async (name: string, code: string, number: number, modifiers = 0) => {
+            await page.call("Input.dispatchKeyEvent", {
+                type: "keyDown",
+                key: name,
+                code,
+                windowsVirtualKeyCode: number,
+                modifiers,
+                text: modifiers === 0 && name === "Enter" ? "\r" : undefined,
+            })
+            await page.call("Input.dispatchKeyEvent", {
+                type: "keyUp",
+                key: name,
+                code,
+                windowsVirtualKeyCode: number,
+                modifiers,
+            })
+        }
+        try {
+            await page.call("Emulation.setDeviceMetricsOverride", {
+                width: 390,
+                height: 844,
+                deviceScaleFactor: 1,
+                mobile: true,
+            })
+            await page.call("Page.navigate", { url: `${origin}/en` })
+            await bind(page)
+            const ids = (await page.evaluate(`(async () => {
+                const results = await window.library.importFiles(['annotations-A', 'annotations-B'].map(name => ({name: name + '.pdf', source: new File([${JSON.stringify(pdf)}], name + '.pdf', {type: 'application/pdf'})})), null);
+                await window.command('viewer.open', {bookId: results[0].id});
+                await window.command('settings.layout', {value: 'single'});
+                await window.command('settings.zoom.out', {value: 1});
+                return results.map(result => result.id);
+            })()`)) as string[]
+            await page.waitFor(
+                "window.reader.totalPages === 8 && !!document.querySelector('.textLayer[data-page=\"1\"] span')",
+            )
+            await page.evaluate(`(() => {
+                const span = document.querySelector('.textLayer[data-page="1"] span');
+                const range = document.createRange(); range.selectNodeContents(span);
+                const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+                document.dispatchEvent(new Event('selectionchange'));
+            })()`)
+            await page.waitFor("!!document.querySelector('.note-fab button')")
+            await page.evaluate("document.querySelector('.note-fab button').focus()")
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!!document.querySelector('textarea')")
+            await page.evaluate("document.querySelector('textarea').focus()")
+            await page.call("Input.insertText", { text: "<img src=x onerror=alert(1)> note" })
+            await page.evaluate("document.querySelector('[aria-label=\"Select purple\"]').focus()")
+            await key("Enter", "Enter", 13)
+            expect(
+                await page.evaluate(`(() => {
+                const modal = document.querySelector('[role=dialog]').getBoundingClientRect();
+                const text = document.querySelector('textarea').getBoundingClientRect();
+                return modal.left >= 0 && modal.right <= innerWidth + 1 && text.width > 100 && !document.querySelector('[role=dialog] img');
+            })()`),
+            ).toBe(true)
+            // Inject a single real storage-I/O failure, not a substitute annotation store.
+            await page.evaluate(`(async () => {
+                const {IndexedDBStorageBackend} = await import('/src/lib/core/storage/index.ts');
+                const set = IndexedDBStorageBackend.prototype.set;
+                window.failNextAnnotationSave = true;
+                IndexedDBStorageBackend.prototype.set = async function(key, value) {
+                    if (window.failNextAnnotationSave && key.includes(':reading-v1-annotations-')) {
+                        window.failNextAnnotationSave = false;
+                        throw new Error('private storage diagnostic');
+                    }
+                    return set.call(this, key, value);
+                };
+            })()`)
+            await page.evaluate("document.querySelector('textarea').focus()")
+            await key("Enter", "Enter", 13, 2)
+            await page.waitFor("!!document.querySelector('[role=dialog] [role=alert]')")
+            expect(await page.evaluate("document.querySelector('textarea').value")).toBe(
+                "<img src=x onerror=alert(1)> note",
+            )
+            expect(
+                await page.evaluate("document.querySelector('[role=dialog]').textContent"),
+            ).not.toContain("private storage diagnostic")
+            await key("Enter", "Enter", 13, 2)
+            await page.waitFor(
+                "!document.querySelector('textarea') && window.notes.notes.length === 1",
+            )
+            expect(
+                await page.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(ids[0])}).notes`,
+                ),
+            ).toMatchObject([
+                {
+                    bookId: ids[0],
+                    text: "Reading passage",
+                    noteContent: "<img src=x onerror=alert(1)> note",
+                    color: "purple",
+                },
+            ])
+            await page.evaluate("document.activeElement?.blur(); getSelection().removeAllRanges()")
+            await key("b", "KeyB", 66)
+            await page.waitFor("document.activeElement?.id === 'header-bookmark-name-input'")
+            await page.evaluate("document.querySelector('#header-bookmark-name-input').select()")
+            await page.call("Input.insertText", { text: "Chapter <img src=x>" })
+            await page.evaluate("window.failNextAnnotationSave = true")
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!!document.querySelector('[role=dialog] [role=alert]')")
+            expect(
+                await page.evaluate("document.querySelector('#header-bookmark-name-input').value"),
+            ).toBe("Chapter <img src=x>")
+            await key("Enter", "Enter", 13)
+            await page.waitFor(
+                "!document.querySelector('#header-bookmark-name-input') && window.bookmarks.bookmarks.length > 0",
+            )
+            expect(
+                await page.evaluate(`window.library.getReadingSummary(${JSON.stringify(ids[0])})`),
+            ).toEqual({ documentId: ids[0], noteCount: 1, bookmarkCount: 1 })
+            await page.evaluate(
+                `window.command('viewer.open', {bookId: ${JSON.stringify(ids[1])}})`,
+            )
+            await page.waitFor("window.reader.totalPages === 8 && window.notes.notes.length === 0")
+            expect(
+                await page.evaluate(`window.library.getReadingSummary(${JSON.stringify(ids[1])})`),
+            ).toEqual({ documentId: ids[1], noteCount: 0, bookmarkCount: 0 })
+            await page.evaluate(
+                `(async () => { await window.reader.workspace.close(); await window.command('viewer.open', {bookId: ${JSON.stringify(ids[0])}}); await window.reader.workspace.flush(); })()`,
+            )
+            const before = await page.evaluate("performance.timeOrigin")
+            await page.call("Page.reload")
+            await page.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
+            await bind(page)
+            await page.waitFor("window.reader.totalPages === 8 && window.notes.notes.length === 1")
+            expect(
+                await page.evaluate("document.querySelectorAll('.fullscreen-viewer').length"),
+            ).toBe(1)
+            await page.evaluate("window.ui.execute('viewer.sidebar.notes.toggle')")
+            await page.waitFor(
+                "(() => { const button = document.querySelector('.note-card [aria-label=\"Edit note\"]'); return button && !button.closest('[inert]') && button.getBoundingClientRect().left >= 0; })()",
+            )
+            expect(
+                await page.evaluate("document.querySelector('.note-card').textContent"),
+            ).toContain("<img src=x onerror=alert(1)> note")
+            expect(await page.evaluate("document.querySelector('.note-card img') === null")).toBe(
+                true,
+            )
+            await page.evaluate(
+                "document.querySelector('.note-card [aria-label=\"Edit note\"]').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!!document.querySelector('textarea')")
+            await page.evaluate(
+                "document.querySelector('textarea').focus(); document.querySelector('textarea').select()",
+            )
+            await page.call("Input.insertText", { text: "Updated after reload" })
+            await key("Enter", "Enter", 13, 2)
+            await page.waitFor("!document.querySelector('textarea')")
+            expect(
+                await page.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(ids[0])}).notes[0].noteContent`,
+                ),
+            ).toBe("Updated after reload")
+            await page.evaluate("window.ui.execute('viewer.sidebar.bookmarks.toggle')")
+            await page.waitFor("!!document.querySelector('.bookmark-card')")
+            expect(
+                await page.evaluate("document.querySelector('.bookmark-card').textContent"),
+            ).toContain("Chapter <img src=x>")
+            expect(
+                await page.evaluate("document.querySelector('.bookmark-card img') === null"),
+            ).toBe(true)
+            await page.waitFor(
+                "(() => { const button = document.querySelector('.bookmark-card [aria-label=\"Edit Bookmark\"]'); return button && !button.closest('[inert]'); })()",
+            )
+            await page.evaluate(
+                "document.querySelector('.bookmark-card [aria-label=\"Edit Bookmark\"]').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("document.activeElement?.id === 'edit-bookmark-name-input'")
+            await page.evaluate("document.querySelector('#edit-bookmark-name-input').select()")
+            await page.call("Input.insertText", { text: "Renamed after reload" })
+            await key("Enter", "Enter", 13, 2)
+            await page.waitFor("!document.querySelector('#edit-bookmark-name-input')")
+            expect(
+                await page.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(ids[0])}).bookmarks[0].name`,
+                ),
+            ).toBe("Renamed after reload")
+            await page.evaluate(
+                "document.querySelector('.bookmark-card [aria-label=\"Remove Bookmark\"]').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!!document.querySelector('[role=alertdialog]')")
+            await page.evaluate(
+                "document.querySelector('[role=alertdialog] .confirmation-danger').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!document.querySelector('[role=alertdialog]')")
+            expect(
+                await page.evaluate(`window.library.getReadingSummary(${JSON.stringify(ids[0])})`),
+            ).toEqual({ documentId: ids[0], noteCount: 1, bookmarkCount: 0 })
+            await page.evaluate("window.ui.execute('viewer.sidebar.notes.toggle')")
+            await page.waitFor(
+                "(() => { const button = document.querySelector('.note-card [aria-label=\"Delete highlight and note\"]'); return button && !button.closest('[inert]'); })()",
+            )
+            await page.evaluate(
+                "document.querySelector('.note-card [aria-label=\"Delete highlight and note\"]').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!!document.querySelector('[role=alertdialog]')")
+            await page.evaluate(
+                "document.querySelector('[role=alertdialog] .confirmation-danger').focus()",
+            )
+            await key("Enter", "Enter", 13)
+            await page.waitFor("!document.querySelector('[role=alertdialog]')")
+            expect(
+                await page.evaluate(`window.library.getReadingSummary(${JSON.stringify(ids[0])})`),
+            ).toEqual({ documentId: ids[0], noteCount: 0, bookmarkCount: 0 })
         } finally {
             await browser!.closeTarget(page.targetId)
         }
@@ -575,6 +799,93 @@ describe("Reading workspace browser persistence", () => {
                 status: "ready",
                 state: { pageNumber: 7, scrollPosition: 0, scale: 2.5, layout: "single" },
             })
+        } finally {
+            await browser!.closeTarget(old.targetId)
+            if (next) await browser!.closeTarget(next.targetId)
+        }
+    }, 90000)
+    it("fences an actual delayed annotation write across same-origin writer handoff", async () => {
+        const old = await browser!.page()
+        let next: BrowserPage | undefined
+        try {
+            await old.call("Page.navigate", { url: `${origin}/en` })
+            await bind(old)
+            const id = await old.evaluate(`(async () => {
+                const [result] = await window.library.importFiles([{name: 'annotation-writer.pdf', source: new File([${JSON.stringify(pdf)}], 'annotation-writer.pdf', {type: 'application/pdf'})}], null);
+                return result.id;
+            })()`)
+            await old.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+            await old.waitFor(
+                "navigator.locks.query().then(result => result.held.every(lock => !lock.name.endsWith(':writer')))",
+            )
+            await old.evaluate(`(async () => {
+                const {createBrowserApplication} = await import('/src/lib/app/bootstrap.ts');
+                const {IndexedDBStorageBackend} = await import('/src/lib/core/storage/index.ts');
+                window.writer = createBrowserApplication({storage: lifetime => window.backend = new IndexedDBStorageBackend({lifetime})});
+                await window.writer.start();
+                if (!window.writer.ready) throw new Error('Writer unavailable');
+            })()`)
+            await old.evaluate(bindings)
+            const bookmarkId = await old.evaluate(`(async () => {
+                const result = await window.reader.workspace.createBookmark(${JSON.stringify(id)}, {pageNumber: 2, name: 'Original', association: {contentHash: null, verification: 'unverified'}});
+                return result.value.id;
+            })()`)
+            await old.evaluate(`(() => {
+                const set = window.backend.set.bind(window.backend);
+                window.backend.set = async (key, value) => {
+                    if (key.includes(':reading-v1-annotations-')) {
+                        await new Promise(resolve => window.releaseAnnotationWrite = resolve);
+                        try { await set(key, value); window.annotationWrite = 'committed'; }
+                        catch (error) { window.annotationWrite = 'fenced'; throw error; }
+                        return;
+                    }
+                    return set(key, value);
+                };
+                window.reader.workspace.updateBookmark(${JSON.stringify(id)}, ${JSON.stringify(bookmarkId)}, 'Late old owner').then(result => window.annotationResult = result.ok);
+            })()`)
+            await old.waitFor("typeof window.releaseAnnotationWrite === 'function'")
+            next = await browser!.page()
+            await next.call("Page.navigate", { url: `${origin}/en` })
+            await next.waitFor("!!document.querySelector('[data-writer-state=blocked]')")
+            expect(
+                await next.evaluate("document.querySelectorAll('#app-root, textarea').length"),
+            ).toBe(0)
+            await old.evaluate("window.writer.stop()")
+            await next.waitFor(
+                "navigator.locks.query().then(result => result.held.every(lock => !lock.name.endsWith(':writer')))",
+            )
+            await next.evaluate(
+                "Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Try again').click()",
+            )
+            await bind(next)
+            expect(
+                await next.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(id)}).bookmarks`,
+                ),
+            ).toMatchObject([{ name: "Original" }])
+            expect(
+                await next.evaluate(
+                    `window.reader.workspace.updateBookmark(${JSON.stringify(id)}, ${JSON.stringify(bookmarkId)}, 'New owner').then(result => result.ok)`,
+                ),
+            ).toBe(true)
+            await old.evaluate("window.releaseAnnotationWrite()")
+            await old.waitFor(
+                "window.annotationWrite === 'fenced' && window.annotationResult === false",
+            )
+            const before = await next.evaluate("performance.timeOrigin")
+            await next.call("Page.reload")
+            await next.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
+            await bind(next)
+            expect(
+                await next.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(id)}).bookmarks`,
+                ),
+            ).toMatchObject([{ name: "New owner" }])
+            expect(
+                await next.evaluate(
+                    "navigator.locks.query().then(result => result.held.filter(lock => lock.name.endsWith(':writer')).length)",
+                ),
+            ).toBe(1)
         } finally {
             await browser!.closeTarget(old.targetId)
             if (next) await browser!.closeTarget(next.targetId)

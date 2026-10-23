@@ -103,4 +103,38 @@ describe("modeless note editor keyboard routing", () => {
             sidebarScope.destroy()
         }
     })
+    it("announces a safe persistence failure while keeping annotation input available", async () => {
+        const target = document.createElement("div")
+        document.body.append(target)
+        const editor = mount(NoteEditor, {
+            target,
+            props: {
+                editorId: "failed-note",
+                editorState: {
+                    pageNumber: 1,
+                    text: "<img src=x onerror=alert(1)>",
+                    noteContent: "Kept",
+                    color: "blue",
+                },
+                saving: false,
+                failed: true,
+                onActivate() {},
+                onChange() {},
+                onSave() {},
+                onCancel() {},
+            },
+        })
+        try {
+            flushSync()
+            await tick()
+            expect(document.querySelector('[role="alert"]')?.textContent).toMatch(
+                /Unable to save|Не удалось сохранить/,
+            )
+            expect(document.querySelector("textarea")?.value).toBe("Kept")
+            expect(document.querySelector("textarea")?.disabled).toBe(false)
+            expect(document.querySelector("img")).toBeNull()
+        } finally {
+            await unmount(editor)
+        }
+    })
 })

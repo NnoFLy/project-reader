@@ -97,6 +97,12 @@ export async function activateViewer(
             notificationHandles.add(notification)
         },
     })
+    context.lifecycle.onDispose(() => store.dispose())
+    // Annotation controls are registered only after persistence has been configured.
+    await store.configureStorage(viewerStorage)
+    if (context.lifecycle.isDisposed()) return
+    const readingSummaries = { getSummary: (id: string) => store.workspace.getReadingSummary(id) }
+    if (context.host) context.host.readingSummaries = readingSummaries
     const readingDisplay = {
         get active() {
             return store.workspace.snapshot.documentId !== null
@@ -131,11 +137,12 @@ export async function activateViewer(
         if (viewerStore === store) {
             installViewerHostCapabilities({})
         }
+        if (context.host?.readingSummaries === readingSummaries)
+            context.host.readingSummaries = undefined
         if (context.host?.readingDisplay === readingDisplay) context.host.readingDisplay = undefined
         context.host?.contextualStatus?.clear()
         await store.dispose()
     })
-    await store.configureStorage(viewerStorage)
     await store.syncWithBooks()
     await bookmarksStore.loadAllBookmarks()
     const openCommand = createViewerOpenCommand({
@@ -231,7 +238,10 @@ export async function activateViewer(
             await openViewerBookmark({
                 open: () => executeHostCommand("viewer.open", { bookId: bookmark.bookId }),
                 pageNumber: bookmark.pageNumber,
-                goToPage: (pageNumber, options) => store.goToPage(pageNumber, options),
+                goToPage: (pageNumber, options) => {
+                    if (store.workspace.snapshot.documentId === bookmark.bookId)
+                        store.goToPage(pageNumber, options)
+                },
             })
         },
         validatePayload: isViewerBookmarkOpenPayload,

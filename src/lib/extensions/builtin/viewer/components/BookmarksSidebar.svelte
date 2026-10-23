@@ -152,8 +152,9 @@
         const bookmark = bookmarksStore.bookmarks.find(({ id }) => id === bookmarkId)
         if (!bookmark) return
         if (payload?.name?.trim()) {
-            await bookmarksStore.updateBookmark(bookmark.id, payload.name.trim())
-            editingBookmarkId = null
+            const editingId = editingBookmarkId
+            const saved = await bookmarksStore.updateBookmark(bookmark.id, payload.name.trim())
+            if (saved && editingBookmarkId === editingId) editingBookmarkId = null
             return
         }
         editingBookmarkId = bookmark.id
@@ -172,8 +173,7 @@
                 bookmarkToDeleteId = bookmarkId
                 return
             }
-            await bookmarksStore.deleteBookmark(bookmarkId)
-            bookmarkToDeleteId = null
+            if (await bookmarksStore.deleteBookmark(bookmarkId)) bookmarkToDeleteId = null
         },
         addNote: () => {},
         editNote: () => {},
@@ -393,6 +393,9 @@
         draggable
     >
         <div class="modal-form">
+            {#if bookmarksStore.failed}
+                <p role="alert">{m.reading_annotations_error()}</p>
+            {/if}
             <Input
                 id="edit-bookmark-name-input"
                 attachment={focusBookmarkName}
@@ -428,13 +431,15 @@
     <DeleteConfirmModal
         message={m.delete_bookmark_confirm()}
         onConfirm={async () => {
-            if (bookmarkToDeleteId) {
-                await executeViewerBookmarkDelete({
-                    bookmarkId: bookmarkToDeleteId,
-                    confirmed: true,
-                })
-            }
-            bookmarkToDeleteId = null
+            const bookmarkId = bookmarkToDeleteId
+            if (!bookmarkId) return
+            const result = await executeViewerBookmarkDelete({ bookmarkId, confirmed: true })
+            if (
+                result.status === "executed" &&
+                !bookmarksStore.failed &&
+                bookmarkToDeleteId === bookmarkId
+            )
+                bookmarkToDeleteId = null
         }}
         onCancel={() => {
             bookmarkToDeleteId = null

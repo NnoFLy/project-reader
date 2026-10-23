@@ -16,7 +16,11 @@ import type {
 } from "./libraryStore.types"
 import { FolderNameError } from "./libraryStore.types"
 import { LibraryStorage } from "./libraryStorage"
-import type { ExtensionStorage, StorageNamespace } from "$lib/extension-api"
+import type {
+    ExtensionStorage,
+    StorageNamespace,
+    ReadingSummaryCapability,
+} from "$lib/extension-api"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "$lib/core/files"
 import type {
     DocumentSource,
@@ -319,6 +323,7 @@ export class VFSStore {
         initialNodes: VFSNodes = {},
         storage?: StorageNamespace,
         private readonly documentService = installedDocumentService,
+        private readonly readSummary?: ReadingSummaryCapability["getSummary"],
     ) {
         this.db = new LibraryStorage(storage ?? new MemoryLibraryStorageNamespace())
         this.disposalPromise = new Promise<void>((resolve) => {
@@ -463,37 +468,15 @@ export class VFSStore {
         })
     }
 
+    async getReadingSummary(documentId: string) {
+        if (this.disposed) return null
+        const summary = await this.readSummary?.(documentId)
+        return this.disposed ? null : (summary ?? null)
+    }
+
     /** Viewer-scoped metadata access; the database tables stay private to the library. */
     getIndexedTexts(bookId: string): Promise<IndexedText[]> {
         return this.db.indexedTexts.getByBookId(bookId)
-    }
-
-    getUserNotes(bookId: string): Promise<import("./libraryStore.types").UserNote[]> {
-        return this.db.userNotes.getByBookId(bookId)
-    }
-
-    getBookmarks(): Promise<import("./libraryStore.types").Bookmark[]> {
-        return this.db.bookmarks.getAll()
-    }
-
-    putUserNote(note: import("./libraryStore.types").UserNote): Promise<string> {
-        return this.db.userNotes.put(note)
-    }
-
-    deleteUserNote(id: string): Promise<void> {
-        return this.db.userNotes.delete(id)
-    }
-
-    putBookmark(bookmark: import("./libraryStore.types").Bookmark): Promise<string> {
-        return this.db.bookmarks.put(bookmark)
-    }
-
-    deleteBookmark(id: string): Promise<void> {
-        return this.db.bookmarks.delete(id)
-    }
-
-    deleteBookmarks(ids: string[]): Promise<void> {
-        return this.db.bookmarks.bulkDelete(ids)
     }
 
     pushForwardHistory(id: string | null) {
@@ -613,15 +596,7 @@ export class VFSStore {
         try {
             await this.db.transaction(
                 "rw",
-                [
-                    "books",
-                    "folders",
-                    "previews",
-                    "fileContents",
-                    "indexedTexts",
-                    "userNotes",
-                    "bookmarks",
-                ],
+                ["books", "folders", "previews", "fileContents", "indexedTexts"],
                 async () => {
                     const persisted = await this.db.files.get(id)
                     if (!persisted) return
@@ -629,8 +604,6 @@ export class VFSStore {
                     await this.db.previews.delete(id)
                     await this.db.fileContents.delete(id)
                     await this.db.indexedTexts.deleteByBookId(id)
-                    await this.db.userNotes.deleteByBookId(id)
-                    await this.db.bookmarks.deleteByBookId(id)
                     if (persisted.parentId !== null) {
                         const parent = await this.db.folders.get(persisted.parentId)
                         if (parent) {
@@ -2549,15 +2522,7 @@ export class VFSStore {
             // PHASE 4 OPTIMIZATION: Use bulkDelete for efficient batch removal
             await this.db.transaction(
                 "rw",
-                [
-                    "books",
-                    "folders",
-                    "previews",
-                    "fileContents",
-                    "indexedTexts",
-                    "userNotes",
-                    "bookmarks",
-                ],
+                ["books", "folders", "previews", "fileContents", "indexedTexts"],
                 async () => {
                     this.throwIfDisposed()
                     assertRelinkEpoch()
@@ -2654,10 +2619,6 @@ export class VFSStore {
                         this.throwIfDisposed()
                         for (const fileId of fileIds) {
                             await this.db.indexedTexts.deleteByBookId(fileId)
-                            this.throwIfDisposed()
-                            await this.db.userNotes.deleteByBookId(fileId)
-                            this.throwIfDisposed()
-                            await this.db.bookmarks.deleteByBookId(fileId)
                             this.throwIfDisposed()
                         }
                     }
@@ -3595,8 +3556,9 @@ export let libraryStore = vfsStore
 export function configureLibraryStore(
     storage: StorageNamespace,
     service?: VfsDocumentService,
+    readSummary?: ReadingSummaryCapability["getSummary"],
 ): VFSStore {
-    vfsStore = new VFSStore({}, storage, service)
+    vfsStore = new VFSStore({}, storage, service, readSummary)
     libraryStore = vfsStore
     return vfsStore
 }

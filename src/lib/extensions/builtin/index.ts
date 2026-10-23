@@ -35,9 +35,24 @@ const readonlyRecord = <T extends object>(record: T): Readonly<T> =>
 // The built-in library owns file handles, object URLs, and relink state. Expose only the
 // viewer's read capability and its explicitly typed mutation operations.
 function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestState) {
+    // Reading operations capture immutable node identity. Repeated capability reads must
+    // retain each unchanged node, not create a fresh identity on every access.
+    const nodeSnapshots = new Map<string, { source: string; node: unknown }>()
+    const snapshotNodes = () =>
+        Object.fromEntries(
+            Object.entries(store.nodes).map(([id, node]) => {
+                const source = JSON.stringify(node)
+                let snapshot = nodeSnapshots.get(id)
+                if (!snapshot || snapshot.source !== source) {
+                    snapshot = { source, node: immutableSnapshot(node) }
+                    nodeSnapshots.set(id, snapshot)
+                }
+                return [id, snapshot.node]
+            }),
+        )
     const builtinViewerLibraryCapability: ViewerLibraryCapability = {
         get nodes() {
-            return readonlyRecord(store.nodes) as ViewerLibraryCapability["nodes"]
+            return snapshotNodes() as ViewerLibraryCapability["nodes"]
         },
         get allFiles() {
             return immutableSnapshot(store.allFiles) as ViewerLibraryCapability["allFiles"]
@@ -62,8 +77,6 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
         onNodeInvalidated: (listener) => store.onNodeInvalidated(listener),
         isNodeDeleting: (id) => store.isNodeDeleting(id),
         getIndexedTexts: (bookId) => store.getIndexedTexts(bookId),
-        getUserNotes: (bookId) => store.getUserNotes(bookId),
-        getBookmarks: () => store.getBookmarks(),
         getPreviewUrl: (id) => store.getPreviewUrl(id),
         getFolderPath: (id) => store.getFolderPath(id),
     }
@@ -77,11 +90,6 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
         serializeMetadataMutation: (mutation) => store.serializeMetadataMutation(mutation),
         saveIndexedTexts: (id, records, generation) =>
             store.saveIndexedTexts(id, records as never[], generation),
-        putUserNote: (note) => store.putUserNote(note),
-        deleteUserNote: (id) => store.deleteUserNote(id),
-        putBookmark: (bookmark) => store.putBookmark(bookmark),
-        deleteBookmark: (id) => store.deleteBookmark(id),
-        deleteBookmarks: (ids) => store.deleteBookmarks(ids),
         revokePreviewUrl: (id) => store.revokePreviewUrl(id),
         invalidatePreview: (id) => store.invalidatePreview(id),
         updateFile: (id, changes, ...options) =>
@@ -97,7 +105,7 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
 
     const builtinViewerFileCapability: ViewerFileCapability = {
         get nodes() {
-            return readonlyRecord(store.nodes) as ViewerFileCapability["nodes"]
+            return snapshotNodes() as ViewerFileCapability["nodes"]
         },
         get isLockedMap() {
             return readonlyRecord(store.isLockedMap) as ViewerFileCapability["isLockedMap"]

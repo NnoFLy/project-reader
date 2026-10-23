@@ -18,28 +18,35 @@
         executeViewerNoteDelete,
     } from "../commands/viewerMutationExecution"
 
-    interface Props {
-        currentBookId: string | null
-        currentPage: number
-    }
-
-    let { currentBookId, currentPage }: Props = $props()
     let bookmarkAddScope = $state.raw<CommandScope>()
 
     type BookmarkAddPayload = ViewerBookmarkAddPayload
     function getBookmarkAddPayload(): BookmarkAddPayload {
         return {
-            page: currentPage,
-            name: viewerUIStore.bookmarkName.trim() || `${m.page()} ${currentPage}`,
+            page: viewerUIStore.bookmarkPage,
+            name: viewerUIStore.bookmarkName.trim() || `${m.page()} ${viewerUIStore.bookmarkPage}`,
         }
     }
 
     async function handleConfirmAddBookmark(payload: BookmarkAddPayload) {
-        if (!currentBookId) return
-        const page = payload.page ?? currentPage
+        const documentId = viewerUIStore.bookmarkDocumentId
+        if (!documentId || viewerUIStore.bookmarkSaving) return
+        const requestId = viewerUIStore.bookmarkRequestId
+        const page = payload.page ?? viewerUIStore.bookmarkPage
         const name = payload.name?.trim() || `${m.page()} ${page}`
-        await bookmarksStore.addBookmark(currentBookId, page, name)
-        viewerUIStore.closeBookmarkAddModal()
+        viewerUIStore.bookmarkSaving = true
+        const result = await bookmarksStore.saveBookmark(
+            documentId,
+            page,
+            name,
+            viewerUIStore.bookmarkSaveId,
+        )
+        if (requestId !== viewerUIStore.bookmarkRequestId) return
+        viewerUIStore.bookmarkSaving = false
+        viewerUIStore.bookmarkFailed = !result?.ok
+        if (result?.value && bookmarksStore.bookmarks.some((item) => item.id === result.value?.id))
+            viewerUIStore.bookmarkSaveId = result.value.id
+        if (result?.ok) viewerUIStore.closeBookmarkAddModal()
     }
 
     function focusBookmarkName(input: HTMLInputElement) {
@@ -75,6 +82,7 @@
         editorId={editor.id}
         editorState={editor.note}
         saving={editor.saving}
+        failed={editor.failed}
         onActivate={() => notesStore.activateEditor(editor.id)}
         onChange={(change) => notesStore.updateEditor(editor.id, change)}
         onSave={() => notesStore.saveEditor(editor.id)}
@@ -117,7 +125,11 @@
         draggable
     >
         <div class="modal-form">
+            {#if viewerUIStore.bookmarkFailed}
+                <p role="alert">{m.reading_annotations_error()}</p>
+            {/if}
             <Input
+                disabled={viewerUIStore.bookmarkSaving}
                 id="header-bookmark-name-input"
                 attachment={focusBookmarkName}
                 placeholder={m.bookmark_name_placeholder
@@ -129,8 +141,10 @@
                     if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
                         e.preventDefault()
                         void bookmarkAddScope?.execute("viewer.bookmark.add", {
-                            page: currentPage,
-                            name: viewerUIStore.bookmarkName.trim() || `${m.page()} ${currentPage}`,
+                            page: viewerUIStore.bookmarkPage,
+                            name:
+                                viewerUIStore.bookmarkName.trim() ||
+                                `${m.page()} ${viewerUIStore.bookmarkPage}`,
                         })
                     }
                 }}
@@ -147,10 +161,13 @@
                 </Button>
                 <Button
                     variant="brutalist"
+                    disabled={viewerUIStore.bookmarkSaving}
                     onclick={() =>
                         void bookmarkAddScope?.execute("viewer.bookmark.add", {
-                            page: currentPage,
-                            name: viewerUIStore.bookmarkName.trim() || `${m.page()} ${currentPage}`,
+                            page: viewerUIStore.bookmarkPage,
+                            name:
+                                viewerUIStore.bookmarkName.trim() ||
+                                `${m.page()} ${viewerUIStore.bookmarkPage}`,
                         })}
                 >
                     {m.add_bookmark()}
@@ -170,7 +187,6 @@
                     confirmed: true,
                 })
             }
-            viewerUIStore.bookmarkToDeleteId = null
         }}
         onCancel={() => {
             viewerUIStore.bookmarkToDeleteId = null

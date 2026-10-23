@@ -298,5 +298,6 @@
     "locate_file": "Locate File",
     "relink_warning": "The selected file name \"{newName}\" does not match the original book name \"{originalName}\". Are you sure you want to associate this book with the selected file?",
     "relink_failed": "Failed to relink the file. Please try again.",
-    "delete_higlight_note": "Delete this highlight and note?"
+    "delete_higlight_note": "Delete this highlight and note?",
+    "reading_annotations_error": "Unable to save annotations. Your changes are kept in this window. Try again."
 }

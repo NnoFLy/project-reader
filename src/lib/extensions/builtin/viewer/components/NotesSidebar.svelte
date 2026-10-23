@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
-    const { notes: notesStore } = getViewerRuntimeContext()()
+    const { notes: notesStore, store: viewerStore } = getViewerRuntimeContext()()
     import { viewport } from "$lib/shared/state/viewport.svelte"
     import * as m from "$lib/paraglide/messages"
     import { SidebarFooter, SidebarSearch } from "$lib/shared/ui/sidebar"
@@ -59,6 +59,7 @@
             await tick()
         }
 
+        if (viewerStore.workspace.snapshot.documentId !== note.bookId) return
         void commandsStore.execute("viewer.page.go-to", {
             page: note.pageNumber,
             isJump: true,
@@ -133,8 +134,7 @@
                 viewerUIStore.noteToDeleteId = noteId
                 return
             }
-            await notesStore.deleteNote(noteId)
-            viewerUIStore.noteToDeleteId = null
+            if (await notesStore.deleteNote(noteId)) viewerUIStore.noteToDeleteId = null
         },
     })
 

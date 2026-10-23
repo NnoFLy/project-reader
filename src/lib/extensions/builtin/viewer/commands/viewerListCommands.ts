@@ -55,6 +55,13 @@ export function createViewerListCommands(
                 category: "navigation",
                 palette: false,
                 disabled: options.disabled,
+                // Enter on a focused semantic control belongs to its native action,
+                // not the list's independently selected row.
+                shouldHandleKey: (event) =>
+                    !(
+                        event.target instanceof Element &&
+                        event.target.closest("button, a[href], [role=button]")
+                    ),
                 run: options.select,
             },
             "viewer.list.search": {

@@ -163,6 +163,17 @@ export class ViewerStore {
     private attachLibraryListeners() {
         if (!this.options.library && !isViewerLibraryCapabilityInstalled()) return
         this.vfsUnsubscribers.push(
+            this.files.onNodesDeleting?.((ids) => {
+                for (const id of ids) this.workspace.invalidateAnnotations(id)
+            }) ?? (() => undefined),
+            this.files.onNodeInvalidated?.((id) => this.workspace.invalidateAnnotations(id)) ??
+                (() => undefined),
+            this.files.onContentRestored?.((id) => {
+                if (this.files.nodes[id]?.type === "file" && !this.files.isNodeDeleting(id))
+                    this.workspace.resumeAnnotations(id)
+            }) ?? (() => undefined),
+        )
+        this.vfsUnsubscribers.push(
             this.files.onNodesDeleted?.((ids) => {
                 if (this.book && ids.includes(this.book.id))
                     void this.clearDeletedBook(this.book.id)
@@ -171,7 +182,9 @@ export class ViewerStore {
         this.vfsUnsubscribers.push(
             this.files.onNodeRelinked?.((id) => {
                 const node = this.files.nodes[id]
-                if (!node || node.type !== "file" || this.book?.id !== id) return
+                if (!node || node.type !== "file" || this.files.isNodeDeleting(id)) return
+                this.workspace.resumeAnnotations(id)
+                if (this.book?.id !== id) return
                 void this.workspace.synchronize(true)
             }) ?? (() => undefined),
         )

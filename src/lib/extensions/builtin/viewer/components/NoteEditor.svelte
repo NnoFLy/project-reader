@@ -13,6 +13,7 @@
         editorId,
         editorState,
         saving,
+        failed = false,
         onActivate,
         onChange,
         onSave,
@@ -20,6 +21,7 @@
     }: {
         editorId: string
         saving: boolean
+        failed?: boolean
         onActivate: () => void
         onSave: () => void | Promise<void>
         editorState: {
@@ -102,6 +104,10 @@
         <blockquote class="editor-quote">
             "{editorState.text}"
         </blockquote>
+
+        {#if failed}
+            <p role="alert">{m.reading_annotations_error()}</p>
+        {/if}
 
         <textarea
             disabled={saving}
