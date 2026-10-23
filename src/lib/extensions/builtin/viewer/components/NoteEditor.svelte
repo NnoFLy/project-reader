@@ -14,6 +14,8 @@
         editorState,
         saving,
         failed = false,
+        draft = false,
+        onDiscard,
         onActivate,
         onChange,
         onSave,
@@ -22,6 +24,8 @@
         editorId: string
         saving: boolean
         failed?: boolean
+        draft?: boolean
+        onDiscard?: () => void | Promise<void>
         onActivate: () => void
         onSave: () => void | Promise<void>
         editorState: {
@@ -35,8 +39,8 @@
         onCancel: () => void
     } = $props()
 
-    let isExistingNote = $derived(editorState.id !== undefined)
-    let closeLabel = $derived(isExistingNote ? m.close() : m.cancel())
+    let isExistingNote = $derived(!draft && editorState.id !== undefined)
+    let closeLabel = $derived(m.close())
 
     let closeButtonId = $derived(`${editorId}-close`)
 
@@ -64,7 +68,7 @@
 
 {#snippet header()}
     <div class="editor-header">
-        <h3 class="modal-title">{"id" in editorState ? m.edit_note() : m.add_note()}</h3>
+        <h3 class="modal-title">{isExistingNote ? m.edit_note() : m.add_note()}</h3>
         <div class="header-actions">
             <span class="editor-page">{m.page()} {editorState.pageNumber}</span>
             <Button
@@ -93,7 +97,7 @@
     type="float"
     size="medium"
     placement="center"
-    title={"id" in editorState ? m.edit_note() : m.add_note()}
+    title={isExistingNote ? m.edit_note() : m.add_note()}
     onClose={() => void editorCommandsNode.execute("modal.cancel")}
     {header}
     showCloseButton={false}
@@ -111,6 +115,7 @@
 
         <textarea
             disabled={saving}
+            maxlength={1000000}
             aria-label={m.note_placeholder()}
             class="editor-textarea"
             placeholder={m.note_placeholder()}
@@ -152,16 +157,14 @@
 
     {#snippet footer()}
         <div class="modal-actions editor-actions">
-            {#if !isExistingNote}
+            {#if draft}
                 <Button
                     variant="close"
                     class="editor-btn cancel"
                     disabled={saving}
-                    onclick={() => void editorCommandsNode.execute("modal.cancel")}
-                    aria-label={m.cancel()}
-                    tooltip={`${m.cancel()}${getShortcutHint(editorCommandsNode, "modal.cancel")}`}
+                    onclick={() => void onDiscard?.()}
                 >
-                    {m.cancel()}
+                    {m.discard_draft()}
                 </Button>
             {/if}
             <Button
@@ -348,6 +351,7 @@
 
     .editor-actions {
         display: flex;
+        flex-wrap: wrap;
         justify-content: flex-end;
         gap: 12px;
     }

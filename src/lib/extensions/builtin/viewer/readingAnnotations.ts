@@ -21,6 +21,9 @@ export interface ReadingNote extends ReadingAnnotationBase {
     readonly color: "yellow" | "green" | "blue" | "pink" | "purple"
 }
 
+/** Unfinished work, never counted as a saved note. ID is retained on explicit save. */
+export type ReadingDraft = ReadingNote
+
 export type ReadingNoteInput = Omit<ReadingNote, "id" | "bookId" | "createdAt">
 
 export interface ReadingBookmark extends ReadingAnnotationBase {
@@ -32,6 +35,10 @@ export type ReadingBookmarkInput = Omit<ReadingBookmark, "id" | "bookId" | "crea
 export interface ReadingAnnotations {
     readonly notes: readonly ReadingNote[]
     readonly bookmarks: readonly ReadingBookmark[]
+}
+
+export interface ReadingRecords extends ReadingAnnotations {
+    readonly drafts: readonly ReadingDraft[]
 }
 
 export function isAnnotationId(value: unknown): value is string {
@@ -107,9 +114,11 @@ export function readBookmark(value: unknown, documentId: string): ReadingBookmar
 export function freezeAnnotations(
     notes: readonly ReadingNote[],
     bookmarks: readonly ReadingBookmark[] = [],
-): ReadingAnnotations {
+    drafts: readonly ReadingDraft[] = [],
+): ReadingRecords {
     return Object.freeze({
         notes: Object.freeze([...notes]),
         bookmarks: Object.freeze([...bookmarks]),
+        drafts: Object.freeze([...drafts]),
     })
 }

@@ -267,6 +267,21 @@
 />
 
 <div class="sidebar-content" {@attach trackSelection(selectedIndex, filteredNotes)}>
+    {#if notesStore.drafts.length}
+        <section aria-label={m.note_drafts()}>
+            <h3>{m.note_drafts()}</h3>
+            {#each notesStore.drafts as draft (draft.id)}
+                <button
+                    type="button"
+                    class="draft-entry"
+                    onclick={() => notesStore.showDraft(draft.id)}
+                >
+                    {m.page()}
+                    {draft.pageNumber}: {draft.noteContent || draft.text}
+                </button>
+            {/each}
+        </section>
+    {/if}
     {#if notesStore.notes.length === 0}
         <div class="no-notes">
             {m.no_notes()}
@@ -350,6 +365,18 @@
 {/if}
 
 <style>
+    .draft-entry {
+        display: block;
+        inline-size: 100%;
+        padding: 12px;
+        text-align: start;
+        overflow-wrap: anywhere;
+        color: var(--text-color);
+        background: var(--surface-color);
+        border: 1px solid var(--border-color);
+        cursor: pointer;
+    }
+
     .sidebar-content {
         flex: 1;
         overflow-y: auto;

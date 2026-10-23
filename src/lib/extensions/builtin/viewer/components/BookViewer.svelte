@@ -18,6 +18,7 @@
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
         settings,
+        closing,
         store: viewerStore,
         notes: notesStore,
         bookmarks: bookmarksStore,
@@ -38,6 +39,7 @@
     import ViewerFooter from "./ViewerFooter.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
     import ViewerModals from "./ViewerModals.svelte"
+    import CloseDocumentModal from "./CloseDocumentModal.svelte"
     import { mountViewerUIStore } from "../stores/viewerUIStore.svelte"
 
     const viewerUIStore = mountViewerUIStore()
@@ -109,19 +111,11 @@
         viewer: {
             getCurrentPage: () => viewerStore.currentPage,
             getTotalPages: () => viewerStore.activeTotalPages,
+            getSelectionRevision: () => viewerStore.workspace.selectionRevision,
             goToPage: (pageNumber, options) => viewerStore.goToPage?.(pageNumber, options),
             nextPage: () => nextPage(),
             previousPage: () => prevPage(),
-            close: () => {
-                if (notesStore.editingNote || notesStore.activePopup) {
-                    void notesStore.closeEditor()
-                    notesStore.activePopup = null
-                    return
-                }
-                const book = viewerStore.getCurrentBook()
-                if (book) vfsMutations.pushForwardHistory(book.id)
-                handleClose()
-            },
+            close: () => void closing.close(),
             scroll: (payload, scrollAmount) => {
                 if (!payload) return
                 const pane = getScrollContainer()
@@ -272,8 +266,7 @@
         addNote: () => {
             const selection = notesStore.activeSelection
             if (!selection) return
-            notesStore.openEditor({
-                isNew: true,
+            void notesStore.openDraft({
                 bookId: selection.bookId,
                 pageNumber: selection.pageNumber,
                 start: selection.start,
@@ -296,7 +289,8 @@
             const noteId =
                 payload?.noteId ??
                 notesStore.activePopup?.note.id ??
-                (notesStore.editingNote && "id" in notesStore.editingNote
+                (notesStore.editingNote &&
+                !notesStore.editors.find((editor) => editor.id === notesStore.activeEditorId)?.draft
                     ? notesStore.editingNote.id
                     : undefined)
             if (!noteId) return
@@ -333,7 +327,11 @@
             disabled: () =>
                 !notesStore.activePopup &&
                 !viewerUIStore.noteToDeleteId &&
-                !(notesStore.editingNote && "id" in notesStore.editingNote),
+                !(
+                    notesStore.editingNote &&
+                    !notesStore.editors.find((editor) => editor.id === notesStore.activeEditorId)
+                        ?.draft
+                ),
         },
 
         { ...viewerSettingsCommands.layout, keymap: "shift+l" },
@@ -373,6 +371,7 @@
     let pdf = $state.raw<ViewerPagedDocument | null>(null)
     let reflowDocument = $state.raw<ViewerReflowDocument | null>(null)
     let isLoaded = $state(false)
+    let loadFailed = $state(false)
     let gestureHintDismissed = $state(true)
 
     let lastPageNo = 1
@@ -486,7 +485,8 @@
         if (
             vfsStore.initialized &&
             !viewerStore.getCurrentBook() &&
-            !viewerStore.reading.documentId
+            !viewerStore.reading.documentId &&
+            viewerStore.workspace.selectionRevision === 0
         ) {
             goto(resolve(localizedPath("/") as any))
             return
@@ -516,25 +516,13 @@
         }
     })
 
+    // Hydrate editing state by stable identity, even when no resource can be loaded.
     $effect(() => {
-        if (vfsStore.initialized) {
-            const currentBook = viewerStore.getCurrentBook()
-            if (!currentBook && !viewerStore.reading.documentId) {
-                goto(resolve(localizedPath("/") as any))
-            }
-        }
-    })
-
-    // Load user highlights/notes for book
-    $effect(() => {
-        if (vfsStore.initialized) {
-            const currentBook = viewerStore.getCurrentBook()
-            if (currentBook) {
-                notesStore.loadNotesForBook(currentBook.id)
-            } else {
-                notesStore.clear()
-            }
-        }
+        const documentId = viewerStore.reading.documentId
+        untrack(() => {
+            if (documentId) void notesStore.loadNotesForBook(documentId)
+            else notesStore.clear()
+        })
     })
 
     // Listen to SvelteKit page.state updates to restore navigation positions
@@ -675,6 +663,7 @@
 
         untrack(() => {
             isLoaded = false
+            loadFailed = false
             pdf = null
             reflowDocument = null
             isPageLoading = false
@@ -724,8 +713,8 @@
                         getViewerDocumentErrorDiagnostic(error),
                     )
                     isLoaded = false
-                    await workspace.close()
-                    await goto(resolve(localizedPath("/") as any))
+                    // Parser failure is resource cleanup, not a draft close/discard decision.
+                    loadFailed = true
                 }
             }
             void loadDocument()
@@ -1010,22 +999,6 @@
         }
     })
 
-    function handleClose() {
-        if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur()
-        }
-        const book = viewerStore.getCurrentBook()
-        const node = book ? vfsStore.nodes[book.id] : null
-        const parentId = node ? node.parentId : null
-
-        if (parentId) {
-            const folderPath = vfsStore.getFolderPath(parentId)
-            goto(resolve((localizedPath("/") + `?folder=${encodeURIComponent(folderPath)}`) as any))
-        } else {
-            goto(resolve(localizedPath("/") as any))
-        }
-    }
-
     function getPageSliderTarget(direction: SliderDirection) {
         return getPageTarget(viewerStore.currentPage, totalPages, viewerStore.layout, direction)
     }
@@ -1180,13 +1153,24 @@
                 ? "The saved document reference is absent or has been deleted. Choose another document from Library."
                 : "Your reading position is retained. Retry access or relink the file in Library."}
         </p>
+        {#if notesStore.drafts.length}
+            <section aria-label={m.note_drafts()}>
+                <h2>{m.note_drafts()}</h2>
+                {#each notesStore.drafts as draft (draft.id)}
+                    <Button onclick={() => notesStore.showDraft(draft.id)}>
+                        {m.page()}
+                        {draft.pageNumber}: {draft.noteContent || draft.text}
+                    </Button>
+                {/each}
+            </section>
+        {/if}
         <div class="reading-access-actions">
             <Button onclick={() => void viewerStore.workspace.retry()}>Retry</Button>
             {#if viewerStore.reading.status === "unavailable"}
                 <Button onclick={() => viewerStore.workspace.requestRelink()}>Relink file</Button>
             {/if}
             <Button onclick={() => void goto(resolve(localizedPath("/") as any))}>Library</Button>
-            <Button onclick={() => void viewerStore.workspace.close()}>Close document</Button>
+            <Button onclick={() => void closing.close()}>{m.close_document()}</Button>
         </div>
     </section>
 {:else if viewerStore.getCurrentBook()}
@@ -1217,7 +1201,15 @@
                 >
                     {#if !isLoaded}
                         <div class="loading-state">
-                            <Spinner variant="dots" label={m.loading_doc()} />
+                            {#if loadFailed}
+                                <p role="alert">{m.reading_document_load_error()}</p>
+                                <Button
+                                    onclick={() => void goto(resolve(localizedPath("/") as any))}
+                                    >{m.library()}</Button
+                                >
+                            {:else}
+                                <Spinner variant="dots" label={m.loading_doc()} />
+                            {/if}
                         </div>
                     {:else}
                         {#if sidebars.left}
@@ -1525,9 +1517,15 @@
             {#if notesStore.failed || bookmarksStore.failed}
                 <p role="alert">{m.reading_annotations_error()}</p>
             {/if}
-            <ViewerModals />
         </div>
     </div>
+{/if}
+
+<ViewerModals />
+{#if closing.token}
+    <CloseDocumentModal {closing} />
+{:else if closing.failed}
+    <p role="alert">{m.reading_annotations_error()}</p>
 {/if}
 
 <style>

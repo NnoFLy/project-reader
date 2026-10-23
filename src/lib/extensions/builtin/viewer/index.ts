@@ -147,6 +147,8 @@ export async function activateViewer(
     await bookmarksStore.loadAllBookmarks()
     const openCommand = createViewerOpenCommand({
         workspace: store.workspace,
+        selectionStarted: () => runtime.closing.selectionStarted(),
+        settleCloseNavigation: () => runtime.closing.settleNavigation(),
         clearForwardHistory: () => fileCapability?.clearForwardHistory(),
         executeCommand: (commandId, payload) => context.commands.execute(commandId, payload),
         onFileAccessFailure: () => {

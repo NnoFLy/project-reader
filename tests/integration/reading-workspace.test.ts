@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { ViewerCloseController } from "../../src/lib/extensions/builtin/viewer/viewerClose.svelte"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { Blob as NodeBlob } from "node:buffer"
@@ -49,7 +50,7 @@ vi.mock("$app/state", () => ({
 vi.mock("$app/navigation", async (importOriginal) => ({
     ...(await importOriginal<typeof import("$app/navigation")>()),
     pushState: vi.fn(),
-    goto: vi.fn(),
+    goto: vi.fn(async () => undefined),
     replaceState: vi.fn(),
 }))
 
@@ -313,6 +314,7 @@ describe("Reading workspace host lifetime", () => {
             expect(store.scale).toBe(1.25)
             expect(store.layout).toBe("scroll")
             const runtime: ViewerRuntime = {
+                closing: new ViewerCloseController(store),
                 store,
                 notes: notesStore,
                 bookmarks: bookmarksStore,
@@ -382,6 +384,7 @@ describe("Reading workspace host lifetime", () => {
                     await otherStore.workspace.open("a")
                     otherSettings = mount(
                         settingsFor({
+                            closing: new ViewerCloseController(otherStore),
                             store: otherStore,
                             notes: notesStore,
                             bookmarks: bookmarksStore,
@@ -717,6 +720,7 @@ describe("Reading workspace host lifetime", () => {
         const host = createBuiltinHost({ storage: backend })
         await host.start()
         const runtime: ViewerRuntime = {
+            closing: new ViewerCloseController(viewerStore),
             store: viewerStore,
             notes: notesStore,
             bookmarks: bookmarksStore,
@@ -736,7 +740,7 @@ describe("Reading workspace host lifetime", () => {
             expect(target.textContent).not.toContain(id)
             expect(runtime.store.workspace.snapshot.documentId).toBe(id)
             const close = [...target.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-                button.textContent?.includes("Close document"),
+                button.textContent?.includes(m.close_document()),
             )!
             close.click()
             await vi.waitFor(() => expect(runtime.store.workspace.snapshot.documentId).toBeNull())
@@ -817,8 +821,8 @@ describe("Reading workspace host lifetime", () => {
                 const document = await store.workspace.loadDocument()
                 if (document?.kind !== "reflowable") throw new Error("Expected a reflowable reader")
                 const notes = notesStore
-                notes.openEditor({
-                    isNew: true,
+                await notes.loadNotesForBook("book")
+                await notes.openDraft({
                     bookId: "book",
                     pageNumber: 1,
                     start: 0,
@@ -828,6 +832,7 @@ describe("Reading workspace host lifetime", () => {
                     noteContent: title,
                 })
                 const runtime: ViewerRuntime = {
+                    closing: new ViewerCloseController(store),
                     store,
                     notes,
                     bookmarks: bookmarksStore,

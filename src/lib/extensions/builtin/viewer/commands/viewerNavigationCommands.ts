@@ -6,6 +6,7 @@ import type { ViewerPageGoToPayload, ViewerScrollPayload } from "./viewerCommand
 import * as m from "$lib/paraglide/messages"
 
 export interface ViewerNavigationPort {
+    getSelectionRevision(): number
     getCurrentPage(): number
     getTotalPages(): number
     goToPage(page: number, options: { isJump: boolean }): void
@@ -50,6 +51,7 @@ export function createViewerNavigationCommands(dependencies: {
             category: "menu",
             preventDefault: true,
             run: async (payload: ViewerPageGoToPayload | undefined) => {
+                const selectionRevision = viewer.getSelectionRevision()
                 let page = payload?.page
                 const totalPages = viewer.getTotalPages()
                 if (page === undefined) {
@@ -71,7 +73,12 @@ export function createViewerNavigationCommands(dependencies: {
                         stopWatchingScope()
                     }
                 }
-                if (page === undefined || scope.isDestroyed) return
+                if (
+                    page === undefined ||
+                    scope.isDestroyed ||
+                    viewer.getSelectionRevision() !== selectionRevision
+                )
+                    return
                 const clampedPage = Math.min(Math.max(1, page), Math.max(1, totalPages))
                 viewer.goToPage(clampedPage, { isJump: payload?.isJump ?? true })
             },

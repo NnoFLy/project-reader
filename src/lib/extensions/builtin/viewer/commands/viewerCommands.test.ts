@@ -21,6 +21,7 @@ function promptService(): PromptService & { snapshot: PromptSnapshot | null } {
 
 function navigation(prompt = promptService()) {
     const viewer = {
+        getSelectionRevision: vi.fn(() => 1),
         getCurrentPage: vi.fn(() => 4),
         getTotalPages: vi.fn(() => 20),
         goToPage: vi.fn(),

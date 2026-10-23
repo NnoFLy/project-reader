@@ -46,8 +46,7 @@ describe("Reading annotation host integration", () => {
         const first = await start()
         try {
             await first.notes.loadNotesForBook("a")
-            const editor = first.notes.openEditor({
-                isNew: true,
+            const editor = await first.notes.openDraft({
                 bookId: "a",
                 pageNumber: 2,
                 start: 0,

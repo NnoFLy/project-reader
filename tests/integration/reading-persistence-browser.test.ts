@@ -469,6 +469,289 @@ describe("Reading workspace browser persistence", () => {
         }
     }, 120000)
 
+    it.each([1280, 390])(
+        "recovers independent drafts on actual reload and offers accessible close choices at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            const enter = async () => {
+                await page.call("Input.dispatchKeyEvent", {
+                    type: "keyDown",
+                    key: "Enter",
+                    code: "Enter",
+                    windowsVirtualKeyCode: 13,
+                    text: "\r",
+                })
+                await page.call("Input.dispatchKeyEvent", {
+                    type: "keyUp",
+                    key: "Enter",
+                    code: "Enter",
+                    windowsVirtualKeyCode: 13,
+                })
+            }
+            const choose = async (label: string) => {
+                await page.waitFor(
+                    "!!document.activeElement?.closest('[aria-labelledby=reading-close-decision-title]')",
+                )
+                await page.evaluate(
+                    `Array.from(document.querySelectorAll('[aria-labelledby=reading-close-decision-title] button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).focus()`,
+                )
+                await enter()
+            }
+            try {
+                await page.call("Emulation.setDeviceMetricsOverride", {
+                    width,
+                    height: 844,
+                    deviceScaleFactor: 1,
+                    mobile: width < 500,
+                })
+                await page.call("Page.navigate", { url: `${origin}/en` })
+                await bind(page)
+                const ids = (await page.evaluate(`(async () => {
+                const results = await window.library.importFiles(['draft-A-${width}', 'draft-B-${width}'].map(name => ({name: name + '.pdf', source: new File([${JSON.stringify(pdf)}], name + '.pdf', {type:'application/pdf'})})), null);
+                await window.command('viewer.open', {bookId: results[0].id});
+                return results.map(result => result.id);
+            })()`)) as string[]
+                await page.waitFor(
+                    "window.reader.totalPages === 8 && !!document.querySelector('.fullscreen-viewer')",
+                )
+                // Use the UI adapter, not storage fixtures, to create distinct unfinished work.
+                await page.evaluate(`(async () => {
+                await window.notes.openDraft({bookId:${JSON.stringify(ids[0])}, pageNumber:1, start:0, end:7, text:'<img src=x onerror=alert(1)> passage', noteContent:'First unfinished', color:'blue'});
+                await window.notes.openDraft({bookId:${JSON.stringify(ids[0])}, pageNumber:2, start:8, end:14, text:'Other passage', noteContent:'Second unfinished', color:'purple'});
+                await window.command('viewer.open', {bookId:${JSON.stringify(ids[1])}});
+            })()`)
+                await page.waitFor("window.notes.editors.length === 0")
+                await page.evaluate(
+                    `window.notes.openDraft({bookId:${JSON.stringify(ids[1])}, pageNumber:3, start:0, end:1, text:'B', noteContent:'Only B', color:'pink'})`,
+                )
+                await page.waitFor("document.querySelectorAll('textarea').length === 1")
+                expect(
+                    await page.evaluate(
+                        "Array.from(document.querySelectorAll('textarea')).map(node => node.value)",
+                    ),
+                ).toEqual(["Only B"])
+                await page.evaluate(
+                    `window.command('viewer.open', {bookId:${JSON.stringify(ids[0])}})`,
+                )
+                await page.waitFor("document.querySelectorAll('textarea').length === 2")
+                await page.evaluate("window.reader.workspace.flush()")
+                const before = await page.evaluate("performance.timeOrigin")
+                await page.call("Page.reload")
+                await page.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
+                await bind(page)
+                await page.waitFor("document.querySelectorAll('textarea').length === 2")
+                expect(
+                    await page.evaluate(
+                        "Array.from(document.querySelectorAll('textarea')).map(node => node.value)",
+                    ),
+                ).toEqual(["First unfinished", "Second unfinished"])
+                expect(
+                    await page.evaluate(
+                        "window.notes.drafts.map(draft => [draft.text, draft.color])",
+                    ),
+                ).toEqual([
+                    ["<img src=x onerror=alert(1)> passage", "blue"],
+                    ["Other passage", "purple"],
+                ])
+                expect(await page.evaluate("window.notes.notes.length")).toBe(0)
+                expect(
+                    await page.evaluate("document.querySelector('[role=dialog] img') === null"),
+                ).toBe(true)
+                await page.evaluate("window.ui.execute('viewer.close')")
+                await page.waitFor(
+                    "!!document.activeElement?.closest('[aria-labelledby=reading-close-decision-title]')",
+                )
+                expect(
+                    await page.evaluate(`(() => {
+                const dialog = document.querySelector('[aria-labelledby=reading-close-decision-title]');
+                const buttons = Array.from(dialog.querySelectorAll('button'));
+                return dialog.getAttribute('role') === 'dialog' && buttons.length === 3 && buttons.every(button => { const rect = button.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1 && rect.height >= 30 });
+            })()`),
+                ).toBe(true)
+                await choose("Cancel")
+                await page.waitFor(
+                    "!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
+                )
+                expect(await page.evaluate(snapshot)).toMatchObject({ documentId: ids[0] })
+                expect(await page.evaluate("document.querySelectorAll('textarea').length")).toBe(2)
+                // Header close is the same decision, even while draft editors are open.
+                await page.evaluate(
+                    "document.querySelector('[aria-label=\"Close document\"]').click()",
+                )
+                await page.waitFor(
+                    "!!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
+                )
+                await choose("Save")
+                await page.waitFor(
+                    "location.pathname === '/en' && !document.querySelector('.fullscreen-viewer')",
+                )
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.annotations(${JSON.stringify(ids[0])}).notes.map(note => [note.noteContent,note.association.verification])`,
+                    ),
+                ).toEqual([
+                    ["First unfinished", "unverified"],
+                    ["Second unfinished", "unverified"],
+                ])
+                await page.evaluate(
+                    `window.command('viewer.open', {bookId:${JSON.stringify(ids[1])}})`,
+                )
+                await page.waitFor("document.querySelector('textarea')?.value === 'Only B'")
+                await page.evaluate("window.ui.execute('viewer.close')")
+                await page.waitFor(
+                    "!!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
+                )
+                await page.evaluate(`(async () => {
+                const { IndexedDBStorageBackend } = await import('/src/lib/core/storage/index.ts');
+                const set = IndexedDBStorageBackend.prototype.set;
+                let fail = true;
+                IndexedDBStorageBackend.prototype.set = async function(key, value) {
+                    if (fail && key.includes(':reading-v1-annotations-')) { fail = false; throw new Error('private close failure'); }
+                    return set.call(this, key, value);
+                };
+            })()`)
+                await choose("Save")
+                await page.waitFor(
+                    "!!document.querySelector('[aria-labelledby=reading-close-decision-title] [role=alert]')",
+                )
+                expect(await page.evaluate("window.reader.workspace.snapshot.documentId")).toBe(
+                    ids[1],
+                )
+                expect(await page.evaluate("document.querySelector('textarea').value")).toBe(
+                    "Only B",
+                )
+                expect(await page.evaluate("document.body.textContent")).not.toContain(
+                    "private close failure",
+                )
+                await choose("Discard")
+                await page.waitFor(
+                    "location.pathname === '/en' && !document.querySelector('.fullscreen-viewer')",
+                )
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.annotations(${JSON.stringify(ids[1])})`,
+                    ),
+                ).toMatchObject({ drafts: [], notes: [] })
+                await page.evaluate(
+                    `window.command('viewer.open', {bookId:${JSON.stringify(ids[1])}})`,
+                )
+                const discarded = await page.evaluate("performance.timeOrigin")
+                await page.call("Page.reload")
+                await page.waitFor(`${ready} && performance.timeOrigin !== ${discarded}`)
+                await bind(page)
+                await page.waitFor("window.reader.totalPages === 8")
+                expect(await page.evaluate("document.querySelectorAll('textarea').length")).toBe(0)
+                expect(
+                    await page.evaluate("document.querySelectorAll('.fullscreen-viewer').length"),
+                ).toBe(1)
+                await page.evaluate("document.activeElement?.blur()")
+                await page.call("Input.dispatchKeyEvent", {
+                    type: "keyDown",
+                    key: "q",
+                    code: "KeyQ",
+                    windowsVirtualKeyCode: 81,
+                    text: "q",
+                })
+                await page.call("Input.dispatchKeyEvent", {
+                    type: "keyUp",
+                    key: "q",
+                    code: "KeyQ",
+                    windowsVirtualKeyCode: 81,
+                })
+                await page.waitFor(
+                    "location.pathname === '/en' && window.reader.workspace.snapshot.documentId === null",
+                )
+            } finally {
+                await browser!.closeTarget(page.targetId)
+            }
+        },
+        120000,
+    )
+
+    it("presents recovered drafts when the restored resource is unavailable and hiding never discards them", async () => {
+        const page = await browser!.page()
+        try {
+            await page.call("Page.navigate", { url: `${origin}/en` })
+            await bind(page)
+            const id = await page.evaluate(`(async () => {
+                const [result] = await window.library.importFiles([{name:'unavailable-draft.pdf', source:new File([${JSON.stringify(pdf)}], 'unavailable-draft.pdf', {type:'application/pdf'})}], null);
+                await window.command('viewer.open', {bookId:result.id});
+                return result.id;
+            })()`)
+            await page.waitFor("window.reader.totalPages === 8")
+            await page.evaluate(
+                `window.notes.openDraft({bookId:${JSON.stringify(id)},pageNumber:2,start:0,end:7,text:'Retained passage',noteContent:'Unloaded unfinished',color:'green'})`,
+            )
+            // Corrupt only this imported fixture's bytes. The real format adapter and
+            // PDF.js must fail on reload; no project document service is replaced.
+            await page.evaluate(`new Promise((resolve, reject) => {
+                const request = indexedDB.open('vfs-extension-storage', 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    const database = request.result;
+                    const transaction = database.transaction('values', 'readwrite');
+                    transaction.objectStore('values').put({
+                        key: 'extension:builtin.library:library:fileContents.' + ${JSON.stringify(id)},
+                        value: {id: ${JSON.stringify(id)}, file: new Blob(['%PDF-1.4\\nprivate parser failure\\n%%EOF'], {type: 'application/pdf'})}
+                    });
+                    transaction.oncomplete = () => { database.close(); resolve(true); };
+                    transaction.onabort = () => { database.close(); reject(transaction.error); };
+                };
+            })`)
+            const parserReload = await page.evaluate("performance.timeOrigin")
+            await page.call("Page.reload")
+            await page.waitFor(`${ready} && performance.timeOrigin !== ${parserReload}`)
+            await bind(page)
+            await page.waitFor(
+                "document.querySelector('[role=alert]')?.textContent.includes('Unable to load the document') && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+            )
+            expect(await page.evaluate("window.reader.workspace.snapshot.documentId")).toBe(id)
+            expect(await page.evaluate("document.body.textContent")).not.toContain(
+                "private parser failure",
+            )
+            expect(await page.evaluate("document.body.textContent")).not.toContain(
+                "Invalid PDF structure",
+            )
+            await page.evaluate(`new Promise((resolve,reject) => {
+                const request=indexedDB.open('vfs-extension-storage',1);
+                request.onsuccess=()=>{const db=request.result;const transaction=db.transaction('values','readwrite');transaction.objectStore('values').delete('extension:builtin.library:library:fileContents.'+${JSON.stringify(id)});transaction.oncomplete=()=>{db.close();resolve(true)};transaction.onabort=()=>reject(transaction.error)};
+            })`)
+            const before = await page.evaluate("performance.timeOrigin")
+            await page.call("Page.reload")
+            await page.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
+            await bind(page)
+            await page.waitFor(
+                "window.reader.workspace.snapshot.status === 'unavailable' && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+            )
+            expect(await page.evaluate("window.notes.notes.length")).toBe(0)
+            await page.evaluate(
+                "document.querySelector('[role=dialog] [aria-label=Close]').click()",
+            )
+            await page.waitFor("!document.querySelector('textarea')")
+            expect(await page.evaluate("window.notes.drafts.length")).toBe(1)
+            await page.evaluate(
+                "Array.from(document.querySelectorAll('.reading-access-state button')).find(button => button.textContent.includes('Unloaded unfinished')).click()",
+            )
+            await page.waitFor(
+                "document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+            )
+            await page.evaluate("window.ui.execute('viewer.close')")
+            await page.waitFor(
+                "!!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
+            )
+            await page.evaluate("document.querySelector('#reading-close-cancel').click()")
+            await page.waitFor(
+                "!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
+            )
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                documentId: id,
+                status: "unavailable",
+            })
+        } finally {
+            await browser!.closeTarget(page.targetId)
+        }
+    }, 90000)
+
     it("restores a negative page-relative position produced by native viewport scrolling after reload", async () => {
         const page = await browser!.page()
         try {

@@ -1,6 +1,10 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
-    const { notes: notesStore, bookmarks: bookmarksStore } = getViewerRuntimeContext()()
+    const {
+        notes: notesStore,
+        bookmarks: bookmarksStore,
+        store: viewerStore,
+    } = getViewerRuntimeContext()()
     const viewerUIStore = useViewerUIStore()
     import * as m from "$lib/paraglide/messages"
     import { useViewerUIStore } from "../stores/viewerUIStore.svelte"
@@ -77,11 +81,13 @@
     />
 {/if}
 
-{#each notesStore.editors as editor (editor.id)}
+{#each notesStore.editors.filter((editor) => editor.note.bookId === viewerStore.reading.documentId) as editor (editor.id)}
     <NoteEditor
         editorId={editor.id}
         editorState={editor.note}
         saving={editor.saving}
+        draft={editor.draft}
+        onDiscard={() => notesStore.discardEditor(editor.id)}
         failed={editor.failed}
         onActivate={() => notesStore.activateEditor(editor.id)}
         onChange={(change) => notesStore.updateEditor(editor.id, change)}
@@ -106,7 +112,7 @@
     />
 {/if}
 
-{#if viewerUIStore.isBookmarkAddModalOpen}
+{#if viewerUIStore.isBookmarkAddModalOpen && viewerUIStore.bookmarkDocumentId === viewerStore.reading.documentId}
     <BookmarkAddKeymaps
         onConfirm={handleConfirmAddBookmark}
         onCancel={() => viewerUIStore.closeBookmarkAddModal()}

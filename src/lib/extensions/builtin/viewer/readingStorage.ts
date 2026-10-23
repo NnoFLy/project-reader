@@ -4,6 +4,8 @@ import {
     readNote,
     readBookmark,
     type ReadingAnnotations,
+    type ReadingDraft,
+    type ReadingRecords,
 } from "./readingAnnotations"
 
 export type ReadingLayout = "single" | "split" | "scroll"
@@ -81,32 +83,45 @@ function documentKey(documentId: string, prefix = DOCUMENT_PREFIX): string {
     return `${prefix}${encoded}`
 }
 
-function readAnnotations(value: unknown, documentId: string): ReadingAnnotations | null {
+function readAnnotations(value: unknown, documentId: string): ReadingRecords | null {
     if (
         !isRecord(value) ||
         !Array.isArray(value.notes) ||
         value.notes.length > 10_000 ||
         !Array.isArray(value.bookmarks) ||
-        value.bookmarks.length > 10_000
+        value.bookmarks.length > 10_000 ||
+        (value.drafts !== undefined &&
+            (!Array.isArray(value.drafts) || value.drafts.length > 10_000))
     )
         return null
     const notes = Array.from(value.notes, (note) => readNote(note, documentId))
+    // #42 envelopes omit drafts. No unsupported legacy records are read or migrated.
+    const drafts = Array.from(value.drafts ?? [], (draft) => readNote(draft, documentId))
     const bookmarks = Array.from(value.bookmarks, (bookmark) => readBookmark(bookmark, documentId))
-    if (!notes.every((note) => note !== null) || !bookmarks.every((bookmark) => bookmark !== null))
+    if (
+        !notes.every((note) => note !== null) ||
+        !bookmarks.every((bookmark) => bookmark !== null) ||
+        !drafts.every((draft) => draft !== null)
+    )
         return null
     if (
         new Set(notes.map((note) => note.id)).size !== notes.length ||
-        new Set(bookmarks.map((bookmark) => bookmark.id)).size !== bookmarks.length
+        new Set(bookmarks.map((bookmark) => bookmark.id)).size !== bookmarks.length ||
+        new Set(drafts.map((draft) => draft.id)).size !== drafts.length
     )
         return null
-    return freezeAnnotations(notes, bookmarks)
+    return freezeAnnotations(notes, bookmarks, drafts)
 }
 
-/** New records only; the injected host namespace owns writer fencing and lifetime. */
+/**
+ * Viewer v1 authoritative envelope: notes, bookmarks, optional drafts (default []).
+ * Drafts use the validated note shape but remain unfinished; one envelope permits
+ * atomic save-to-note + draft removal. The host namespace owns writer fencing.
+ */
 export class ReadingStorage {
     constructor(private readonly storage: StorageNamespace) {}
 
-    async readAnnotations(documentId: string): Promise<ReadingAnnotations> {
+    async readAnnotations(documentId: string): Promise<ReadingRecords> {
         const key = documentKey(documentId, ANNOTATIONS_PREFIX)
         try {
             const value = await this.storage.get<unknown>(key)
@@ -122,7 +137,10 @@ export class ReadingStorage {
         }
     }
 
-    async writeAnnotations(documentId: string, state: ReadingAnnotations): Promise<void> {
+    async writeAnnotations(
+        documentId: string,
+        state: ReadingAnnotations & { readonly drafts?: readonly ReadingDraft[] },
+    ): Promise<void> {
         const key = documentKey(documentId, ANNOTATIONS_PREFIX)
         const validated = readAnnotations(state, documentId)
         if (!validated) throw new ReadingStorageError("reading.storage.invalid-input")

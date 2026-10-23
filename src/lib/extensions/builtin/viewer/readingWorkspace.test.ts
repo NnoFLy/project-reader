@@ -120,6 +120,919 @@ function documentLoader() {
 }
 
 describe("Reading workspace", () => {
+    const sparseDraftRecords: unknown[] = []
+    sparseDraftRecords.length = 1
+
+    it.each(["save", "discard", "cancel"] as const)(
+        "requires an explicit %s close decision and prevents low-level bypass",
+        async (choice) => {
+            const storage = new ReadingStorage(readingNamespace())
+            const { workspace, current } = reader(undefined, undefined, { storage })
+            await workspace.open("first")
+            await workspace.createDraft("first", noteInput())
+            await workspace.close()
+            expect(current()?.id).toBe("first")
+            expect(await workspace.setCurrentBook(null)).toBe(false)
+            const request = await workspace.requestClose()
+            expect(request.status).toBe("confirmation-required")
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            expect((await workspace.resolveClose(request.token, choice)).status).toBe(
+                choice === "cancel" ? "cancelled" : "closed",
+            )
+            expect(workspace.snapshot.documentId).toBe(choice === "cancel" ? "first" : null)
+            expect(workspace.annotations("first").drafts).toHaveLength(choice === "cancel" ? 1 : 0)
+            expect(workspace.annotations("first").notes).toHaveLength(choice === "save" ? 1 : 0)
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            await recovered.restore()
+            await recovered.loadDrafts("first")
+            expect(recovered.snapshot.documentId).toBe(choice === "cancel" ? "first" : null)
+            expect(recovered.annotations("first").drafts).toHaveLength(choice === "cancel" ? 1 : 0)
+            await recovered.dispose()
+        },
+    )
+
+    it.each(["same", "other"] as const)(
+        "supersedes a pending save-close after a newer %s document selection",
+        async (selection) => {
+            const namespace = readingNamespace()
+            const storage = new ReadingStorage(namespace)
+            const workspace = reader(undefined, undefined, { storage }).workspace
+            await workspace.open("first")
+            await workspace.createDraft("first", noteInput())
+            await workspace.createDraft("second", noteInput())
+            const request = await workspace.requestClose()
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            const pending = deferred<void>()
+            const entered = deferred<void>()
+            const set = namespace.set.bind(namespace)
+            let blocked = false
+            namespace.set = async (key, value) => {
+                if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                    blocked = true
+                    entered.resolve()
+                    await pending.promise
+                }
+                await set(key, value)
+            }
+            const closing = workspace.resolveClose(request.token, "save")
+            await entered.promise
+            const id = selection === "same" ? "first" : "second"
+            await workspace.open(id)
+            pending.resolve()
+            expect((await closing).status).toBe("superseded")
+            expect(workspace.snapshot.documentId).toBe(id)
+            expect(workspace.annotations("first").notes).toHaveLength(1)
+            expect(workspace.annotations("first").drafts).toEqual([])
+            expect(workspace.annotations("second").drafts).toHaveLength(1)
+            await workspace.dispose()
+        },
+    )
+
+    it.each(["before", "during"] as const)(
+        "does not drop changed drafts %s close save",
+        async (when) => {
+            const namespace = readingNamespace()
+            const storage = new ReadingStorage(namespace)
+            const workspace = reader(undefined, undefined, { storage }).workspace
+            await workspace.open("first")
+            const created = await workspace.createDraft("first", noteInput())
+            if (!created.ok) throw new Error("Expected draft")
+            const request = await workspace.requestClose()
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            if (when === "before") {
+                await workspace.updateDraft("first", created.value.id, {
+                    noteContent: "Newer",
+                    color: "blue",
+                })
+                expect((await workspace.resolveClose(request.token, "save")).status).toBe("changed")
+            } else {
+                const pending = deferred<void>()
+                const entered = deferred<void>()
+                const set = namespace.set.bind(namespace)
+                let blocked = false
+                namespace.set = async (key, value) => {
+                    if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                        blocked = true
+                        entered.resolve()
+                        await pending.promise
+                    }
+                    await set(key, value)
+                }
+                const closing = workspace.resolveClose(request.token, "save")
+                await entered.promise
+                const editing = workspace.updateDraft("first", created.value.id, {
+                    noteContent: "Newer",
+                    color: "blue",
+                })
+                pending.resolve()
+                expect((await closing).status).toBe("changed")
+                await editing
+            }
+            expect(workspace.snapshot.documentId).toBe("first")
+            expect(workspace.annotations("first").drafts).toMatchObject([
+                { noteContent: "Newer", color: "blue" },
+            ])
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            await recovered.loadDrafts("first")
+            expect(recovered.annotations("first").drafts).toMatchObject([{ noteContent: "Newer" }])
+            await recovered.dispose()
+        },
+    )
+
+    it.each([
+        { drafts: [null] },
+        { drafts: sparseDraftRecords },
+        { drafts: "private" },
+        { drafts: Array.from({ length: 10_001 }) },
+        { draft: { id: "../invalid" } },
+        { draft: { bookId: "second" } },
+        { draft: { start: -1 } },
+        { draft: { end: 3 } },
+        { draft: { pageNumber: Infinity } },
+        { draft: { noteContent: null } },
+        { draft: { text: {} } },
+        { draft: { color: "<script>private</script>" } },
+        { draft: { association: { contentHash: "blob:private", verification: "unverified" } } },
+        { draft: { association: { contentHash: null, verification: "verified" } } },
+        { duplicate: true },
+    ])(
+        "rejects malformed, sparse or untrusted recovered draft records without text feedback (%#)",
+        async (invalid) => {
+            const namespace = readingNamespace()
+            const draft = {
+                ...noteInput(),
+                id: "draft-1",
+                bookId: "first",
+                createdAt: 1,
+                ...invalid.draft,
+            }
+            namespace.get = async <T>(): Promise<T | undefined> =>
+                ({
+                    version: 1,
+                    documentId: "first",
+                    notes: [],
+                    bookmarks: [],
+                    drafts: invalid.duplicate ? [draft, draft] : (invalid.drafts ?? [draft]),
+                }) as T
+            const errors: ReadingStorageError[] = []
+            const workspace = reader(undefined, undefined, {
+                storage: new ReadingStorage(namespace),
+                onStorageError: (error) => errors.push(error),
+            }).workspace
+            expect(await workspace.loadDrafts("first")).toBe(false)
+            expect(workspace.annotations("first")).toMatchObject({
+                loaded: false,
+                drafts: [],
+                error: "reading.storage.read",
+            })
+            expect(errors.map((error) => error.message)).toEqual(["Unable to load reading state"])
+            await workspace.dispose()
+        },
+    )
+
+    it("does not duplicate a promoted note when a committed save reports failure and is retried", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const created = await workspace.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        const set = namespace.set.bind(namespace)
+        namespace.set = async (key, value) => {
+            await set(key, value)
+            throw new Error("private")
+        }
+        expect((await workspace.saveDraft("first", created.value.id)).ok).toBe(false)
+        expect(workspace.annotations("first").drafts).toHaveLength(1)
+        namespace.set = set
+        expect((await workspace.saveDraft("first", created.value.id)).ok).toBe(true)
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toEqual([])
+        expect(recovered.annotations("first").notes).toMatchObject([{ id: created.value.id }])
+        await recovered.dispose()
+    })
+
+    it("does not close after the host revokes write ownership during close persistence", async () => {
+        const lifetime = new AbortController()
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, {
+            storage,
+            writeSignal: lifetime.signal,
+        }).workspace
+        await workspace.open("first")
+        await workspace.flush()
+        const remove = namespace.delete.bind(namespace)
+        namespace.delete = async (key) => {
+            await remove(key)
+            lifetime.abort()
+        }
+        expect((await workspace.requestClose()).status).toBe("failed")
+        expect(workspace.snapshot.documentId).toBe("first")
+        await workspace.dispose()
+    })
+
+    it("recovers only the last successful draft write while retaining failed new drafts in memory", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const persisted = await workspace.createDraft("first", noteInput())
+        if (!persisted.ok) throw new Error("Expected draft")
+        namespace.set = async () => {
+            throw new Error("private")
+        }
+        const unsaved = await workspace.createDraft("first", {
+            ...noteInput(),
+            noteContent: "Only in memory",
+        })
+        expect(unsaved.ok).toBe(false)
+        expect(workspace.annotations("first")).toMatchObject({
+            dirty: true,
+            drafts: [
+                { id: persisted.value.id },
+                { id: unsaved.value?.id, noteContent: "Only in memory" },
+            ],
+        })
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toHaveLength(1)
+        expect(recovered.annotations("first").drafts[0].id).toBe(persisted.value.id)
+        await Promise.all([workspace.dispose(), recovered.dispose()])
+    })
+
+    it("preserves draft memory while the host fences a delayed write after writer abort", async () => {
+        const lifetime = new AbortController()
+        const backend = new MemoryStorageBackend({ signal: lifetime.signal })
+        const namespace = createExtensionStorage(backend, "builtin.viewer").namespace("viewer")
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        namespace.set = async (key, value) => {
+            entered.resolve()
+            await pending.promise
+            await set(key, value)
+        }
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, {
+            storage,
+            writeSignal: lifetime.signal,
+        }).workspace
+        const creating = workspace.createDraft("first", noteInput())
+        await entered.promise
+        lifetime.abort()
+        pending.resolve()
+        expect((await creating).ok).toBe(false)
+        expect(workspace.annotations("first")).toMatchObject({
+            dirty: true,
+            drafts: [{ noteContent: "My note" }],
+        })
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toEqual([])
+        await recovered.dispose()
+    })
+
+    it("keeps the reader open if persisting explicit close fails", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        await workspace.open("first")
+        await workspace.flush()
+        namespace.delete = async () => {
+            throw new Error("private")
+        }
+        expect((await workspace.requestClose()).status).toBe("failed")
+        expect(workspace.snapshot.documentId).toBe("first")
+        await workspace.dispose()
+    })
+
+    it.each(["draft", "selection"] as const)(
+        "rechecks %s changes during the final close write and repairs the persisted selection",
+        async (change) => {
+            const namespace = readingNamespace()
+            const storage = new ReadingStorage(namespace)
+            const workspace = reader(undefined, undefined, { storage }).workspace
+            await workspace.open("first")
+            await workspace.createDraft("first", noteInput())
+            const request = await workspace.requestClose()
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            const pending = deferred<void>()
+            const entered = deferred<void>()
+            const remove = namespace.delete.bind(namespace)
+            namespace.delete = async (key) => {
+                entered.resolve()
+                await pending.promise
+                await remove(key)
+            }
+            const closing = workspace.resolveClose(request.token, "save")
+            await entered.promise
+            const changing =
+                change === "draft"
+                    ? workspace.createDraft("first", { ...noteInput(), noteContent: "New work" })
+                    : workspace.open("second")
+            pending.resolve()
+            expect((await closing).status).toBe(change === "draft" ? "changed" : "superseded")
+            await changing
+            expect(workspace.snapshot.documentId).toBe(change === "draft" ? "first" : "second")
+            await workspace.flush()
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            await recovered.restore()
+            expect(recovered.snapshot.documentId).toBe(change === "draft" ? "first" : "second")
+            await recovered.loadDrafts("first")
+            expect(recovered.annotations("first").drafts).toHaveLength(change === "draft" ? 1 : 0)
+            await recovered.dispose()
+        },
+    )
+
+    it("bounds close persistence, leaves work open and never completes a timed-out close later", async () => {
+        vi.useFakeTimers()
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        try {
+            await workspace.open("first")
+            await workspace.flush()
+            const pending = deferred<void>()
+            const entered = deferred<void>()
+            const remove = namespace.delete.bind(namespace)
+            namespace.delete = async (key) => {
+                entered.resolve()
+                await pending.promise
+                await remove(key)
+            }
+            const closing = workspace.requestClose()
+            await entered.promise
+            await vi.advanceTimersByTimeAsync(250)
+            expect((await closing).status).toBe("failed")
+            expect(workspace.snapshot.documentId).toBe("first")
+            pending.resolve()
+            await vi.advanceTimersByTimeAsync(0)
+            await workspace.flush()
+            expect(workspace.snapshot.documentId).toBe("first")
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            await recovered.restore()
+            expect(recovered.snapshot.documentId).toBe("first")
+            await recovered.dispose()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("preserves independent drafts through every existing saved-note and bookmark mutation", async () => {
+        const storage = new ReadingStorage(readingNamespace())
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        await workspace.createDraft("first", noteInput())
+        const note = await workspace.createNote("first", noteInput())
+        if (!note.ok) throw new Error("Expected note")
+        await workspace.updateNote("first", note.value.id, { noteContent: "Saved", color: "green" })
+        await workspace.deleteNote("first", note.value.id)
+        const bookmark = await workspace.createBookmark("first", {
+            pageNumber: 1,
+            name: "Bookmark",
+            association: noteInput().association,
+        })
+        if (!bookmark.ok) throw new Error("Expected bookmark")
+        await workspace.updateBookmark("first", bookmark.value.id, "Edited")
+        await workspace.deleteBookmark("first", bookmark.value.id)
+        expect(workspace.annotations("first").drafts).toMatchObject([{ noteContent: "My note" }])
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toMatchObject([{ noteContent: "My note" }])
+        await recovered.dispose()
+    })
+
+    it("keeps delayed draft hydration in admission order, captures input and never lets a stale load overwrite discard", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const seed = reader(undefined, undefined, { storage }).workspace
+        const created = await seed.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        await seed.dispose()
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const get = namespace.get.bind(namespace)
+        let blocked = false
+        namespace.get = async <T>(key: string): Promise<T | undefined> => {
+            const value = await get<T>(key)
+            if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            return value
+        }
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const changes = { noteContent: "Earlier", color: "pink" as const }
+        const earlier = workspace.updateDraft("first", created.value.id, changes)
+        await entered.promise
+        changes.noteContent = "Not captured"
+        const later = workspace.updateDraft("first", created.value.id, {
+            noteContent: "Later",
+            color: "blue",
+        })
+        await workspace.open("second")
+        // This independent reader load may publish before the shared mutation hydration.
+        expect(await workspace.loadDrafts("first")).toBe(true)
+        pending.resolve()
+        const [first, last] = await Promise.all([earlier, later])
+        expect(first.value?.noteContent).toBe("Earlier")
+        expect(last.value?.noteContent).toBe("Later")
+        expect(workspace.annotations("first").drafts).toMatchObject([{ noteContent: "Later" }])
+        expect(workspace.annotations("second").drafts).toEqual([])
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toMatchObject([{ noteContent: "Later" }])
+        await recovered.dispose()
+    })
+
+    it("does not let a stale independent draft load restore explicitly discarded work", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const seed = reader(undefined, undefined, { storage }).workspace
+        const created = await seed.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        await seed.dispose()
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const get = namespace.get.bind(namespace)
+        let blocked = false
+        namespace.get = async <T>(key: string): Promise<T | undefined> => {
+            const value = await get<T>(key)
+            if (!blocked) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            return value
+        }
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const loading = workspace.loadDrafts("first")
+        await entered.promise
+        expect((await workspace.discardDraft("first", created.value.id)).ok).toBe(true)
+        pending.resolve()
+        await loading
+        expect(workspace.annotations("first").drafts).toEqual([])
+        await workspace.dispose()
+    })
+
+    it("isolates draft work by owning workspace and fences pending hydration after writer abort", async () => {
+        const storage = new ReadingStorage(readingNamespace())
+        const other = reader(undefined, undefined, {
+            storage: new ReadingStorage(readingNamespace()),
+        }).workspace
+        const seed = reader(undefined, undefined, { storage }).workspace
+        await seed.createDraft("first", noteInput())
+        await other.loadDrafts("first")
+        expect(other.annotations("first").drafts).toEqual([])
+        await seed.dispose()
+        const namespace = readingNamespace()
+        const lifetime = new AbortController()
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        namespace.get = async () => {
+            entered.resolve()
+            await pending.promise
+            return undefined
+        }
+        const workspace = reader(undefined, undefined, {
+            storage: new ReadingStorage(namespace),
+            writeSignal: lifetime.signal,
+        }).workspace
+        const creating = workspace.createDraft("first", noteInput())
+        await entered.promise
+        lifetime.abort()
+        pending.resolve()
+        expect((await creating).ok).toBe(false)
+        expect((await workspace.createDraft("first", noteInput())).ok).toBe(false)
+        expect(workspace.annotations("first").drafts).toEqual([])
+        await Promise.all([workspace.dispose(), other.dispose()])
+    })
+
+    it("does not resurrect a draft when an older write completes after discard", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const created = await workspace.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        let blocked = false
+        namespace.set = async (key, value) => {
+            if (!blocked) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            await set(key, value)
+        }
+        const editing = workspace.updateDraft("first", created.value.id, {
+            noteContent: "Older",
+            color: "blue",
+        })
+        await entered.promise
+        const discarded = workspace.discardDraft("first", created.value.id)
+        await workspace.open("second")
+        pending.resolve()
+        expect((await editing).ok).toBe(true)
+        expect((await discarded).ok).toBe(true)
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toEqual([])
+        await recovered.dispose()
+    })
+
+    it("abandons a pending draft promotion after individual discard without losing other edits", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const saved = await workspace.createNote("first", {
+            ...noteInput(),
+            noteContent: "Existing note",
+        })
+        const abandoned = await workspace.createDraft("first", noteInput())
+        const retained = await workspace.createDraft("first", {
+            ...noteInput(),
+            noteContent: "Retained draft",
+        })
+        if (!saved.ok || !abandoned.ok || !retained.ok) throw new Error("Expected annotations")
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const discardedInMemory = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        let blocked = false
+        namespace.set = async (key, value) => {
+            if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            await set(key, value)
+        }
+        const unsubscribe = workspace.subscribeAnnotations((id, state) => {
+            if (id === "first" && !state.drafts.some((draft) => draft.id === abandoned.value.id))
+                discardedInMemory.resolve()
+        })
+        try {
+            const saving = workspace.saveDraft("first", abandoned.value.id)
+            await entered.promise
+            const discarding = workspace.discardDraft("first", abandoned.value.id)
+            await discardedInMemory.promise
+            const editing = workspace.updateDraft("first", retained.value.id, {
+                noteContent: "Newer draft edit",
+                color: "purple",
+            })
+            const updating = workspace.updateNote("first", saved.value.id, {
+                noteContent: "Newer saved-note edit",
+                color: "blue",
+            })
+            pending.resolve()
+            await saving
+            expect((await discarding).ok).toBe(true)
+            expect((await editing).ok).toBe(true)
+            expect((await updating).ok).toBe(true)
+            const expected = {
+                notes: [
+                    expect.objectContaining({
+                        id: saved.value.id,
+                        noteContent: "Newer saved-note edit",
+                    }),
+                ],
+                drafts: [
+                    expect.objectContaining({
+                        id: retained.value.id,
+                        noteContent: "Newer draft edit",
+                        color: "purple",
+                    }),
+                ],
+            }
+            expect(workspace.annotations("first")).toMatchObject(expected)
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            try {
+                expect(await recovered.loadDrafts("first")).toBe(true)
+                expect(recovered.annotations("first")).toMatchObject(expected)
+            } finally {
+                await recovered.dispose()
+            }
+        } finally {
+            pending.resolve()
+            unsubscribe()
+            await workspace.dispose()
+        }
+    })
+
+    it("abandons a pending draft promotion after close-discard and preserves newer saved-note edits", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        await workspace.open("first")
+        const saved = await workspace.createNote("first", {
+            ...noteInput(),
+            noteContent: "Existing note",
+        })
+        const abandoned = await workspace.createDraft("first", noteInput())
+        if (!saved.ok || !abandoned.ok) throw new Error("Expected annotations")
+        await workspace.flush()
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const discardedInMemory = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        let blocked = false
+        namespace.set = async (key, value) => {
+            if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            await set(key, value)
+        }
+        const unsubscribe = workspace.subscribeAnnotations((id, state) => {
+            if (id === "first" && state.drafts.length === 0) discardedInMemory.resolve()
+        })
+        try {
+            const saving = workspace.saveDraft("first", abandoned.value.id)
+            await entered.promise
+            const request = await workspace.requestClose()
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            const closing = workspace.resolveClose(request.token, "discard")
+            await discardedInMemory.promise
+            const editing = workspace.updateNote("first", saved.value.id, {
+                noteContent: "Newer saved-note edit",
+                color: "blue",
+            })
+            pending.resolve()
+            await saving
+            expect((await closing).status).toBe("closed")
+            expect((await editing).ok).toBe(true)
+            const expected = {
+                notes: [
+                    expect.objectContaining({
+                        id: saved.value.id,
+                        noteContent: "Newer saved-note edit",
+                    }),
+                ],
+                drafts: [],
+            }
+            expect(workspace.snapshot.documentId).toBeNull()
+            expect(workspace.annotations("first")).toMatchObject(expected)
+            await workspace.dispose()
+            const recovered = reader(undefined, undefined, { storage }).workspace
+            try {
+                await recovered.restore()
+                expect(await recovered.loadDrafts("first")).toBe(true)
+                expect(recovered.snapshot.documentId).toBeNull()
+                expect(recovered.annotations("first")).toMatchObject(expected)
+            } finally {
+                await recovered.dispose()
+            }
+        } finally {
+            pending.resolve()
+            unsubscribe()
+            await workspace.dispose()
+        }
+    })
+
+    it("keeps edits made during atomic draft save and merges later notes without duplicating retry identity", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        const created = await workspace.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        const pending = deferred<void>()
+        const entered = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        let blocked = false
+        namespace.set = async (key, value) => {
+            if (!blocked && key.startsWith("reading-v1-annotations-")) {
+                blocked = true
+                entered.resolve()
+                await pending.promise
+            }
+            await set(key, value)
+        }
+        const saving = workspace.saveDraft("first", created.value.id)
+        await entered.promise
+        const editing = workspace.updateDraft("first", created.value.id, {
+            noteContent: "Newer",
+            color: "purple",
+        })
+        const adding = workspace.createNote("first", {
+            ...noteInput(),
+            noteContent: "Separate saved note",
+        })
+        pending.resolve()
+        expect((await saving).ok).toBe(true)
+        expect((await editing).ok).toBe(true)
+        expect((await adding).ok).toBe(true)
+        expect(workspace.annotations("first").drafts).toMatchObject([{ noteContent: "Newer" }])
+        expect((await workspace.saveDraft("first", created.value.id)).ok).toBe(true)
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toEqual([])
+        expect(recovered.annotations("first").notes).toHaveLength(2)
+        expect(recovered.annotations("first").notes).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: created.value.id,
+                    noteContent: "Newer",
+                    color: "purple",
+                }),
+                expect.objectContaining({ noteContent: "Separate saved note" }),
+            ]),
+        )
+        await recovered.dispose()
+    })
+
+    it.each(["save", "discard"] as const)(
+        "keeps the document open on failed close %s and permits an explicit discard retry",
+        async (choice) => {
+            const namespace = readingNamespace()
+            const storage = new ReadingStorage(namespace)
+            const workspace = reader(undefined, undefined, { storage }).workspace
+            await workspace.open("first")
+            await workspace.createDraft("first", noteInput())
+            await workspace.createDraft("second", noteInput())
+            const request = await workspace.requestClose()
+            if (request.status !== "confirmation-required") throw new Error("Expected decision")
+            const set = namespace.set.bind(namespace)
+            namespace.set = async () => {
+                throw new Error("private")
+            }
+            expect((await workspace.resolveClose(request.token, choice)).status).toBe("failed")
+            expect(workspace.snapshot.documentId).toBe("first")
+            expect(workspace.annotations("first").dirty).toBe(true)
+            expect(workspace.annotations("first").drafts).toHaveLength(choice === "save" ? 1 : 0)
+            namespace.set = set
+            const retry = await workspace.requestClose()
+            const result =
+                retry.status === "confirmation-required"
+                    ? await workspace.resolveClose(retry.token, "discard")
+                    : retry
+            expect(result.status).toBe("closed")
+            expect(workspace.annotations("first").drafts).toEqual([])
+            expect(workspace.annotations("second").drafts).toHaveLength(1)
+            await workspace.dispose()
+        },
+    )
+
+    it("does not close a newer document whose selection was already loading when close was requested", async () => {
+        const storage = new ReadingStorage(readingNamespace())
+        const access = fileAccess()
+        const pending = deferred<string>()
+        access.files.getFileUrl = (id) =>
+            id === "second" ? pending.promise : Promise.resolve(`blob:${id}`)
+        const workspace = reader(access.files, undefined, { storage }).workspace
+        await workspace.open("first")
+        await workspace.createDraft("first", noteInput())
+        const opening = workspace.open("second")
+        const request = await workspace.requestClose()
+        if (request.status !== "confirmation-required") throw new Error("Expected decision")
+        pending.resolve("blob:second")
+        await opening
+        expect((await workspace.resolveClose(request.token, "discard")).status).toBe("superseded")
+        expect(workspace.snapshot.documentId).toBe("second")
+        expect(workspace.annotations("first").drafts).toEqual([])
+        await workspace.dispose()
+    })
+
+    it("atomically saves a recovered draft using stable note identity and preserves unverified association on retries", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const seed = reader(undefined, undefined, { storage }).workspace
+        const created = await seed.createDraft("first", {
+            ...noteInput(),
+            association: { contentHash: "a".repeat(64), verification: "unverified" },
+        })
+        if (!created.ok) throw new Error("Expected draft")
+        await seed.dispose()
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        await workspace.loadDrafts("first")
+        const set = namespace.set.bind(namespace)
+        namespace.set = async () => {
+            throw new Error("private")
+        }
+        expect((await workspace.saveDraft("first", created.value.id)).ok).toBe(false)
+        expect(workspace.annotations("first").drafts).toHaveLength(1)
+        expect(workspace.annotations("first").notes).toHaveLength(0)
+        namespace.set = set
+        expect((await workspace.saveDraft("first", created.value.id)).ok).toBe(true)
+        expect(workspace.annotations("first").drafts).toEqual([])
+        expect(workspace.annotations("first").notes).toMatchObject([
+            {
+                id: created.value.id,
+                association: { contentHash: "a".repeat(64), verification: "unverified" },
+            },
+        ])
+        await workspace.dispose()
+        const recovered = reader(undefined, undefined, { storage }).workspace
+        await recovered.loadAnnotations("first")
+        expect(recovered.annotations("first").drafts).toEqual([])
+        expect(recovered.annotations("first").notes).toHaveLength(1)
+        await recovered.dispose()
+    })
+
+    it("retains dirty draft edits on safe persistence failures, retries and explicitly discards without resources", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const errors: ReadingStorageError[] = []
+        const access = fileAccess()
+        const workspace = reader(access.files, undefined, {
+            storage,
+            onStorageError: (error) => errors.push(error),
+        }).workspace
+        const created = await workspace.createDraft("first", noteInput())
+        if (!created.ok) throw new Error("Expected draft")
+        const set = namespace.set.bind(namespace)
+        namespace.set = async () => {
+            throw new Error("private text")
+        }
+        delete access.files.nodes.first
+        workspace.invalidateAnnotations("first")
+        const edited = await workspace.updateDraft("first", created.value.id, {
+            noteContent: "Retained",
+            color: "blue",
+        })
+        expect(edited.ok).toBe(false)
+        expect(workspace.annotations("first")).toMatchObject({
+            dirty: true,
+            error: "reading.storage.write",
+            drafts: [{ id: created.value.id, noteContent: "Retained", color: "blue" }],
+        })
+        expect(errors.map((error) => error.message)).toEqual(["Unable to save reading state"])
+        namespace.set = set
+        expect((await workspace.persistDrafts("first")).ok).toBe(true)
+        await workspace.dispose()
+        const recovered = reader(access.files, undefined, { storage }).workspace
+        await recovered.loadDrafts("first")
+        expect(recovered.annotations("first").drafts).toMatchObject([
+            { noteContent: "Retained", color: "blue" },
+        ])
+        expect((await recovered.discardDraft("first", created.value.id)).ok).toBe(true)
+        await recovered.dispose()
+        const empty = reader(access.files, undefined, { storage }).workspace
+        await empty.loadDrafts("first")
+        expect(empty.annotations("first").drafts).toEqual([])
+        await empty.dispose()
+    })
+
+    it("recovers independent Note drafts across switches and unloaded document resources without saving notes", async () => {
+        const storage = new ReadingStorage(readingNamespace())
+        const workspace = reader(undefined, undefined, { storage }).workspace
+        await workspace.open("first")
+        const first = await workspace.createDraft("first", noteInput())
+        const second = await workspace.createDraft("first", {
+            ...noteInput(),
+            start: 20,
+            end: 25,
+            text: "other",
+            noteContent: "Independent",
+            color: "pink",
+        })
+        await workspace.open("second")
+        await workspace.createDraft("second", { ...noteInput(), noteContent: "Second document" })
+        expect(first.ok && second.ok && first.value.id !== second.value.id).toBe(true)
+        await workspace.dispose()
+        const access = fileAccess()
+        delete access.files.nodes.first
+        const recovered = reader(access.files, undefined, { storage }).workspace
+        expect(await recovered.loadDrafts("first")).toBe(true)
+        expect(recovered.annotations("first").drafts).toMatchObject([
+            {
+                id: first.value?.id,
+                start: 4,
+                end: 11,
+                text: "passage",
+                noteContent: "My note",
+                color: "yellow",
+            },
+            {
+                id: second.value?.id,
+                start: 20,
+                end: 25,
+                text: "other",
+                noteContent: "Independent",
+                color: "pink",
+            },
+        ])
+        expect(recovered.annotations("first").notes).toEqual([])
+        await recovered.loadDrafts("second")
+        expect(recovered.annotations("second").drafts).toMatchObject([
+            { noteContent: "Second document" },
+        ])
+        await recovered.dispose()
+    })
+
     it("persists a new passage note under stable document identity across workspace reconstruction", async () => {
         const storage = new ReadingStorage(readingNamespace())
         const workspace = reader(undefined, undefined, { storage }).workspace

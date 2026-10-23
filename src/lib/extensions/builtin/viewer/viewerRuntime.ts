@@ -3,9 +3,11 @@ import type { SettingsCapability } from "$lib/extension-api"
 import { ViewerStore, installViewerStore } from "./stores/viewerStore.svelte"
 import { NotesStore, installNotesStore } from "./stores/notesStore.svelte"
 import { BookmarksStore, installBookmarksStore } from "./stores/bookmarksStore.svelte"
+import { ViewerCloseController } from "./viewerClose.svelte"
 import { SearchStore, installSearchStore } from "./stores/searchStore.svelte"
 
 export interface ViewerRuntime {
+    readonly closing: ViewerCloseController
     readonly store: ViewerStore
     readonly notes: NotesStore
     readonly bookmarks: BookmarksStore
@@ -36,7 +38,16 @@ export function createViewerRuntime(
         store.libraryMutations,
         writeSignal,
     )
-    return { store, notes, bookmarks, search, executeCommand, relinkHost, settings }
+    return {
+        store,
+        notes,
+        bookmarks,
+        search,
+        closing: new ViewerCloseController(store),
+        executeCommand,
+        relinkHost,
+        settings,
+    }
 }
 
 /** Compatibility exports select the visible activation; they never own another activation's disposal. */

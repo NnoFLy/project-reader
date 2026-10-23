@@ -12,7 +12,10 @@ vi.mock("$lib/core/settings", () => ({ localizedPath: (path: string) => path }))
 function reader() {
     let book: Book | null = null
     const files: ViewerFileCapability = {
-        nodes: { book: { id: "book", name: "Book", type: "file", updatedAt: 1, metadata: {} } },
+        nodes: {
+            book: { id: "book", name: "Book", type: "file", updatedAt: 1, metadata: {} },
+            next: { id: "next", name: "Next", type: "file", updatedAt: 1, metadata: {} },
+        },
         isLockedMap: {},
         getFileUrl: async () => "blob:book",
         restoreFileAccess: async () => undefined,
@@ -61,6 +64,32 @@ describe("viewer.open command adapter", () => {
         expect(readerState.clearForwardHistory).toHaveBeenCalledOnce()
         expect(goto).toHaveBeenCalledWith("/viewer")
         await readerState.workspace.dispose()
+    })
+
+    it("does not finish an older reader route while a newer document acquisition is pending", async () => {
+        const state = reader()
+        let finishSource!: (url: string) => void
+        state.files.getFileUrl = (id) =>
+            id === "next"
+                ? new Promise((resolve) => (finishSource = resolve))
+                : Promise.resolve("blob:book")
+        let finishRoute!: () => void
+        const blocked = new Promise<void>((resolve) => (finishRoute = resolve))
+        const command = createViewerOpenCommand({
+            workspace: state.workspace,
+            onFileAccessFailure() {},
+            settleCloseNavigation: () => blocked,
+        })
+        const first = command.run({ bookId: "book" })
+        await vi.waitFor(() => expect(state.current()?.id).toBe("book"))
+        const newer = state.workspace.open("next")
+        finishRoute()
+        await first
+        expect(goto).not.toHaveBeenCalled()
+        finishSource("blob:next")
+        await newer
+        expect(state.current()?.id).toBe("next")
+        await state.workspace.dispose()
     })
 
     it("preserves the Library chooser command when no document is specified", async () => {

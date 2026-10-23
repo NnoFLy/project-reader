@@ -3,6 +3,8 @@ import { spawn, type ChildProcess } from "node:child_process"
 export const chromiumPath = process.env.CHROMIUM_PATH ?? "/usr/sbin/chromium"
 const commandTimeout = 10000
 
+class CdpCommandError extends Error {}
+
 type Reply = { result?: { value?: unknown }; exceptionDetails?: unknown }
 type Message = {
     id?: number
@@ -32,7 +34,7 @@ export class BrowserPage {
             const pending = this.pending.get(message.id)
             if (!pending) return
             this.pending.delete(message.id)
-            if (message.error) pending.reject(new Error(message.error.message))
+            if (message.error) pending.reject(new CdpCommandError(message.error.message))
             else pending.resolve(message.result ?? {})
         })
         socket.addEventListener("close", () => this.rejectPending("Browser page closed"))
@@ -115,8 +117,21 @@ export class BrowserPage {
     async waitFor(expression: string): Promise<unknown> {
         const deadline = Date.now() + 30000
         do {
-            const result = await this.evaluate(expression)
-            if (result) return result
+            try {
+                const result = await this.evaluate(expression)
+                if (result) return result
+            } catch (error) {
+                // Only readiness polling is safe to repeat after a navigation interrupts CDP.
+                if (
+                    !(error instanceof CdpCommandError) ||
+                    ![
+                        "Inspected target navigated or closed",
+                        "Execution context was destroyed.",
+                        "Cannot find context with specified id",
+                    ].includes(error.message)
+                )
+                    throw error
+            }
             await new Promise((resolve) => setTimeout(resolve, 50))
         } while (Date.now() < deadline)
         throw new Error(

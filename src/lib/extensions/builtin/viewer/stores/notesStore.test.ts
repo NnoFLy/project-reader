@@ -5,8 +5,7 @@ import { ReadingStorage } from "../readingStorage"
 import type { ViewerFileCapability } from "../viewerHost"
 import { NotesStore } from "./notesStore.svelte"
 
-function reader() {
-    const backend = new MemoryStorageBackend()
+function reader(backend = new MemoryStorageBackend()) {
     const files = {
         nodes: { a: { id: "a", type: "file" }, b: { id: "b", type: "file" } },
         getContentGeneration: () => 0,
@@ -21,7 +20,6 @@ function reader() {
     return { backend, workspace, notes }
 }
 const draft = {
-    isNew: true as const,
     bookId: "a",
     pageNumber: 2,
     start: 0,
@@ -36,11 +34,11 @@ describe("NotesStore workspace editor adapter", () => {
         const { notes, workspace } = reader()
         try {
             await notes.loadNotesForBook("a")
-            const first = notes.openEditor(draft)
-            const second = notes.openEditor({ ...draft, start: 8, end: 15, text: "Another" })
-            notes.updateEditor(first, { noteContent: "First", color: "blue" })
-            notes.updateEditor(second, { noteContent: "Second", color: "pink" })
-            expect(notes.openEditor(draft)).toBe(first)
+            const first = await notes.openDraft(draft)
+            const second = await notes.openDraft({ ...draft, start: 8, end: 15, text: "Another" })
+            notes.updateEditor(first!, { noteContent: "First", color: "blue" })
+            notes.updateEditor(second!, { noteContent: "Second", color: "pink" })
+            expect(notes.openEditor(notes.editors[0].note)).toBe(first)
             await notes.saveEditor(first)
             expect(workspace.annotations("a").notes).toMatchObject([
                 { noteContent: "First", color: "blue" },
@@ -54,6 +52,37 @@ describe("NotesStore workspace editor adapter", () => {
         }
     })
 
+    it("recovers independent drafts across selection, hidden editors and persisted reload without saving notes", async () => {
+        const { notes, workspace, backend } = reader()
+        await notes.loadNotesForBook("a")
+        const first = await notes.openDraft(draft)
+        const second = await notes.openDraft({ ...draft, text: "Other", start: 8, end: 13 })
+        notes.updateEditor(first!, { noteContent: "First", color: "blue" })
+        notes.updateEditor(second!, { noteContent: "Second", color: "pink" })
+        await notes.closeEditor(first)
+        expect(workspace.annotations("a").drafts).toHaveLength(2)
+        await notes.loadNotesForBook("b")
+        await notes.openDraft({ ...draft, bookId: "b", noteContent: "B" })
+        expect(notes.editors).toMatchObject([{ note: { bookId: "b", noteContent: "B" } }])
+        await notes.loadNotesForBook("a")
+        expect(notes.editors.map((e) => e.note)).toMatchObject([
+            { text: "Passage", noteContent: "First", color: "blue" },
+            { text: "Other", noteContent: "Second", color: "pink" },
+        ])
+        await workspace.flush()
+        notes.dispose()
+        await workspace.dispose()
+        const restored = reader(backend)
+        await restored.notes.loadNotesForBook("a")
+        expect(restored.notes.editors.map((e) => e.note)).toMatchObject([
+            { text: "Passage", noteContent: "First", color: "blue" },
+            { text: "Other", noteContent: "Second", color: "pink" },
+        ])
+        expect(restored.notes.notes).toEqual([])
+        restored.notes.dispose()
+        await restored.workspace.dispose()
+    })
+
     it("retains failed new work and retries the same annotation instead of duplicating it", async () => {
         const { backend, notes, workspace } = reader()
         const set = backend.set.bind(backend)
@@ -65,12 +94,13 @@ describe("NotesStore workspace editor adapter", () => {
         }
         try {
             await notes.loadNotesForBook("a")
-            const id = notes.openEditor(draft)
+            const id = (await notes.openDraft(draft))!
             await notes.saveEditor(id)
             expect(notes.editors).toMatchObject([
                 { id, failed: true, note: { noteContent: "Original" } },
             ])
             expect(workspace.annotations("a").dirty).toBe(true)
+            expect(workspace.annotations("a").notes).toHaveLength(0)
             fail = false
             await notes.saveEditor(id)
             expect(notes.editors).toHaveLength(0)
@@ -116,11 +146,17 @@ describe("NotesStore workspace editor adapter", () => {
         }
         try {
             await notes.loadNotesForBook("a")
-            const id = notes.openEditor(draft)
+            backend.set = set
+            const id = (await notes.openDraft(draft))!
+            backend.set = async (key, value) => {
+                if (key.includes("reading-v1-annotations-")) await blocked
+                await set(key, value)
+            }
             const saving = notes.saveEditor(id)
             await notes.loadNotesForBook("b")
-            const next = notes.openEditor({ ...draft, bookId: "b" })
+            const nextOpening = notes.openDraft({ ...draft, bookId: "b" })
             release()
+            const next = await nextOpening
             await saving
             expect(workspace.annotations("a").notes).toHaveLength(1)
             expect(workspace.annotations("b").notes).toHaveLength(0)

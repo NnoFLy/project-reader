@@ -15,6 +15,8 @@ export function createViewerOpenCommand(options: {
     executeCommand?: (commandId: string, payload?: unknown) => Promise<unknown>
     workspace?: ReadingWorkspace
     clearForwardHistory?: () => void
+    selectionStarted?: () => void
+    settleCloseNavigation?: () => Promise<void>
 }) {
     const workspace = options.workspace ?? viewerStore.workspace
     return defineCommands({
@@ -28,7 +30,12 @@ export function createViewerOpenCommand(options: {
                     await options.executeCommand?.("library.book.open")
                     return
                 }
-                if (!(await workspace.open(payload.bookId, options.onFileAccessFailure))) return
+                options.selectionStarted?.()
+                const opening = workspace.open(payload.bookId, options.onFileAccessFailure)
+                const revision = workspace.selectionRevision
+                if (!(await opening)) return
+                await options.settleCloseNavigation?.()
+                if (workspace.selectionRevision !== revision) return
                 ;(
                     options.clearForwardHistory ??
                     (() => viewerFileCapability.clearForwardHistory())

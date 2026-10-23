@@ -11,6 +11,7 @@ vi.mock("$lib/shared/state/motion.svelte", () => ({ motionPreferences: { enabled
 const originalAnimate = Element.prototype.animate
 
 beforeEach(() => {
+    vi.useFakeTimers()
     // jsdom does not implement the Web Animations API used by Svelte transitions.
     Element.prototype.animate = vi.fn(() => ({
         cancel: () => undefined,
@@ -23,11 +24,18 @@ beforeEach(() => {
     vi.stubGlobal("cancelAnimationFrame", () => undefined)
 })
 
-afterEach(() => {
-    modalManager.reset()
-    document.body.replaceChildren()
-    Element.prototype.animate = originalAnimate
-    vi.unstubAllGlobals()
+afterEach(async () => {
+    try {
+        modalManager.reset()
+        // Unmount/click/focus can defer tooltip hiding by one frame; own that work in jsdom.
+        await vi.runOnlyPendingTimersAsync()
+        expect(vi.getTimerCount()).toBe(0)
+    } finally {
+        document.body.replaceChildren()
+        Element.prototype.animate = originalAnimate
+        vi.unstubAllGlobals()
+        vi.useRealTimers()
+    }
 })
 
 describe("modeless note editor keyboard routing", () => {
@@ -137,4 +145,50 @@ describe("modeless note editor keyboard routing", () => {
             await unmount(editor)
         }
     })
+})
+
+it("offers explicit discard separately from hiding a recovered draft", async () => {
+    const target = document.createElement("div")
+    document.body.append(target)
+    const hide = vi.fn(),
+        discard = vi.fn(),
+        save = vi.fn()
+    const editor = mount(NoteEditor, {
+        target,
+        props: {
+            editorId: "recovered",
+            editorState: {
+                id: "stable-draft",
+                pageNumber: 2,
+                text: "<script>unsafe()</script>",
+                noteContent: "Recovered",
+                color: "purple",
+            },
+            draft: true,
+            saving: false,
+            onActivate() {},
+            onChange() {},
+            onSave: save,
+            onCancel: hide,
+            onDiscard: discard,
+        },
+    })
+    try {
+        flushSync()
+        await tick()
+        const button = [...document.querySelectorAll("button")].find((button) =>
+            /Discard draft|Удалить черновик/.test(button.textContent ?? ""),
+        )!
+        expect(button).toBeDefined()
+        button.click()
+        expect(discard).toHaveBeenCalledOnce()
+        expect(hide).not.toHaveBeenCalled()
+        document.querySelector<HTMLButtonElement>("#recovered-close")!.click()
+        await tick()
+        expect(hide).toHaveBeenCalledOnce()
+        expect(save).not.toHaveBeenCalled()
+        expect(document.querySelector("script")).toBeNull()
+    } finally {
+        await unmount(editor)
+    }
 })

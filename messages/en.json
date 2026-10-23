@@ -299,5 +299,11 @@
     "relink_warning": "The selected file name \"{newName}\" does not match the original book name \"{originalName}\". Are you sure you want to associate this book with the selected file?",
     "relink_failed": "Failed to relink the file. Please try again.",
     "delete_higlight_note": "Delete this highlight and note?",
-    "reading_annotations_error": "Unable to save annotations. Your changes are kept in this window. Try again."
+    "reading_annotations_error": "Unable to save annotations. Your changes are kept in this window. Try again.",
+    "reading_document_load_error": "Unable to load the document. Your drafts are kept. You can reopen it from Library.",
+    "note_drafts": "Note drafts",
+    "discard": "Discard",
+    "discard_draft": "Discard draft",
+    "close_drafts_title": "Close document with drafts?",
+    "close_drafts_message": "Save your Note drafts as notes, discard them, or cancel to keep reading."
 }

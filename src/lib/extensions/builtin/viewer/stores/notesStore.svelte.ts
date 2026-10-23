@@ -23,22 +23,12 @@ export interface PopupState {
     y: number
 }
 
-export type NoteEditorState =
-    | UserNote
-    | {
-          isNew: true
-          bookId: string
-          pageNumber: number
-          start: number
-          end: number
-          text: string
-          color: UserNote["color"]
-          noteContent: string
-      }
+export type NoteEditorState = UserNote
 
 export interface NoteEditorSession {
     id: string
     note: NoteEditorState
+    draft: boolean
     saving: boolean
     failed: boolean
 }
@@ -46,6 +36,8 @@ export interface NoteEditorSession {
 export class NotesStore {
     private readonly highlights = createViewerHighlights()
     notes = $state<UserNote[]>([])
+    drafts = $state<UserNote[]>([])
+    private hiddenDrafts = new Set<string>()
     activePopup = $state<PopupState | null>(null)
     activeSelection = $state<SelectionState | null>(null)
     editors = $state<NoteEditorSession[]>([])
@@ -66,6 +58,7 @@ export class NotesStore {
                 if (id !== this.documentId || this.disposed) return
                 this.notes = [...snapshot.notes].sort((a, b) => a.createdAt - b.createdAt)
                 this.failed = snapshot.error !== null
+                this.syncDraftEditors(snapshot.drafts)
                 if (this.activePopup) {
                     const note = this.notes.find(({ id }) => id === this.activePopup?.note.id)
                     this.activePopup = note ? { ...this.activePopup, note } : null
@@ -88,30 +81,70 @@ export class NotesStore {
     }
 
     openEditor(note: NoteEditorState): string {
-        const existing = this.editors.find(({ note: candidate }) => {
-            if ("id" in note)
-                return (
-                    "id" in candidate &&
-                    candidate.id === note.id &&
-                    candidate.bookId === note.bookId
-                )
-            return (
-                "isNew" in candidate &&
-                candidate.bookId === note.bookId &&
-                candidate.pageNumber === note.pageNumber &&
-                candidate.start === note.start &&
-                candidate.end === note.end
-            )
-        })
+        const existing = this.editors.find(
+            ({ note: candidate }) => candidate.id === note.id && candidate.bookId === note.bookId,
+        )
         if (existing) {
             this.activateEditor(existing.id)
             modalManager.focus(existing.id)
             return existing.id
         }
         const id = `note-editor-${crypto.randomUUID()}`
-        this.editors.push({ id, note: { ...note }, saving: false, failed: false })
+        this.editors.push({
+            id,
+            note: { ...note },
+            draft: this.drafts.some((draft) => draft.id === note.id),
+            saving: false,
+            failed: false,
+        })
         this.activateEditor(id)
         return id
+    }
+
+    private syncDraftEditors(drafts: readonly UserNote[]): void {
+        this.drafts = [...drafts]
+        this.editors = this.editors.filter(
+            (editor) =>
+                !editor.draft ||
+                editor.saving ||
+                drafts.some((draft) => draft.id === editor.note.id),
+        )
+        for (const draft of drafts) {
+            const editor = this.editors.find((editor) => editor.note.id === draft.id)
+            if (editor) editor.failed = this.failed
+            else if (!this.hiddenDrafts.has(draft.id)) this.openEditor(draft)
+        }
+    }
+
+    async openDraft(
+        input: Omit<UserNote, "id" | "createdAt" | "association"> & {
+            association?: UserNote["association"]
+        },
+    ): Promise<string | undefined> {
+        if (!this.workspace || this.disposed) return
+        const documentId = input.bookId
+        const result = await this.workspace.createDraft(documentId, {
+            ...input,
+            association: input.association ?? { contentHash: null, verification: "unverified" },
+        })
+        if (this.disposed || this.documentId !== documentId) return
+        this.failed = !result.ok
+        if (!result.value) return
+        return this.editors.find((editor) => editor.note.id === result.value?.id)?.id
+    }
+
+    showDraft(id: string): void {
+        const draft = this.drafts.find((draft) => draft.id === id)
+        if (!draft) return
+        this.hiddenDrafts.delete(id)
+        this.openEditor(draft)
+    }
+
+    async discardEditor(id: string): Promise<void> {
+        const editor = this.editors.find((editor) => editor.id === id)
+        if (!editor?.draft || editor.saving || !this.workspace) return
+        const { bookId, id: draftId } = editor.note
+        await this.workspace.discardDraft(bookId, draftId)
     }
 
     activateEditor(id: string): void {
@@ -124,8 +157,12 @@ export class NotesStore {
         const editor = this.editors.find((editor) => editor.id === id)
         if (!editor || editor.saving) return
         editor.note = { ...editor.note, ...change }
-        if ("id" in editor.note)
-            this.updateNoteDraft(editor.note.id, change.noteContent, change.color)
+        if (editor.draft) {
+            const { bookId, id: draftId } = editor.note
+            void this.workspace?.updateDraft(bookId, draftId, change).then((result) => {
+                if (!this.disposed && this.editors.includes(editor)) editor.failed = !result.ok
+            })
+        } else this.updateNoteDraft(editor.note.id, change.noteContent, change.color)
     }
 
     async saveEditor(id = this.activeEditorId): Promise<void> {
@@ -134,21 +171,12 @@ export class NotesStore {
         editor.saving = true
         const note = editor.note
         try {
-            const result =
-                "isNew" in note
-                    ? await this.workspace.createNote(note.bookId, {
-                          pageNumber: note.pageNumber,
-                          start: note.start,
-                          end: note.end,
-                          text: note.text,
-                          noteContent: note.noteContent,
-                          color: note.color,
-                          association: { contentHash: null, verification: "unverified" },
-                      })
-                    : await this.workspace.updateNote(note.bookId, note.id, {
-                          noteContent: note.noteContent,
-                          color: note.color,
-                      })
+            const result = editor.draft
+                ? await this.workspace.saveDraft(note.bookId, note.id)
+                : await this.workspace.updateNote(note.bookId, note.id, {
+                      noteContent: note.noteContent,
+                      color: note.color,
+                  })
             // A failed write can already own a recoverable saved-note identity. Retry it,
             // rather than creating a duplicate annotation on the next save.
             if (
@@ -174,8 +202,11 @@ export class NotesStore {
     async closeEditor(id = this.activeEditorId): Promise<void> {
         const editor = this.editors.find((editor) => editor.id === id)
         if (!editor || editor.saving) return
-        if ("id" in editor.note) await this.saveEditor(editor.id)
-        else this.removeEditor(editor.id)
+        if (!editor.draft) await this.saveEditor(editor.id)
+        else {
+            this.hiddenDrafts.add(editor.note.id)
+            this.removeEditor(editor.id)
+        }
     }
 
     async loadNotesForBook(bookId: string): Promise<void> {
@@ -183,12 +214,13 @@ export class NotesStore {
         if (this.documentId !== bookId) this.clear()
         this.documentId = bookId
         const generation = ++this.loadGeneration
-        await this.workspace.loadAnnotations(bookId)
+        await this.workspace.loadDrafts(bookId)
         if (this.disposed || generation !== this.loadGeneration || this.documentId !== bookId)
             return
         const snapshot = this.workspace.annotations(bookId)
         this.notes = [...snapshot.notes].sort((a, b) => a.createdAt - b.createdAt)
         this.failed = snapshot.error !== null
+        this.syncDraftEditors(snapshot.drafts)
         this.queueHighlightUpdate()
     }
 
@@ -266,6 +298,8 @@ export class NotesStore {
         this.highlightUpdateFrame = null
         this.highlightUpdatePending = false
         this.notes = []
+        this.drafts = []
+        this.hiddenDrafts.clear()
         this.activePopup = null
         this.activeSelection = null
         this.editors = []
@@ -342,11 +376,7 @@ export class NotesStore {
             const purpleRanges: Range[] = []
             const activeRanges: Range[] = []
 
-            const activeNoteId =
-                this.activePopup?.note.id ||
-                (this.editingNote && !("isNew" in this.editingNote)
-                    ? (this.editingNote as UserNote).id
-                    : null)
+            const activeNoteId = this.activePopup?.note.id || this.editingNote?.id
 
             for (const noteRanges of this.pageRanges.values()) {
                 for (const item of noteRanges) {

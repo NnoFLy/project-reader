@@ -16,7 +16,8 @@ import {
     readBookmark,
     type ReadingBookmark,
     type ReadingBookmarkInput,
-    type ReadingAnnotations,
+    type ReadingRecords,
+    type ReadingDraft,
     type ReadingNote,
     type ReadingNoteInput,
 } from "./readingAnnotations"
@@ -25,11 +26,25 @@ export type ReadingMutationResult<T> =
     | { readonly ok: true; readonly value: T }
     | { readonly ok: false; readonly error: ReadingStorageError; readonly value?: T }
 
-export interface ReadingAnnotationSnapshot extends ReadingAnnotations {
+export interface ReadingAnnotationSnapshot extends ReadingRecords {
     readonly loaded: boolean
     readonly dirty: boolean
     readonly error: ReadingStorageError["code"] | null
 }
+
+export interface ReadingCloseToken {
+    readonly documentId: string
+    readonly selectionRevision: number
+    readonly draftRevision: number
+}
+
+export type ReadingCloseResult =
+    | { readonly status: "closed" | "cancelled" | "superseded" | "changed" }
+    | { readonly status: "failed"; readonly error: ReadingStorageError }
+
+export type ReadingCloseRequest =
+    | ReadingCloseResult
+    | { readonly status: "confirmation-required"; readonly token: ReadingCloseToken }
 
 export interface ReadingSummary {
     readonly documentId: string
@@ -89,7 +104,15 @@ export class ReadingWorkspace {
         string,
         { readonly owns: () => boolean; readonly promise: Promise<boolean> }
     >()
+    private readonly draftRevisions = new Map<string, number>()
+    private readonly closeTokens = new WeakSet<ReadingCloseToken>()
+    private readonly draftLoads = new Map<string, Promise<boolean>>()
     private readonly invalidAnnotations = new Set<string>()
+
+    /** Monotonic selection intent, including acquisitions that have not published yet. */
+    get selectionRevision(): number {
+        return this.revision
+    }
 
     constructor(private readonly options: ReadingWorkspaceOptions) {
         this.access = new DocumentAccess(options.files)
@@ -110,6 +133,235 @@ export class ReadingWorkspace {
         return () => this.annotationListeners.delete(listener)
     }
 
+    private draftOwnership(documentId: string): (() => boolean) | null {
+        if (
+            typeof documentId !== "string" ||
+            !documentId.trim() ||
+            documentId.length > 1024 ||
+            Array.from(documentId).some((character) => {
+                const code = character.charCodeAt(0)
+                return code < 32 || code === 127
+            }) ||
+            this.disposed ||
+            this.writesClosed ||
+            this.options.writeSignal?.aborted
+        )
+            return null
+        // Draft lifetime is independent of resources and annotation invalidation epochs.
+        return () => !this.writesClosed && !this.options.writeSignal?.aborted
+    }
+
+    /** Recover unfinished work even when Library resources are missing or unavailable. */
+    async loadDrafts(documentId: string): Promise<boolean> {
+        const owns = this.draftOwnership(documentId)
+        if (!owns) return false
+        if (this.annotations(documentId).loaded) return true
+        try {
+            if (!this.storage) throw new ReadingStorageError("reading.storage.read")
+            const state = await this.storage.readAnnotations(documentId)
+            if (this.disposed || !owns()) return false
+            if (!this.annotations(documentId).loaded)
+                this.publishAnnotations(documentId, state, true, false)
+            return true
+        } catch (error) {
+            if (!this.disposed && owns() && !this.annotations(documentId).loaded) {
+                this.publishAnnotations(
+                    documentId,
+                    this.annotations(documentId),
+                    false,
+                    false,
+                    "reading.storage.read",
+                )
+                this.report(error, "reading.storage.read")
+            }
+            return false
+        }
+    }
+
+    private loadDraftsForMutation(documentId: string): Promise<boolean> {
+        const pending = this.draftLoads.get(documentId)
+        if (pending) return pending
+        const promise = this.loadDrafts(documentId).finally(() => {
+            if (this.draftLoads.get(documentId) === promise) this.draftLoads.delete(documentId)
+        })
+        this.draftLoads.set(documentId, promise)
+        return promise
+    }
+
+    async createDraft(
+        documentId: string,
+        input: ReadingNoteInput,
+    ): Promise<ReadingMutationResult<ReadingDraft>> {
+        const owns = this.draftOwnership(documentId)
+        const draft =
+            owns &&
+            readNote(
+                { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+                documentId,
+            )
+        if (!owns || !draft)
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (!(await this.loadDraftsForMutation(documentId)))
+            return {
+                ok: false,
+                error: new ReadingStorageError("reading.storage.read"),
+                value: draft,
+            }
+        if (this.disposed || !owns())
+            return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        const current = this.annotations(documentId)
+        const state = freezeAnnotations(current.notes, current.bookmarks, [
+            ...current.drafts,
+            draft,
+        ])
+        this.publishAnnotations(documentId, state, true, true)
+        return this.persistAnnotations(documentId, draft, owns)
+    }
+
+    async updateDraft(
+        documentId: string,
+        draftId: string,
+        changes: Pick<ReadingNoteInput, "noteContent" | "color">,
+    ): Promise<ReadingMutationResult<ReadingDraft>> {
+        const { noteContent, color } = changes
+        const owns = this.draftOwnership(documentId)
+        if (!owns || !isAnnotationId(draftId))
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (!(await this.loadDraftsForMutation(documentId)))
+            return { ok: false, error: new ReadingStorageError("reading.storage.read") }
+        if (this.disposed || !owns())
+            return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        const current = this.annotations(documentId)
+        const previous = current.drafts.find((draft) => draft.id === draftId)
+        const draft = previous && readNote({ ...previous, noteContent, color }, documentId)
+        if (!draft)
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        const state = freezeAnnotations(
+            current.notes,
+            current.bookmarks,
+            current.drafts.map((item) => (item.id === draftId ? draft : item)),
+        )
+        this.publishAnnotations(documentId, state, true, true)
+        return this.persistAnnotations(documentId, draft, owns)
+    }
+
+    async discardDraft(documentId: string, draftId: string): Promise<ReadingMutationResult<void>> {
+        const owns = this.draftOwnership(documentId)
+        if (!owns || !isAnnotationId(draftId))
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (!(await this.loadDraftsForMutation(documentId)))
+            return { ok: false, error: new ReadingStorageError("reading.storage.read") }
+        if (this.disposed || !owns())
+            return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        const current = this.annotations(documentId)
+        const state = freezeAnnotations(
+            current.notes,
+            current.bookmarks,
+            current.drafts.filter((draft) => draft.id !== draftId),
+        )
+        this.publishAnnotations(documentId, state, true, true)
+        return this.persistAnnotations(documentId, undefined, owns)
+    }
+
+    /** Retry durable editing state, not an instruction to turn drafts into saved notes. */
+    async persistDrafts(documentId: string): Promise<ReadingMutationResult<void>> {
+        const owns = this.draftOwnership(documentId)
+        if (!owns)
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (!(await this.loadDraftsForMutation(documentId)))
+            return { ok: false, error: new ReadingStorageError("reading.storage.read") }
+        if (this.disposed || !owns())
+            return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        return this.persistAnnotations(documentId, undefined, owns)
+    }
+
+    /** Explicit promotion through the authoritative saved-note envelope, never recovery. */
+    async saveDraft(
+        documentId: string,
+        draftId: string,
+    ): Promise<ReadingMutationResult<ReadingNote>> {
+        const owns = this.draftOwnership(documentId)
+        if (!owns || !isAnnotationId(draftId))
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (!(await this.loadDraftsForMutation(documentId)))
+            return { ok: false, error: new ReadingStorageError("reading.storage.read") }
+        if (this.disposed || !owns())
+            return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        const draft = this.annotations(documentId).drafts.find((item) => item.id === draftId)
+        if (!draft)
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        const result = await this.persistDraftNotes(documentId, [draft], owns)
+        return result.ok ? { ok: true, value: draft } : { ...result, value: draft }
+    }
+
+    private async persistDraftNotes(
+        documentId: string,
+        drafts: readonly ReadingDraft[],
+        owns: () => boolean,
+    ): Promise<ReadingMutationResult<void>> {
+        let result: ReadingMutationResult<void> = {
+            ok: false,
+            error: new ReadingStorageError("reading.storage.write"),
+        }
+        this.queue = this.queue.then(async () => {
+            if (!owns()) return
+            const before = this.annotations(documentId)
+            // A discarded or edited snapshot may not be revived by a queued save.
+            if (!drafts.every((draft) => before.drafts.includes(draft))) return
+            const ids = new Set(drafts.map((draft) => draft.id))
+            const state = freezeAnnotations(
+                [...before.notes.filter((note) => !ids.has(note.id)), ...drafts],
+                before.bookmarks,
+                before.drafts.filter((draft) => !ids.has(draft.id)),
+            )
+            try {
+                if (!this.storage) throw new ReadingStorageError("reading.storage.write")
+                // Atomic replacement: no separate cleanup write can duplicate a saved note.
+                await this.storage.writeAnnotations(documentId, state)
+                if (!owns()) return
+                const latest = this.annotations(documentId)
+                // Edits retain draft identity; explicit discard removes it. The queued
+                // discard write replaces this stale envelope without promoting abandoned work.
+                if (!drafts.every((draft) => latest.drafts.some((item) => item.id === draft.id)))
+                    return
+                const notes = [...latest.notes]
+                for (const draft of drafts) {
+                    const previous = before.notes.find((note) => note.id === draft.id)
+                    const index = notes.findIndex((note) => note.id === draft.id)
+                    if (index < 0 && !previous) notes.push(draft)
+                    else if (index >= 0 && notes[index] === previous) notes[index] = draft
+                }
+                const unchanged =
+                    latest.notes === before.notes &&
+                    latest.bookmarks === before.bookmarks &&
+                    latest.drafts === before.drafts
+                this.publishAnnotations(
+                    documentId,
+                    freezeAnnotations(
+                        notes,
+                        latest.bookmarks,
+                        latest.drafts.filter((draft) => !drafts.includes(draft)),
+                    ),
+                    true,
+                    !unchanged,
+                )
+                result = { ok: true, value: undefined }
+            } catch (error) {
+                if (!owns()) return
+                this.report(error, "reading.storage.write")
+                this.publishAnnotations(
+                    documentId,
+                    this.annotations(documentId),
+                    true,
+                    true,
+                    "reading.storage.write",
+                )
+            }
+        })
+        await this.queue
+        return result
+    }
+
     async getReadingSummary(documentId: string): Promise<ReadingSummary | null> {
         if (!(await this.loadAnnotations(documentId))) return null
         const state = this.annotations(documentId)
@@ -122,12 +374,18 @@ export class ReadingWorkspace {
 
     private publishAnnotations(
         documentId: string,
-        state: ReadingAnnotations,
+        state: ReadingRecords,
         loaded: boolean,
         dirty: boolean,
         error: ReadingStorageError["code"] | null = null,
     ): void {
         if (this.disposed) return
+        const previous = this.annotations(documentId).drafts
+        if (
+            previous.length !== state.drafts.length ||
+            previous.some((draft, index) => draft !== state.drafts[index])
+        )
+            this.draftRevisions.set(documentId, (this.draftRevisions.get(documentId) ?? 0) + 1)
         const snapshot = Object.freeze({ ...state, loaded, dirty, error })
         this.annotationStates.set(documentId, snapshot)
         for (const listener of this.annotationListeners) listener(documentId, snapshot)
@@ -243,9 +501,10 @@ export class ReadingWorkspace {
         const state = freezeAnnotations(
             [...this.annotations(documentId).notes, note],
             this.annotations(documentId).bookmarks,
+            this.annotations(documentId).drafts,
         )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, note, owns)
+        return this.persistAnnotations(documentId, note, owns)
     }
 
     async updateNote(
@@ -269,9 +528,10 @@ export class ReadingWorkspace {
         const state = freezeAnnotations(
             current.notes.map((item) => (item.id === noteId ? note : item)),
             current.bookmarks,
+            current.drafts,
         )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, note, owns)
+        return this.persistAnnotations(documentId, note, owns)
     }
 
     async deleteNote(documentId: string, noteId: string): Promise<ReadingMutationResult<void>> {
@@ -287,9 +547,10 @@ export class ReadingWorkspace {
         const state = freezeAnnotations(
             this.annotations(documentId).notes.filter((note) => note.id !== noteId),
             this.annotations(documentId).bookmarks,
+            this.annotations(documentId).drafts,
         )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, undefined, owns)
+        return this.persistAnnotations(documentId, undefined, owns)
     }
 
     async createBookmark(
@@ -314,9 +575,13 @@ export class ReadingWorkspace {
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
         const current = this.annotations(documentId)
-        const state = freezeAnnotations(current.notes, [...current.bookmarks, bookmark])
+        const state = freezeAnnotations(
+            current.notes,
+            [...current.bookmarks, bookmark],
+            current.drafts,
+        )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, bookmark, owns)
+        return this.persistAnnotations(documentId, bookmark, owns)
     }
 
     async updateBookmark(
@@ -339,9 +604,10 @@ export class ReadingWorkspace {
         const state = freezeAnnotations(
             current.notes,
             current.bookmarks.map((item) => (item.id === bookmarkId ? bookmark : item)),
+            current.drafts,
         )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, bookmark, owns)
+        return this.persistAnnotations(documentId, bookmark, owns)
     }
 
     async deleteBookmark(
@@ -361,9 +627,10 @@ export class ReadingWorkspace {
         const state = freezeAnnotations(
             current.notes,
             current.bookmarks.filter((bookmark) => bookmark.id !== bookmarkId),
+            current.drafts,
         )
         this.publishAnnotations(documentId, state, true, true)
-        return this.persistAnnotations(documentId, state, undefined, owns)
+        return this.persistAnnotations(documentId, undefined, owns)
     }
 
     /** Retry retained failed writes, including deletions; never reload over dirty work. */
@@ -375,12 +642,11 @@ export class ReadingWorkspace {
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
-        return this.persistAnnotations(documentId, this.annotations(documentId), undefined, owns)
+        return this.persistAnnotations(documentId, undefined, owns)
     }
 
     private async persistAnnotations<T>(
         documentId: string,
-        state: ReadingAnnotations,
         value: T,
         owns: () => boolean,
     ): Promise<ReadingMutationResult<T>> {
@@ -391,19 +657,30 @@ export class ReadingWorkspace {
         }
         this.queue = this.queue.then(async () => {
             if (!owns()) return
+            // Read the authoritative cache at admission to this shared writer queue.
+            // Earlier atomic draft promotions must not be undone by stale envelopes.
+            const state = this.annotations(documentId)
             try {
                 if (!this.storage) throw new ReadingStorageError("reading.storage.write")
                 await this.storage.writeAnnotations(documentId, state)
                 if (!owns()) return
                 result = { ok: true, value }
                 const latest = this.annotations(documentId)
-                if (latest.notes === state.notes && latest.bookmarks === state.bookmarks)
+                if (
+                    latest.notes === state.notes &&
+                    latest.bookmarks === state.bookmarks &&
+                    latest.drafts === state.drafts
+                )
                     this.publishAnnotations(documentId, state, true, false)
             } catch (error) {
                 if (!owns()) return
                 this.report(error, "reading.storage.write")
                 const latest = this.annotations(documentId)
-                if (latest.notes === state.notes && latest.bookmarks === state.bookmarks)
+                if (
+                    latest.notes === state.notes &&
+                    latest.bookmarks === state.bookmarks &&
+                    latest.drafts === state.drafts
+                )
                     this.publishAnnotations(documentId, state, true, true, "reading.storage.write")
             }
         })
@@ -460,7 +737,7 @@ export class ReadingWorkspace {
     }
 
     setCurrentBook(book: Book | null): Promise<boolean> {
-        if (!book) return this.close().then(() => true)
+        if (!book) return this.requestClose().then((result) => result.status === "closed")
         // Library metadata is not a reading-state fallback.
         return this.open(book.id)
     }
@@ -687,14 +964,127 @@ export class ReadingWorkspace {
         }, signal)
     }
 
+    /** Compatibility callers cannot bypass a draft decision. UI uses requestClose/resolveClose. */
     async close(): Promise<void> {
-        if (this.disposed) return
-        this.revision++
+        await this.requestClose()
+    }
+
+    async requestClose(): Promise<ReadingCloseRequest> {
+        if (this.disposed) return { status: "superseded" }
+        const documentId = this.current.documentId
+        // An explicit close also cancels a pending initial restoration/acquisition.
+        const selectionRevision = documentId ? this.revision : ++this.revision
+        if (documentId && this.storage && !(await this.loadDraftsForMutation(documentId)))
+            return { status: "failed", error: new ReadingStorageError("reading.storage.read") }
+        if (
+            this.disposed ||
+            selectionRevision !== this.revision ||
+            this.current.documentId !== documentId
+        )
+            return { status: "superseded" }
+        const draftRevision = documentId ? (this.draftRevisions.get(documentId) ?? 0) : 0
+        if (documentId && this.annotations(documentId).drafts.length) {
+            const token = Object.freeze({ documentId, selectionRevision, draftRevision })
+            this.closeTokens.add(token)
+            return { status: "confirmation-required", token }
+        }
+        if (documentId && this.annotations(documentId).dirty) {
+            const saved = await this.persistDrafts(documentId)
+            if (!saved.ok) return { status: "failed", error: saved.error }
+        }
+        return this.finishClose(documentId, selectionRevision, draftRevision)
+    }
+
+    /** One-use decision for the initiating identity, never the document visible later. */
+    async resolveClose(
+        token: ReadingCloseToken,
+        choice: "save" | "discard" | "cancel",
+    ): Promise<ReadingCloseResult> {
+        if (!this.closeTokens.delete(token) || this.disposed) return { status: "superseded" }
+        if (choice === "cancel") return { status: "cancelled" }
+        if (choice !== "save" && choice !== "discard")
+            return {
+                status: "failed",
+                error: new ReadingStorageError("reading.storage.invalid-input"),
+            }
+        const { documentId, selectionRevision, draftRevision } = token
+        if ((this.draftRevisions.get(documentId) ?? 0) !== draftRevision)
+            return { status: "changed" }
+        const owns = this.draftOwnership(documentId)
+        if (!owns)
+            return { status: "failed", error: new ReadingStorageError("reading.storage.write") }
+        const current = this.annotations(documentId)
+        let result: ReadingMutationResult<void>
+        if (choice === "save") {
+            result = await this.persistDraftNotes(documentId, current.drafts, owns)
+        } else {
+            const state = freezeAnnotations(current.notes, current.bookmarks)
+            this.publishAnnotations(documentId, state, true, true)
+            result = await this.persistAnnotations(documentId, undefined, owns)
+        }
+        if (!result.ok) return { status: "failed", error: result.error }
+        return this.finishClose(documentId, selectionRevision, draftRevision + 1)
+    }
+
+    private async finishClose(
+        documentId: string | null,
+        selectionRevision: number,
+        draftRevision: number,
+    ): Promise<ReadingCloseResult> {
+        const status = (): "superseded" | "changed" | null => {
+            if (
+                this.disposed ||
+                this.revision !== selectionRevision ||
+                this.current.documentId !== documentId
+            )
+                return "superseded"
+            if (
+                documentId &&
+                ((this.draftRevisions.get(documentId) ?? 0) !== draftRevision ||
+                    this.annotations(documentId).drafts.length)
+            )
+                return "changed"
+            return null
+        }
+        const obsolete = status()
+        if (obsolete) return { status: obsolete }
+        if (this.options.writeSignal?.aborted)
+            return { status: "failed", error: new ReadingStorageError("reading.storage.write") }
+        if (this.storage) {
+            let active = true
+            let persisted = false
+            const storage = this.storage
+            this.queue = this.queue.then(async () => {
+                if (!active || status() || this.writesClosed || this.options.writeSignal?.aborted)
+                    return
+                try {
+                    await storage.writeCurrent(null)
+                    persisted = true
+                    // A timed-out or superseded pointer clear must not replace newer intent.
+                    if (!active || status()) this.save(true)
+                } catch (error) {
+                    this.report(error, "reading.storage.write")
+                }
+            })
+            const complete = await this.bounded(this.queue)
+            active = false
+            const obsolete = status()
+            if (obsolete) return { status: obsolete }
+            if (!complete || !persisted)
+                return { status: "failed", error: new ReadingStorageError("reading.storage.write") }
+        }
+        const obsoleteAfterWrite = status()
+        if (obsoleteAfterWrite) return { status: obsoleteAfterWrite }
+        if (this.options.writeSignal?.aborted || this.writesClosed)
+            return { status: "failed", error: new ReadingStorageError("reading.storage.write") }
+        const closingRevision = ++this.revision
         const closing = this.access.close()
         this.options.publish(null)
         this.change(null, this.defaultState(), "closed")
-        this.save(true)
         await closing
+        return {
+            status: !this.disposed && this.revision === closingRevision ? "closed" : "superseded",
+        }
     }
 
     dispose(): Promise<void> {
