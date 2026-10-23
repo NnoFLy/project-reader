@@ -1,5 +1,6 @@
 import {
     ExtensionLifecycle,
+    ProviderRecoveryBlockedError,
     assertNamespacedId,
     belongsToExtension,
     canonicalBuiltinId,
@@ -14,6 +15,8 @@ import {
     type LegacyMigrationCapability,
     type HostContext,
     type PermissionSet,
+    type ProviderAvailability,
+    type ProviderSnapshot,
 } from "../extension-api"
 import { DocumentService } from "../core/documents"
 import { normalizeKeybinding, type HostCommandFacade } from "../core/commands"
@@ -21,6 +24,7 @@ import { NotificationServiceImpl } from "../core/notifications"
 import { ContextualStatusServiceImpl } from "../core/contextual-status"
 import { createExtensionStorage, MemoryStorageBackend, type StorageBackend } from "../core/storage"
 import { ContributionRegistry } from "./contribution-registry"
+import { ExtensionStorageLifetime } from "./storage-lifetime"
 import { resolveDependencies } from "./dependency-resolution"
 import { ExtensionActivationError, type LifecycleRecord } from "./lifecycle"
 
@@ -31,17 +35,21 @@ export interface ExtensionHostOptions {
     readonly documentService?: DocumentService
     readonly migration?: LegacyMigrationCapability
     readonly hostContext?: HostContext
+    /** Presentation bound only; expiration does not prove storage quiescence. */
+    readonly cleanupTimeoutMs?: number
 }
 
 interface ExtensionRuntime {
     readonly extension: AppExtension
     readonly permissions: PermissionSet
     lifecycle: ExtensionLifecycle
-    readonly storage: ExtensionStorage
+    storage: ExtensionStorage
+    storageLifetime: ExtensionStorageLifetime
     state: LifecycleRecord["state"]
     error?: ExtensionActivationError
     activation?: Promise<void>
-    transition: Promise<void>
+    generation: number
+    snapshot: ProviderSnapshot
 }
 
 export class ExtensionHost {
@@ -59,9 +67,24 @@ export class ExtensionHost {
     private readonly storage: StorageBackend
     private readonly migration?: LegacyMigrationCapability
     private readonly hostContext: HostContext
+    private readonly providerListeners = new Set<(provider: ProviderSnapshot) => void>()
+    readonly providers: ProviderAvailability = {
+        get: (id) => this.runtimes.get(id)?.snapshot,
+        onDidChange: (listener) => {
+            this.providerListeners.add(listener)
+            return {
+                dispose: () => {
+                    this.providerListeners.delete(listener)
+                },
+            }
+        },
+    }
+    private readonly publicationOwners = new Map<keyof HostContext, ExtensionLifecycle>()
+    private readonly cleanupTimeoutMs: number
     private disposing = false
     private disposal?: Promise<void>
     constructor(options: ExtensionHostOptions) {
+        this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? 250
         this.storage =
             options.storage ??
             new MemoryStorageBackend({ signal: options.hostContext?.writeSignal })
@@ -74,6 +97,7 @@ export class ExtensionHost {
         this.hostContext = {
             ...options.hostContext,
             commands: this.commands,
+            providers: this.providers,
         }
         const validated = options.extensions.map((extension) => ({
             extension,
@@ -85,13 +109,22 @@ export class ExtensionHost {
         for (const manifest of order) {
             const value = byId.get(manifest.id)
             if (!value) throw new Error(`No implementation for extension: ${manifest.id}`)
+            const lifecycle = new ExtensionLifecycle("enabled")
+            const storageLifetime = new ExtensionStorageLifetime(this.storage, lifecycle.signal)
             this.runtimes.set(manifest.id, {
                 extension: value.extension,
                 permissions: value.permissions,
-                lifecycle: new ExtensionLifecycle("enabled"),
-                storage: createExtensionStorage(this.storage, manifest.id),
+                lifecycle,
+                storage: createExtensionStorage(storageLifetime, manifest.id),
+                storageLifetime,
                 state: "enabled",
-                transition: Promise.resolve(),
+                generation: 1,
+                snapshot: Object.freeze({
+                    extensionId: manifest.id,
+                    generation: 1,
+                    state: "enabled",
+                    signal: lifecycle.signal,
+                }),
             })
         }
     }
@@ -137,7 +170,6 @@ export class ExtensionHost {
         const runtime = this.runtimes.get(extensionId)
         if (!runtime) throw new Error(`Unknown extension: ${extensionId}`)
         if (runtime.state === "active") return
-        if (runtime.activation) return runtime.activation
         if (
             runtime.state === "failed" ||
             runtime.state === "disposed" ||
@@ -146,17 +178,8 @@ export class ExtensionHost {
             throw new Error(`Extension is not enabled: ${extensionId}`)
         }
 
-        const activation = this.enqueue(runtime, async () => {
-            if (runtime.state === "active") return
-            if (
-                runtime.state === "failed" ||
-                runtime.state === "disposed" ||
-                runtime.state === "disabled"
-            ) {
-                throw new Error(`Extension is not enabled: ${extensionId}`)
-            }
-            await this.performActivation(runtime)
-        })
+        if (runtime.activation) return runtime.activation
+        const activation = Promise.resolve().then(() => this.performActivation(runtime))
         runtime.activation = activation
         try {
             await activation
@@ -183,54 +206,112 @@ export class ExtensionHost {
 
     disable(extensionId: string): Promise<void> {
         const runtime = this.requireRuntime(extensionId)
-        return this.enqueue(runtime, async () => {
-            if (runtime.state === "disposed" || runtime.state === "disabled") return
-            runtime.state = "disabled"
-            runtime.lifecycle.setState("disabled")
-            await runtime.lifecycle.dispose()
-            this.contextualStatus.forExtension(extensionId).clear()
-            this.contributions.disposeExtension(extensionId)
-        })
+        if (runtime.state === "disposed" || runtime.state === "disabled") return Promise.resolve()
+        return this.invalidate(runtime, "disabled")
     }
 
-    enable(extensionId: string): Promise<void> {
+    async enable(extensionId: string): Promise<void> {
         const runtime = this.requireRuntime(extensionId)
-        return this.enqueue(runtime, async () => {
-            if (this.disposing || runtime.state === "disposed") {
-                throw new Error(`Extension host is disposing: ${extensionId}`)
-            }
-            if (runtime.state !== "disabled" && runtime.state !== "failed") return
-            runtime.lifecycle = new ExtensionLifecycle("enabled")
-            runtime.state = "enabled"
-            runtime.error = undefined
-        })
+        if (this.disposing || runtime.state === "disposed")
+            throw new Error(`Extension host is disposing: ${extensionId}`)
+        if (runtime.state !== "disabled" && runtime.state !== "failed") return
+        const previous = runtime.lifecycle
+        let quiescent = false
+        await this.bounded(
+            Promise.all([
+                Promise.allSettled([runtime.activation]),
+                runtime.storageLifetime.whenQuiescent(),
+            ]).then(() => {
+                quiescent = true
+            }),
+        )
+        if (!quiescent) throw new ProviderRecoveryBlockedError(extensionId)
+        if (this.disposing) throw new Error(`Extension host is disposing: ${extensionId}`)
+        if (runtime.lifecycle !== previous) return
+        runtime.lifecycle = new ExtensionLifecycle("enabled")
+        runtime.storageLifetime = new ExtensionStorageLifetime(
+            this.storage,
+            runtime.lifecycle.signal,
+        )
+        runtime.storage = createExtensionStorage(runtime.storageLifetime, extensionId)
+        runtime.generation++
+        runtime.error = undefined
+        runtime.activation = undefined
+        this.setState(runtime, "enabled")
     }
 
     dispose(): Promise<void> {
         if (this.disposal) return this.disposal
         this.disposing = true
-        const runtimes = [...this.runtimes.values()]
-        this.disposal = Promise.allSettled([
-            this.documentService.closeAll(),
-            Promise.all(
-                runtimes.map((runtime) =>
-                    this.enqueue(runtime, async () => {
-                        runtime.state = "disposed"
-                        await runtime.lifecycle.dispose()
-                        this.contextualStatus.forExtension(runtime.extension.manifest.id).clear()
-                        this.contributions.disposeExtension(runtime.extension.manifest.id)
-                    }),
-                ),
-            ),
-        ]).then((results) => {
-            this.contextualStatus.reset()
-            this.contributions.dispose()
-            const rejected = results.find(
-                (result): result is PromiseRejectedResult => result.status === "rejected",
-            )
-            if (rejected) throw rejected.reason
+        let complete!: () => void
+        let fail!: (error: unknown) => void
+        this.disposal = new Promise<void>((resolve, reject) => {
+            complete = resolve
+            fail = reject
         })
+        const cleanups = [...this.runtimes.values()].map((runtime) =>
+            this.invalidate(runtime, "disposed"),
+        )
+        const documents = this.documentService.dispose()
+        void this.bounded(Promise.allSettled([documents, ...cleanups]))
+            .then(() => {
+                this.contextualStatus.reset()
+                this.contributions.dispose()
+                this.providerListeners.clear()
+            })
+            .then(complete, fail)
         return this.disposal
+    }
+
+    private setState(runtime: ExtensionRuntime, state: LifecycleRecord["state"]): void {
+        runtime.state = state
+        runtime.lifecycle.setState(state)
+        runtime.snapshot = Object.freeze({
+            extensionId: runtime.extension.manifest.id,
+            generation: runtime.generation,
+            state,
+            signal: runtime.lifecycle.signal,
+        })
+        for (const listener of this.providerListeners) {
+            try {
+                listener(runtime.snapshot)
+            } catch {
+                /* Observers cannot prevent invalidation. */
+            }
+        }
+    }
+
+    private invalidate(
+        runtime: ExtensionRuntime,
+        state: "disabled" | "failed" | "disposed",
+    ): Promise<void> {
+        const lifecycle = runtime.lifecycle
+        runtime.state = state
+        const cleanup = lifecycle.dispose()
+        const id = runtime.extension.manifest.id
+        this.contextualStatus.forExtension(id).clear()
+        this.contributions.disposeExtension(id)
+        for (const [key, owner] of this.publicationOwners) {
+            if (owner !== lifecycle) continue
+            Reflect.set(this.hostContext, key, undefined)
+            this.publicationOwners.delete(key)
+        }
+        this.setState(runtime, state)
+        return this.bounded(cleanup)
+    }
+
+    private async bounded(operation: Promise<unknown>): Promise<void> {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+            await Promise.race([
+                operation,
+                new Promise<void>((resolve) => {
+                    timer = setTimeout(resolve, this.cleanupTimeoutMs)
+                }),
+            ])
+        } finally {
+            clearTimeout(timer)
+        }
     }
 
     private async activateForEvent(
@@ -244,82 +325,112 @@ export class ExtensionHost {
 
     private async performActivation(runtime: ExtensionRuntime): Promise<void> {
         const manifest = runtime.extension.manifest
+        const lifecycle = runtime.lifecycle
+        const current = () =>
+            !this.disposing && runtime.lifecycle === lifecycle && !lifecycle.isDisposed()
         try {
+            if (!current()) return
             for (const dependency of Object.keys(manifest.dependencies ?? {}))
                 await this.activate(dependency)
-            runtime.state = "activating"
-            runtime.lifecycle.setState("activating")
+            if (!current()) return
+            this.setState(runtime, "activating")
+            if (!current()) return
             const registries = this.contributions.forExtension(
                 manifest.id,
                 runtime.permissions,
                 runtime.storage,
             )
             const hostContext = this.hostContext
+            const publish = <K extends keyof HostContext>(key: K, value: HostContext[K]) => {
+                if (!current()) return
+                this.publicationOwners.set(key, lifecycle)
+                hostContext[key] = value
+            }
+            const liveCapability = <T extends object>(capability: T): T =>
+                new Proxy(capability, {
+                    get: (target, key) => {
+                        const value = Reflect.get(target, key, target)
+                        if (typeof value !== "function") return value
+                        return (...args: unknown[]) => {
+                            if (!current())
+                                throw new Error(`Extension context is disposed: ${manifest.id}`)
+                            return Reflect.apply(value, target, args)
+                        }
+                    },
+                })
+            const status = this.contextualStatus.forExtension(manifest.id)
             const context: ExtensionContext = {
                 extension: extensionInfo(manifest),
                 permissions: runtime.permissions,
                 host: {
                     ...hostContext,
-                    contextualStatus: this.contextualStatus.forExtension(manifest.id),
+                    commands: liveCapability(this.commands),
+                    contextualStatus: {
+                        publish: (value) => {
+                            const publication = current() ? status.publish(value) : undefined
+                            return {
+                                dispose: () => {
+                                    if (current()) publication?.dispose()
+                                },
+                            }
+                        },
+                        clear: () => {
+                            if (current()) status.clear()
+                        },
+                    },
                     // Forward mutable services to the shared host, including late installation
                     // and disposal, without sharing the extension-scoped status publisher.
                     get prompt() {
-                        return hostContext.prompt
+                        return current() ? hostContext.prompt : undefined
                     },
                     set prompt(value: HostContext["prompt"]) {
-                        hostContext.prompt = value
+                        publish("prompt", value)
                     },
                     get readingSummaries() {
-                        return hostContext.readingSummaries
+                        return current() ? hostContext.readingSummaries : undefined
                     },
                     set readingSummaries(value: HostContext["readingSummaries"]) {
-                        hostContext.readingSummaries = value
+                        publish("readingSummaries", value)
                     },
                     get readingDisplay() {
-                        return hostContext.readingDisplay
+                        return current() ? hostContext.readingDisplay : undefined
                     },
                     set readingDisplay(value: HostContext["readingDisplay"]) {
-                        hostContext.readingDisplay = value
+                        publish("readingDisplay", value)
                     },
                     get settings() {
-                        return hostContext.settings
+                        return current() ? hostContext.settings : undefined
                     },
                     set settings(value: HostContext["settings"]) {
-                        hostContext.settings = value
+                        publish("settings", value)
                     },
                 },
-                commands: registries.commands,
+                commands: liveCapability(registries.commands),
                 views: registries.views,
                 settings: registries.settings,
                 documents: registries.documents,
                 storage: guardExtensionCapability(runtime.storage, runtime.permissions, "storage"),
                 migration: this.migration,
-                notifications: guardExtensionCapability(
-                    this.notifications,
-                    runtime.permissions,
-                    "notifications",
+                notifications: liveCapability(
+                    guardExtensionCapability(
+                        this.notifications,
+                        runtime.permissions,
+                        "notifications",
+                    ),
                 ),
-                lifecycle: runtime.lifecycle,
+                lifecycle,
             }
             await runtime.extension.activate(context)
-            runtime.state = "active"
-            runtime.lifecycle.setState("active")
+            if (current()) this.setState(runtime, "active")
         } catch (cause) {
-            runtime.error = new ExtensionActivationError(manifest.id, cause)
-            runtime.state = "failed"
-            runtime.lifecycle.setState("failed")
-            await runtime.lifecycle.dispose()
-            this.contextualStatus.forExtension(manifest.id).clear()
-            this.contributions.disposeExtension(manifest.id)
-            this.notifications.error(`Extension ${manifest.name} failed to activate.`)
-            throw runtime.error
+            if (!current()) return
+            const error = new ExtensionActivationError(manifest.id, cause)
+            runtime.error = error
+            await this.invalidate(runtime, "failed")
+            if (runtime.lifecycle === lifecycle)
+                this.notifications.error(`Extension ${manifest.name} failed to activate.`)
+            throw error
         }
-    }
-
-    private enqueue(runtime: ExtensionRuntime, operation: () => Promise<void>): Promise<void> {
-        const transition = runtime.transition.then(operation, operation)
-        runtime.transition = transition.catch(() => undefined)
-        return transition
     }
 
     private requireRuntime(extensionId: string): ExtensionRuntime {

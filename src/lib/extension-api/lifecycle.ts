@@ -1,6 +1,8 @@
 import type { Disposable, Lifecycle, LifecycleState } from "./contracts"
 
 export class ExtensionLifecycle implements Lifecycle {
+    private readonly controller = new AbortController()
+    readonly signal = this.controller.signal
     private currentState: LifecycleState
     private disposed = false
     private disposal?: Promise<void>
@@ -22,7 +24,9 @@ export class ExtensionLifecycle implements Lifecycle {
 
     onDispose(listener: () => void | Promise<void>): Disposable {
         if (this.disposed) {
-            void listener()
+            void Promise.resolve()
+                .then(listener)
+                .catch(() => undefined)
             return { dispose: () => undefined }
         }
         this.listeners.add(listener)
@@ -45,6 +49,7 @@ export class ExtensionLifecycle implements Lifecycle {
         if (this.disposal) return this.disposal
         this.disposed = true
         this.currentState = "disposed"
+        this.controller.abort()
         const listeners = [...this.listeners]
         this.listeners.clear()
         this.disposal = Promise.allSettled(

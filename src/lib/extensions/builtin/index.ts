@@ -1,4 +1,9 @@
-import type { AppExtension, DocumentAdapter, ExtensionManifest } from "../../extension-api"
+import type {
+    AppExtension,
+    DocumentAdapter,
+    ExtensionManifest,
+    ProviderAvailability,
+} from "../../extension-api"
 import { DocumentService } from "../../core/documents"
 import { getDocumentExtension, type DocumentSource, type OpenedDocument } from "$lib/document-model"
 import { ExtensionHost, type ExtensionHostOptions } from "../../extension-host"
@@ -34,7 +39,84 @@ const readonlyRecord = <T extends object>(record: T): Readonly<T> =>
 
 // The built-in library owns file handles, object URLs, and relink state. Expose only the
 // viewer's read capability and its explicitly typed mutation operations.
-function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestState) {
+function viewerCapabilities(
+    getStore: () => typeof libraryStore,
+    providers: ProviderAvailability,
+    request: RelinkRequestState,
+) {
+    type Store = typeof libraryStore
+    const subscriptions = new Set<(available: boolean) => void>()
+    const subscriptionMethods = new Set([
+        "onNodesDeleted",
+        "onNodesDeleting",
+        "onNodeRelinked",
+        "onContentRestored",
+        "onNodeInvalidated",
+    ])
+    const urlOwners = new Map<string, Store>()
+    const providerSubscription = providers.onDidChange((provider) => {
+        if (provider.extensionId === "builtin.library")
+            for (const rebind of subscriptions) rebind(provider.state === "active")
+    })
+    // Capabilities keep their identity while the owning Library store is replaced.
+    const store = new Proxy({} as Store, {
+        get: (_, key: keyof Store) => {
+            const target = getStore()
+            if (key === "isDisposed")
+                return providers.get("builtin.library")?.state !== "active" || target.isDisposed
+            const value = target[key]
+            if (typeof value !== "function") return value
+            if (subscriptionMethods.has(key))
+                return (listener: (...args: unknown[]) => void) => {
+                    let stop: (() => void) | undefined
+                    const rebind = (available: boolean) => {
+                        stop?.()
+                        stop = undefined
+                        if (!available) return
+                        const owner = getStore()
+                        const lifetime = providers.get("builtin.library")!.signal
+                        const subscribe = owner[key] as (
+                            callback: (...args: unknown[]) => void,
+                        ) => () => void
+                        stop = subscribe.call(owner, (...args) => {
+                            if (!lifetime.aborted && getStore() === owner) listener(...args)
+                        })
+                    }
+                    subscriptions.add(rebind)
+                    rebind(providers.get("builtin.library")?.state === "active")
+                    return () => {
+                        stop?.()
+                        subscriptions.delete(rebind)
+                    }
+                }
+            if (key === "getFileUrl" || key === "restoreFileAccess")
+                return async (id: string) => {
+                    const lifetime = providers.get("builtin.library")!.signal
+                    lifetime.throwIfAborted()
+                    const url = await target[key](id)
+                    if (lifetime.aborted) {
+                        if (url) target.revokeFileUrl(id, url)
+                        lifetime.throwIfAborted()
+                    }
+                    if (url) urlOwners.set(url, target)
+                    return url
+                }
+            return value.bind(target)
+        },
+        set: (_, key: keyof Store, value) => Reflect.set(getStore(), key, value),
+    })
+    const releaseFileUrl = (id: string, url?: string) => {
+        const owner = (url && urlOwners.get(url)) || getStore()
+        if (url) urlOwners.delete(url)
+        return owner.revokeFileUrl(id, url)
+    }
+    const fenceMutation = <T>(mutation: () => Promise<T>) => {
+        const lifetime = providers.get("builtin.library")!.signal
+        return () => {
+            lifetime.throwIfAborted()
+            return mutation()
+        }
+    }
     // Reading operations capture immutable node identity. Repeated capability reads must
     // retain each unchanged node, not create a fresh identity on every access.
     const nodeSnapshots = new Map<string, { source: string; node: unknown }>()
@@ -82,12 +164,14 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
     }
 
     const builtinViewerLibraryMutations: ViewerLibraryMutationCapability = {
-        releaseFileUrl: (id, url) => store.revokeFileUrl(id, url),
+        releaseFileUrl,
         setActiveFileId: (id) => {
             store.activeFileId = id
         },
-        serializeBookMutation: (id, mutation) => store.serializeBookMutation(id, mutation),
-        serializeMetadataMutation: (mutation) => store.serializeMetadataMutation(mutation),
+        serializeBookMutation: (id, mutation) =>
+            store.serializeBookMutation(id, fenceMutation(mutation)),
+        serializeMetadataMutation: (mutation) =>
+            store.serializeMetadataMutation(fenceMutation(mutation)),
         saveIndexedTexts: (id, records, generation) =>
             store.saveIndexedTexts(id, records as never[], generation),
         revokePreviewUrl: (id) => store.revokePreviewUrl(id),
@@ -114,7 +198,7 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
         restoreFileAccess: (id) => store.restoreFileAccess(id),
         requestRelink: (id) => request.request(id),
         waitForRelink: (id) => store.waitForRelink(id),
-        releaseFileUrl: (id, url) => store.revokeFileUrl(id, url),
+        releaseFileUrl,
         getContentGeneration: (id) => store.getContentGeneration(id),
         isCurrentContent: (id, generation) => store.isCurrentContent(id, generation),
         isCurrentFileUrl: (id, url, generation) => store.isCurrentFileUrl(id, url, generation),
@@ -125,6 +209,11 @@ function viewerCapabilities(store: typeof libraryStore, request: RelinkRequestSt
         files: builtinViewerFileCapability,
         library: builtinViewerLibraryCapability,
         mutations: builtinViewerLibraryMutations,
+        dispose: () => {
+            providerSubscription.dispose()
+            for (const rebind of subscriptions) rebind(false)
+            subscriptions.clear()
+        },
     }
 }
 
@@ -225,7 +314,7 @@ export function createBuiltinHost(
         {
             manifest: BUILTIN_MANIFESTS[0],
             activate: async (context) => {
-                store = await activateLibrary(
+                const activatedStore = await activateLibrary(
                     context,
                     context.host?.prompt?.promptStore,
                     () => {
@@ -235,13 +324,15 @@ export function createBuiltinHost(
                     documentCapability,
                     request,
                 )
+                if (!context.lifecycle.isDisposed()) store = activatedStore
             },
         },
         { manifest: BUILTIN_MANIFESTS[1], activate: activatePrompt },
         {
             manifest: BUILTIN_MANIFESTS[2],
             activate: (context) => {
-                const capabilities = viewerCapabilities(store, request)
+                const capabilities = viewerCapabilities(() => store, host.providers, request)
+                context.lifecycle.onDispose(capabilities.dispose)
                 const RelinkHost: typeof LibraryRelinkHost = (anchor, props) =>
                     LibraryRelinkHost(anchor, { ...props, store, request })
                 return activateViewer(

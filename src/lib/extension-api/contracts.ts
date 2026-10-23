@@ -126,6 +126,8 @@ export type LifecycleState =
     | "disposed"
 
 export interface Lifecycle {
+    /** Host contexts always supply a permanently revocable activation signal. */
+    readonly signal?: AbortSignal
     readonly state: LifecycleState
     onDispose(listener: () => void | Promise<void>): Disposable
     isDisposed(): boolean

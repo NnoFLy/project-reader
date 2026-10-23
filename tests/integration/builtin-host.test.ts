@@ -1,8 +1,20 @@
-import { describe, expect, it } from "vitest"
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest"
+import { Blob as NodeBlob } from "node:buffer"
+import { URL as NodeURL } from "node:url"
 import type { AppExtension, DocumentAdapter, ExtensionStorage } from "$lib/extension-api"
 import { ExtensionHost } from "$lib/extension-host"
 import { BUILTIN_MANIFESTS, createBuiltinHost } from "$lib/extensions/builtin"
-import { MemoryStorageBackend } from "$lib/core/storage"
+import { createExtensionStorage, MemoryStorageBackend } from "$lib/core/storage"
+import { viewerStore } from "$lib/extensions/builtin/viewer"
+
+vi.hoisted(() => {
+    window.matchMedia = (() => ({
+        matches: false,
+        addEventListener() {},
+        removeEventListener() {},
+    })) as unknown as typeof window.matchMedia
+})
 
 const integrationExtension = (id: string, activate: AppExtension["activate"]): AppExtension => ({
     manifest: {
@@ -54,6 +66,46 @@ const integrationDocumentAdapter = {
 } satisfies DocumentAdapter
 
 describe("built-in extension host integration", () => {
+    it("rebinds a live Reading workspace's Library access after provider reactivation", async () => {
+        vi.stubGlobal("Blob", NodeBlob)
+        vi.stubGlobal("URL", NodeURL)
+        const storage = new MemoryStorageBackend()
+        const library = createExtensionStorage(storage, "builtin.library").namespace("library")
+        const addBook = async (id: string) => {
+            await library.set(`books.${id}`, {
+                id,
+                name: `${id}.fake`,
+                type: "file",
+                parentId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { author: null, totalPages: 1 },
+                size: 1,
+            })
+            await library.set(`fileContents.${id}`, { id, file: new Blob(["a"]) })
+        }
+        await addBook("first")
+        const host = createBuiltinHost({ storage })
+        host.documentService.adapters.register(integrationDocumentAdapter)
+        try {
+            await host.start()
+            const workspace = viewerStore.workspace
+            await workspace.open("first")
+            expect(workspace.snapshot.documentId).toBe("first")
+            await workspace.close()
+            await host.disable("builtin.library")
+            await addBook("second")
+            await host.enable("builtin.library")
+            await host.activate("builtin.library")
+            await workspace.open("second")
+            expect(workspace.snapshot.documentId).toBe("second")
+        } finally {
+            await host.dispose()
+            vi.unstubAllGlobals()
+        }
+    })
+
     it("activates built-in startup extensions and lazy document extensions", async () => {
         const host = createBuiltinHost()
 

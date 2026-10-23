@@ -97,6 +97,7 @@ export interface ReadingSummaryCapability {
 }
 
 export interface HostContext {
+    readonly providers?: import("./providers").ProviderAvailability
     readingSummaries?: ReadingSummaryCapability
     readingDisplay?: ReadingDisplayCapability
     /** Permanently revoked when this host loses permission to persist shared data. */
