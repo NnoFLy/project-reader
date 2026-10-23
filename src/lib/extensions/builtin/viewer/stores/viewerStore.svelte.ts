@@ -12,7 +12,11 @@ import {
 import { type Book } from "./viewerStore.types"
 import type { StorageNamespace } from "$lib/extension-api"
 import type { ViewerDocumentLoader } from "../viewerDocument"
-import { ReadingWorkspace, type ReadingSnapshot } from "../readingWorkspace"
+import {
+    ReadingWorkspace,
+    type ReadingRecoveryRecord,
+    type ReadingSnapshot,
+} from "../readingWorkspace"
 import {
     ReadingStorage,
     type ReadingDocumentState,
@@ -27,6 +31,8 @@ import {
 } from "../viewerHost"
 
 export interface ViewerStoreOptions {
+    providers?: import("$lib/extension-api/providers").ProviderAvailability
+    recovery?: ReadingRecoveryRecord
     files?: ViewerFileCapability
     library?: ViewerLibraryCapability
     mutations?: ViewerLibraryMutationCapability
@@ -132,6 +138,8 @@ export class ViewerStore {
                 clearForwardHistory: () => mutations.clearForwardHistory(),
             },
             loader: this.options.loader,
+            providers: this.options.providers,
+            recovery: this.options.recovery,
             writeSignal: this.options.writeSignal,
             defaults: this.options.defaults,
             onStorageError: this.options.onStorageError,
@@ -370,20 +378,25 @@ export class ViewerStore {
         )
             return
 
-        await this.mutations.updateFile(
-            book.id,
-            {
-                name: book.name,
-                isLocked: book.isLocked,
-                metadata: {
-                    pdfDest: book.pdfDest,
-                    totalPages: book.totalPages,
-                    author: book.author,
+        try {
+            await this.mutations.updateFile(
+                book.id,
+                {
+                    name: book.name,
+                    isLocked: book.isLocked,
+                    metadata: {
+                        pdfDest: book.pdfDest,
+                        totalPages: book.totalPages,
+                        author: book.author,
+                    },
                 },
-            },
-            false,
-            resolvedExpectedGeneration,
-        )
+                false,
+                resolvedExpectedGeneration,
+            )
+        } catch (error) {
+            if (this.disposed || this.files.isDisposed || this.options.writeSignal?.aborted) return
+            throw error
+        }
 
         if (
             this.disposed ||

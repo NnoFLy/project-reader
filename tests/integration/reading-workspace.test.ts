@@ -940,8 +940,8 @@ describe("Reading workspace host lifetime", () => {
                             getPreviewUrl: (id: string) => survivor.store.library.getPreviewUrl(id),
                             onNodeInvalidated: (listener: (id: string) => void) =>
                                 survivor.store.library.onNodeInvalidated(listener),
-                            revokePreviewUrl: (id: string) =>
-                                survivor.store.libraryMutations.revokePreviewUrl(id),
+                            revokePreviewUrl: (id: string, url: string) =>
+                                survivor.store.libraryMutations.revokePreviewUrl(id, url),
                         },
                     },
                 })

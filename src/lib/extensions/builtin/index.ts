@@ -54,6 +54,7 @@ function viewerCapabilities(
         "onNodeInvalidated",
     ])
     const urlOwners = new Map<string, Store>()
+    const previewOwners = new Map<string, { owner: Store; id: string; leases: number }>()
     const providerSubscription = providers.onDidChange((provider) => {
         if (provider.extensionId === "builtin.library")
             for (const rebind of subscriptions) rebind(provider.state === "active")
@@ -88,6 +89,25 @@ function viewerCapabilities(
                         stop?.()
                         subscriptions.delete(rebind)
                     }
+                }
+            if (key === "getPreviewUrl")
+                return async (id: string) => {
+                    const lifetime = providers.get("builtin.library")!.signal
+                    lifetime.throwIfAborted()
+                    const url = await target.getPreviewUrl(id)
+                    if (lifetime.aborted) {
+                        if (url && target.previewUrls[id] === url) target.revokePreviewUrl(id)
+                        lifetime.throwIfAborted()
+                    }
+                    if (url) {
+                        const existing = previewOwners.get(url)
+                        previewOwners.set(url, {
+                            owner: target,
+                            id,
+                            leases: (existing?.leases ?? 0) + 1,
+                        })
+                    }
+                    return url
                 }
             if (key === "getFileUrl" || key === "restoreFileAccess")
                 return async (id: string) => {
@@ -174,7 +194,12 @@ function viewerCapabilities(
             store.serializeMetadataMutation(fenceMutation(mutation)),
         saveIndexedTexts: (id, records, generation) =>
             store.saveIndexedTexts(id, records as never[], generation),
-        revokePreviewUrl: (id) => store.revokePreviewUrl(id),
+        revokePreviewUrl: (id, url) => {
+            const lease = url && previewOwners.get(url)
+            if (!lease || lease.id !== id) return
+            if (--lease.leases === 0) previewOwners.delete(url)
+            if (lease.owner.previewUrls[id] === url) lease.owner.revokePreviewUrl(id)
+        },
         invalidatePreview: (id) => store.invalidatePreview(id),
         updateFile: (id, changes, ...options) =>
             store.updateFile(
@@ -309,7 +334,17 @@ export function createBuiltinHost(
     }
     const clearViewerDocuments = installViewerDocumentService(documentCapability)
     const clearLibraryDocuments = installDocumentService(documentCapability)
-    const loader = createServiceLoader(documentCapability)
+    const loader = {
+        ...createServiceLoader(documentCapability),
+        requiredProviders(name: string): readonly string[] {
+            const extension = getDocumentExtension(name)
+            return BUILTIN_MANIFESTS.filter((manifest) =>
+                manifest.activationEvents.some(
+                    (event) => event.type === "onDocumentType" && event.extension === extension,
+                ),
+            ).map((manifest) => manifest.id)
+        },
+    }
     const extensions: readonly AppExtension[] = [
         {
             manifest: BUILTIN_MANIFESTS[0],

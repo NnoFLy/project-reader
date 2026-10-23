@@ -1,3 +1,6 @@
+import type { ProviderAvailability, ProviderSnapshot } from "$lib/extension-api/providers"
+import type { ViewerDocument } from "./viewerDocument"
+import { isDocumentId, readState, readAnnotations } from "./readingStorage"
 import { DocumentAccess, DocumentAccessUnavailableError } from "$lib/core/documents/document-access"
 import type { ViewerFileCapability } from "./viewerHost"
 import type { ViewerDocumentLoader } from "./viewerDocument"
@@ -68,10 +71,29 @@ export interface ViewerOpenFailure {
 export interface ReadingSnapshot {
     readonly documentId: string | null
     readonly state: ReadingDocumentState
-    readonly status: "closed" | "ready" | "unavailable" | "missing"
+    readonly status: "closed" | "ready" | "unavailable" | "missing" | "provider-unavailable"
+}
+
+export interface ReadingRecoveryRecord {
+    readonly documentId: string | null
+    readonly promotions: readonly {
+        readonly documentId: string
+        readonly drafts: readonly ReadingDraft[]
+    }[]
+    readonly states: readonly {
+        readonly documentId: string
+        readonly state: ReadingDocumentState
+    }[]
+    readonly annotations: readonly {
+        readonly documentId: string
+        readonly records: ReadingRecords
+        readonly dirty: boolean
+    }[]
 }
 
 export interface ReadingWorkspaceOptions {
+    readonly providers?: ProviderAvailability
+    readonly recovery?: ReadingRecoveryRecord
     readonly files: ViewerFileCapability
     readonly loader?: ViewerDocumentLoader
     readonly storage?: ReadingStorage
@@ -87,6 +109,12 @@ export interface ReadingWorkspaceOptions {
 /** Viewer-owned single-reader behavior; core owns acquisition and resource correctness. */
 export class ReadingWorkspace {
     private readonly access: DocumentAccess
+    private intendedId: string | null = null
+    private retryRevision?: number
+    private resourceController = new AbortController()
+    private readonly documentViews = new WeakMap<ViewerDocument, ViewerDocument>()
+    private readonly providerWatches = new Map<string, () => void>()
+    private providerSubscription?: { dispose(): void }
     private synchronization?: Promise<void>
     private relinkPending = false
     private storage?: ReadingStorage
@@ -108,6 +136,9 @@ export class ReadingWorkspace {
     private readonly closeTokens = new WeakSet<ReadingCloseToken>()
     private readonly draftLoads = new Map<string, Promise<boolean>>()
     private readonly invalidAnnotations = new Set<string>()
+    private readonly pendingPromotions = new Map<string, readonly ReadingDraft[]>()
+    private readonly recoveryConflicts = new Set<string>()
+    private recoveryReconciliation?: Promise<boolean>
 
     /** Monotonic selection intent, including acquisitions that have not published yet. */
     get selectionRevision(): number {
@@ -118,6 +149,174 @@ export class ReadingWorkspace {
         this.access = new DocumentAccess(options.files)
         this.storage = options.storage
         this.current = { documentId: null, state: this.defaultState(), status: "closed" }
+        this.providerSubscription = options.providers?.onDidChange((provider) =>
+            this.observeProvider(provider),
+        )
+        this.watchProvider("builtin.library")
+        if (options.recovery) this.restoreRecovery(options.recovery)
+    }
+
+    /** Data only: validated copies never transfer a disposed resource or callback lifetime. */
+    captureRecovery(): ReadingRecoveryRecord | undefined {
+        if (this.revision === 0 && this.intendedId === null) return undefined
+        const states = [...this.states].flatMap(([documentId, state]) => {
+            const validated = readState(state as unknown as Record<string, unknown>)
+            return isDocumentId(documentId) && validated
+                ? [Object.freeze({ documentId, state: Object.freeze(validated) })]
+                : []
+        })
+        const annotations = [...this.annotationStates].flatMap(([documentId, snapshot]) => {
+            const records = readAnnotations(snapshot, documentId)
+            return snapshot.loaded && snapshot.dirty && isDocumentId(documentId) && records
+                ? [Object.freeze({ documentId, records, dirty: snapshot.dirty })]
+                : []
+        })
+        const promotions = [...this.pendingPromotions].flatMap(([documentId, drafts]) => {
+            const records = readAnnotations({ notes: [], bookmarks: [], drafts }, documentId)
+            return records ? [Object.freeze({ documentId, drafts: records.drafts })] : []
+        })
+        return Object.freeze({
+            documentId: this.intendedId,
+            promotions: Object.freeze(promotions),
+            states: Object.freeze(states),
+            annotations: Object.freeze(annotations),
+        })
+    }
+
+    private restoreRecovery(record: ReadingRecoveryRecord): void {
+        for (const item of record.states) {
+            const state = readState(item.state as unknown as Record<string, unknown>)
+            if (isDocumentId(item.documentId) && state)
+                this.states.set(item.documentId, Object.freeze(state))
+        }
+        for (const item of record.annotations) {
+            const records = readAnnotations(item.records, item.documentId)
+            if (isDocumentId(item.documentId) && records)
+                this.publishAnnotations(item.documentId, records, true, item.dirty)
+        }
+        for (const item of record.promotions) {
+            const records = readAnnotations(
+                { notes: [], bookmarks: [], drafts: item.drafts },
+                item.documentId,
+            )
+            if (isDocumentId(item.documentId) && records)
+                this.pendingPromotions.set(item.documentId, records.drafts)
+        }
+        this.revision++
+        this.intendedId = isDocumentId(record.documentId) ? record.documentId : null
+        const knownState = this.states.get(this.intendedId ?? "")
+        this.change(
+            this.intendedId,
+            knownState ?? this.defaultState(),
+            this.intendedId ? "provider-unavailable" : "closed",
+        )
+        if (this.intendedId && !knownState) this.states.delete(this.intendedId)
+    }
+
+    private async reconcileRecovery(): Promise<boolean> {
+        if (!this.storage) return false
+        for (const [documentId, drafts] of this.pendingPromotions) {
+            const snapshot = this.annotations(documentId)
+            if (!snapshot.dirty) {
+                this.pendingPromotions.delete(documentId)
+                continue
+            }
+            try {
+                const durable = await this.storage.readAnnotations(documentId)
+                if (this.disposed) return false
+                let records: ReadingRecords = this.annotations(documentId)
+                for (const draft of drafts) {
+                    const saved = durable.notes.find((note) => note.id === draft.id)
+                    if (!saved || JSON.stringify(saved) !== JSON.stringify(draft)) continue
+                    const latest = records.drafts.find((item) => item.id === draft.id)
+                    // Never silently overwrite a terminal promotion with edits accepted later.
+                    if (latest && JSON.stringify(latest) !== JSON.stringify(draft)) {
+                        this.recoveryConflicts.add(documentId)
+                        continue
+                    }
+                    records = freezeAnnotations(
+                        [...records.notes.filter((note) => note.id !== draft.id), saved],
+                        records.bookmarks,
+                        records.drafts.filter((item) => item.id !== draft.id),
+                    )
+                }
+                this.publishAnnotations(
+                    documentId,
+                    records,
+                    true,
+                    true,
+                    this.recoveryConflicts.has(documentId) ? "reading.storage.write" : null,
+                )
+                if (!this.recoveryConflicts.has(documentId))
+                    this.pendingPromotions.delete(documentId)
+            } catch {
+                // Retain the handoff until a later explicit retry can inspect terminal storage.
+                return false
+            }
+        }
+        return !this.recoveryConflicts.size
+    }
+
+    private requiredProviders(id = this.intendedId): readonly string[] {
+        const name = id && this.options.files.nodes[id]?.name
+        return [
+            "builtin.library",
+            ...(name ? (this.options.loader?.requiredProviders?.(name) ?? []) : []),
+        ]
+    }
+
+    private watchProvider(id: string): void {
+        const provider = this.options.providers?.get(id)
+        if (provider) this.observeProvider(provider)
+    }
+
+    private observeProvider(provider: ProviderSnapshot): void {
+        if (this.disposed || !this.requiredProviders().includes(provider.extensionId)) return
+        this.providerWatches.get(provider.extensionId)?.()
+        const unavailable = () => {
+            if (this.requiredProviders().includes(provider.extensionId)) this.providerUnavailable()
+        }
+        provider.signal.addEventListener("abort", unavailable, { once: true })
+        this.providerWatches.set(provider.extensionId, () =>
+            provider.signal.removeEventListener("abort", unavailable),
+        )
+        if (
+            provider.signal.aborted ||
+            provider.state === "disabled" ||
+            provider.state === "failed" ||
+            provider.state === "disposed"
+        )
+            unavailable()
+    }
+
+    private providersAvailable(): boolean {
+        return this.requiredProviders().every((id) => {
+            const provider = this.options.providers?.get(id)
+            // Format providers may still be lazily registered; loader activates them.
+            return (
+                !provider ||
+                (!provider.signal.aborted &&
+                    (provider.state === "active" ||
+                        (id !== "builtin.library" &&
+                            ["enabled", "installed", "discovered", "activating"].includes(
+                                provider.state,
+                            ))))
+            )
+        })
+    }
+
+    private providerUnavailable(): void {
+        if (this.disposed || !this.intendedId) return
+        this.revision++
+        this.resourceController.abort()
+        const closing = this.access.close()
+        this.options.publish(null)
+        const knownState = this.states.get(this.intendedId)
+        this.change(this.intendedId, knownState ?? this.defaultState(), "provider-unavailable")
+        if (!knownState) this.states.delete(this.intendedId)
+        // Unknown pending state must be hydrated on retry, not overwritten with defaults.
+        if (knownState) this.save(true)
+        void this.bounded(closing).catch(() => undefined)
     }
 
     get snapshot(): ReadingSnapshot {
@@ -201,7 +400,7 @@ export class ReadingWorkspace {
             )
         if (!owns || !draft)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadDraftsForMutation(documentId)))
+        if (!this.annotations(documentId).loaded && !(await this.loadDraftsForMutation(documentId)))
             return {
                 ok: false,
                 error: new ReadingStorageError("reading.storage.read"),
@@ -227,7 +426,7 @@ export class ReadingWorkspace {
         const owns = this.draftOwnership(documentId)
         if (!owns || !isAnnotationId(draftId))
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadDraftsForMutation(documentId)))
+        if (!this.annotations(documentId).loaded && !(await this.loadDraftsForMutation(documentId)))
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -249,7 +448,7 @@ export class ReadingWorkspace {
         const owns = this.draftOwnership(documentId)
         if (!owns || !isAnnotationId(draftId))
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadDraftsForMutation(documentId)))
+        if (!this.annotations(documentId).loaded && !(await this.loadDraftsForMutation(documentId)))
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -266,9 +465,9 @@ export class ReadingWorkspace {
     /** Retry durable editing state, not an instruction to turn drafts into saved notes. */
     async persistDrafts(documentId: string): Promise<ReadingMutationResult<void>> {
         const owns = this.draftOwnership(documentId)
-        if (!owns)
+        if (!owns || this.pendingPromotions.has(documentId))
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadDraftsForMutation(documentId)))
+        if (!this.annotations(documentId).loaded && !(await this.loadDraftsForMutation(documentId)))
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -283,7 +482,7 @@ export class ReadingWorkspace {
         const owns = this.draftOwnership(documentId)
         if (!owns || !isAnnotationId(draftId))
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadDraftsForMutation(documentId)))
+        if (!this.annotations(documentId).loaded && !(await this.loadDraftsForMutation(documentId)))
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -317,8 +516,11 @@ export class ReadingWorkspace {
             try {
                 if (!this.storage) throw new ReadingStorageError("reading.storage.write")
                 // Atomic replacement: no separate cleanup write can duplicate a saved note.
+                this.pendingPromotions.set(documentId, drafts)
                 await this.storage.writeAnnotations(documentId, state)
                 if (!owns()) return
+                this.pendingPromotions.delete(documentId)
+                this.recoveryConflicts.delete(documentId)
                 const latest = this.annotations(documentId)
                 // Edits retain draft identity; explicit discard removes it. The queued
                 // discard write replaces this stale envelope without promoting abandoned work.
@@ -348,6 +550,7 @@ export class ReadingWorkspace {
                 result = { ok: true, value: undefined }
             } catch (error) {
                 if (!owns()) return
+                this.pendingPromotions.delete(documentId)
                 this.report(error, "reading.storage.write")
                 this.publishAnnotations(
                     documentId,
@@ -490,7 +693,10 @@ export class ReadingWorkspace {
         )
         if (!note)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return {
                 ok: false,
                 error: new ReadingStorageError("reading.storage.read"),
@@ -516,7 +722,10 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -540,7 +749,10 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -566,7 +778,10 @@ export class ReadingWorkspace {
         )
         if (!bookmark)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return {
                 ok: false,
                 error: new ReadingStorageError("reading.storage.read"),
@@ -592,7 +807,10 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -619,7 +837,10 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -638,7 +859,10 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        if (!(await this.loadAnnotationsForMutation(documentId)))
+        if (
+            !this.annotations(documentId).loaded &&
+            !(await this.loadAnnotationsForMutation(documentId))
+        )
             return { ok: false, error: new ReadingStorageError("reading.storage.read") }
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
@@ -656,7 +880,8 @@ export class ReadingWorkspace {
             value,
         }
         this.queue = this.queue.then(async () => {
-            if (!owns()) return
+            if (!owns() || (this.recoveryReconciliation && this.pendingPromotions.has(documentId)))
+                return
             // Read the authoritative cache at admission to this shared writer queue.
             // Earlier atomic draft promotions must not be undone by stale envelopes.
             const state = this.annotations(documentId)
@@ -712,6 +937,10 @@ export class ReadingWorkspace {
     async restore(storage = this.storage): Promise<"complete" | "pending"> {
         if (this.disposed || !storage) return "complete"
         this.storage = storage
+        if (this.pendingPromotions.size) {
+            this.recoveryReconciliation = this.reconcileRecovery()
+            if (!(await this.bounded(this.recoveryReconciliation))) return "pending"
+        }
         if (this.revision !== 0) {
             this.save(true)
             return "complete"
@@ -721,6 +950,7 @@ export class ReadingWorkspace {
             try {
                 const id = await storage.readCurrent()
                 if (this.disposed || revision !== this.revision || !id) return
+                this.intendedId = id
                 await this.select(id, true, undefined, false, revision, true)
             } catch (error) {
                 this.report(error, "reading.storage.read")
@@ -733,6 +963,14 @@ export class ReadingWorkspace {
         id: string,
         onFailure?: (failure: ViewerOpenFailure) => void | Promise<void>,
     ): Promise<boolean> {
+        if (this.disposed || !isDocumentId(id)) return Promise.resolve(false)
+        this.intendedId = id
+        for (const providerId of this.requiredProviders()) this.watchProvider(providerId)
+        if (!this.providersAvailable()) {
+            this.providerUnavailable()
+            return Promise.resolve(false)
+        }
+        if (this.resourceController.signal.aborted) this.resourceController = new AbortController()
         return this.select(id, true, onFailure, false, ++this.revision)
     }
 
@@ -774,11 +1012,12 @@ export class ReadingWorkspace {
     private save(pointer: boolean): void {
         const storage = this.storage
         const { documentId, state } = this.current
+        const knownState = !documentId || this.states.has(documentId)
         if (!storage || this.disposed || this.options.writeSignal?.aborted) return
         // Capture immutable identity/state now, never read the visible document in queued work.
         this.queue = this.queue.then(async () => {
             if (this.writesClosed || this.options.writeSignal?.aborted) return
-            if (documentId) {
+            if (documentId && knownState) {
                 try {
                     await storage.writeDocument(documentId, state)
                 } catch (error) {
@@ -829,6 +1068,7 @@ export class ReadingWorkspace {
                 const refresh = this.relinkPending
                 this.relinkPending = false
                 const book = this.options.getCurrentBook()
+                if (this.current.status === "provider-unavailable") return
                 const id = book?.id ?? this.current.documentId
                 if (!id) return
                 await this.select(id, refresh, undefined, true, this.revision)
@@ -854,6 +1094,10 @@ export class ReadingWorkspace {
     ): Promise<boolean> {
         const current = () => !this.disposed && revision === this.revision
         if (!current()) return false
+        if (!this.providersAvailable()) {
+            this.providerUnavailable()
+            return false
+        }
         let state = this.states.get(id)
         if (!state && this.storage) {
             try {
@@ -881,6 +1125,11 @@ export class ReadingWorkspace {
                         isLocked: url ? this.options.files.isLockedMap[id] : true,
                     })
                     if (accepted === false) return false
+                    if (this.current.documentId && this.current.documentId !== id) {
+                        this.resourceController.abort()
+                        this.resourceController = new AbortController()
+                    }
+                    this.intendedId = id
                     this.change(id, latest, url ? "ready" : "unavailable")
                     if (!restoring) this.save(true)
                     return true
@@ -939,8 +1188,34 @@ export class ReadingWorkspace {
     }
 
     async retry(): Promise<boolean> {
-        const id = this.current.documentId
-        return id ? this.open(id) : false
+        const id = this.intendedId
+        if (!id || this.disposed) return false
+        const selectionRevision = this.revision
+        if (this.recoveryReconciliation) {
+            if (!(await this.bounded(this.recoveryReconciliation))) return false
+            if (!(await this.recoveryReconciliation)) {
+                this.recoveryReconciliation = this.reconcileRecovery()
+                if (
+                    !(await this.bounded(this.recoveryReconciliation)) ||
+                    !(await this.recoveryReconciliation)
+                )
+                    return false
+            }
+        }
+        if (this.disposed || selectionRevision !== this.revision || this.intendedId !== id)
+            return false
+        const opening = this.open(id)
+        const revision = this.revision
+        this.retryRevision = revision
+        const opened = await opening.finally(() => {
+            if (this.retryRevision === revision) this.retryRevision = undefined
+        })
+        if (!opened || this.intendedId !== id || this.disposed) return false
+        this.save(true)
+        for (const [documentId, snapshot] of this.annotationStates) {
+            if (snapshot.dirty) void this.persistDrafts(documentId)
+        }
+        return true
     }
 
     requestRelink(): void {
@@ -948,20 +1223,70 @@ export class ReadingWorkspace {
             this.options.files.requestRelink(this.current.documentId)
     }
 
-    loadDocument(signal?: AbortSignal) {
-        // Core fences loads by source ownership, not by same-session selection attempts.
-        return this.access.load((claim, signal) => {
-            const loader = this.options.loader
-            if (!loader) throw new Error("The workspace document loader is unavailable")
-            return loader.open(
-                {
-                    id: claim.id,
-                    url: claim.url,
-                    name: this.options.files.nodes[claim.id]?.name ?? "document",
+    async loadDocument(signal?: AbortSignal): Promise<ViewerDocument | undefined> {
+        if (this.disposed || this.current.status !== "ready" || !this.current.documentId) return
+        const documentId = this.current.documentId
+        const controller = this.resourceController
+        const contentGeneration = this.options.files.getContentGeneration(documentId)
+        const owns = () =>
+            !this.disposed &&
+            !controller.signal.aborted &&
+            this.current.documentId === documentId &&
+            this.intendedId === documentId &&
+            this.resourceController === controller &&
+            this.options.files.isCurrentContent(documentId, contentGeneration)
+        const operationSignal = signal
+            ? AbortSignal.any([signal, controller.signal])
+            : controller.signal
+        try {
+            const document = await this.access.load((claim, signal) => {
+                const loader = this.options.loader
+                if (!loader) throw new Error("The workspace document loader is unavailable")
+                return loader.open(
+                    {
+                        id: claim.id,
+                        url: claim.url,
+                        name: this.options.files.nodes[claim.id]?.name ?? "document",
+                    },
+                    signal,
+                )
+            }, operationSignal)
+            if (!document || operationSignal.aborted || !owns()) return
+            const existing = this.documentViews.get(document)
+            if (existing) return existing
+            const view = new Proxy(document, {
+                get: (target, key) => {
+                    const value = Reflect.get(target, key, target)
+                    if (typeof value !== "function" || key === "close")
+                        return typeof value === "function" ? value.bind(target) : value
+                    return async (...args: unknown[]) => {
+                        try {
+                            controller.signal.throwIfAborted()
+                            const result = await value.apply(target, args)
+                            controller.signal.throwIfAborted()
+                            return result
+                        } catch (error) {
+                            const cancelledByCaller = args.some((argument) =>
+                                argument instanceof AbortSignal
+                                    ? argument.aborted
+                                    : !!argument &&
+                                      typeof argument === "object" &&
+                                      "signal" in argument &&
+                                      (argument.signal as AbortSignal | undefined)?.aborted,
+                            )
+                            if (owns() && !controller.signal.aborted && !cancelledByCaller)
+                                this.providerUnavailable()
+                            throw error
+                        }
+                    }
                 },
-                signal,
-            )
-        }, signal)
+            }) as ViewerDocument
+            this.documentViews.set(document, view)
+            return view
+        } catch {
+            if (owns() && !operationSignal.aborted) this.providerUnavailable()
+            return undefined
+        }
     }
 
     /** Compatibility callers cannot bypass a draft decision. UI uses requestClose/resolveClose. */
@@ -973,7 +1298,9 @@ export class ReadingWorkspace {
         if (this.disposed) return { status: "superseded" }
         const documentId = this.current.documentId
         // An explicit close also cancels a pending initial restoration/acquisition.
-        const selectionRevision = documentId ? this.revision : ++this.revision
+        const selectionRevision =
+            documentId && this.retryRevision !== this.revision ? this.revision : ++this.revision
+        if (this.retryRevision !== undefined) this.intendedId = documentId
         if (documentId && this.storage && !(await this.loadDraftsForMutation(documentId)))
             return { status: "failed", error: new ReadingStorageError("reading.storage.read") }
         if (
@@ -1077,6 +1404,8 @@ export class ReadingWorkspace {
         if (obsoleteAfterWrite) return { status: obsoleteAfterWrite }
         if (this.options.writeSignal?.aborted || this.writesClosed)
             return { status: "failed", error: new ReadingStorageError("reading.storage.write") }
+        this.intendedId = null
+        this.resourceController.abort()
         const closingRevision = ++this.revision
         const closing = this.access.close()
         this.options.publish(null)
@@ -1093,6 +1422,10 @@ export class ReadingWorkspace {
             // Fence publication and new mutations synchronously. The host has already revoked
             // its write signal on shutdown; never revive that lifetime to finish saving.
             this.disposed = true
+            this.resourceController.abort()
+            this.providerSubscription?.dispose()
+            for (const unsubscribe of this.providerWatches.values()) unsubscribe()
+            this.providerWatches.clear()
             this.annotationListeners.clear()
             this.disposal = this.bounded(Promise.all([this.queue, this.access.dispose()]))
                 .then(() => undefined)

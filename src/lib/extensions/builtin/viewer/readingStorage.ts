@@ -41,7 +41,7 @@ const DOCUMENT_PREFIX = "reading-v1-document-"
 const ANNOTATIONS_PREFIX = "reading-v1-annotations-"
 const MAX_DOCUMENT_ID_LENGTH = 1024
 
-function isDocumentId(value: unknown): value is string {
+export function isDocumentId(value: unknown): value is string {
     return (
         typeof value === "string" &&
         value.length > 0 &&
@@ -54,7 +54,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function readState(value: Record<string, unknown>): ReadingDocumentState | null {
+export function readState(value: Record<string, unknown>): ReadingDocumentState | null {
     const { pageNumber, scrollPosition, scale, layout } = value
     if (
         typeof pageNumber !== "number" ||
@@ -83,7 +83,7 @@ function documentKey(documentId: string, prefix = DOCUMENT_PREFIX): string {
     return `${prefix}${encoded}`
 }
 
-function readAnnotations(value: unknown, documentId: string): ReadingRecords | null {
+export function readAnnotations(value: unknown, documentId: string): ReadingRecords | null {
     if (
         !isRecord(value) ||
         !Array.isArray(value.notes) ||

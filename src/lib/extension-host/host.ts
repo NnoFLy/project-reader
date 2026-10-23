@@ -60,6 +60,9 @@ export class ExtensionHost {
     get prompt(): HostContext["prompt"] {
         return this.hostContext.prompt
     }
+    get readingRecovery(): HostContext["readingRecovery"] {
+        return this.hostContext.readingRecovery
+    }
     readonly notifications: NotificationServiceImpl
     readonly contextualStatus: ContextualStatusServiceImpl
     readonly documentService: DocumentService
@@ -391,6 +394,12 @@ export class ExtensionHost {
                     },
                     set readingSummaries(value: HostContext["readingSummaries"]) {
                         publish("readingSummaries", value)
+                    },
+                    get readingRecovery() {
+                        return current() ? hostContext.readingRecovery : undefined
+                    },
+                    set readingRecovery(value: HostContext["readingRecovery"]) {
+                        publish("readingRecovery", value)
                     },
                     get readingDisplay() {
                         return current() ? hostContext.readingDisplay : undefined

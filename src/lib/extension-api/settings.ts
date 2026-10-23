@@ -96,7 +96,15 @@ export interface ReadingSummaryCapability {
     } | null>
 }
 
+/** Viewer-owned recovery reference only; no document or annotation material. */
+export interface ReadingRecoveryCapability {
+    readonly documentId: string | null
+    readonly status: "closed" | "ready" | "unavailable" | "missing" | "provider-unavailable"
+    retry(): Promise<boolean>
+}
+
 export interface HostContext {
+    readingRecovery?: ReadingRecoveryCapability
     readonly providers?: import("./providers").ProviderAvailability
     readingSummaries?: ReadingSummaryCapability
     readingDisplay?: ReadingDisplayCapability

@@ -39,7 +39,7 @@ export interface ViewerLibraryMutationCapability {
     serializeBookMutation<T>(id: string, mutation: () => Promise<T>): Promise<T | undefined>
     serializeMetadataMutation<T>(mutation: () => Promise<T>): Promise<T | undefined>
     saveIndexedTexts(id: string, records: unknown[], generation?: number): Promise<boolean>
-    revokePreviewUrl(id: string): void
+    revokePreviewUrl(id: string, url: string): void
     invalidatePreview(id: string): Promise<void>
     updateFile(
         id: string,

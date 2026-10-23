@@ -120,6 +120,168 @@ function documentLoader() {
 }
 
 describe("Reading workspace", () => {
+    it("retains Library loss as provider unavailability and retries explicitly without discarding drafts", async () => {
+        const listeners = new Set<
+            (snapshot: import("$lib/extension-api/providers").ProviderSnapshot) => void
+        >()
+        let controller = new AbortController()
+        let provider = {
+            extensionId: "builtin.library",
+            generation: 1,
+            state: "active" as import("$lib/extension-api").LifecycleState,
+            signal: controller.signal,
+        }
+        const providers = {
+            get: () => provider,
+            onDidChange: (listener: (value: typeof provider) => void) => {
+                listeners.add(listener)
+                return {
+                    dispose: () => {
+                        listeners.delete(listener)
+                    },
+                }
+            },
+        }
+        const { files, released } = fileAccess()
+        const { workspace } = reader(files, undefined, {
+            storage: new ReadingStorage(readingNamespace()),
+            providers,
+        })
+        await workspace.open("first")
+        workspace.setPosition(7, 0.4)
+        await workspace.createDraft("first", noteInput())
+        controller.abort()
+        provider = { ...provider, state: "disabled" }
+        for (const listener of listeners) listener(provider)
+        expect(workspace.snapshot).toMatchObject({
+            documentId: "first",
+            status: "provider-unavailable",
+            state: { pageNumber: 7 },
+        })
+        await vi.waitFor(() => expect(released).toEqual(["blob:first"]))
+        expect(workspace.annotations("first").drafts).toHaveLength(1)
+        expect(await workspace.retry()).toBe(false)
+        controller = new AbortController()
+        provider = { ...provider, generation: 2, state: "active", signal: controller.signal }
+        for (const listener of listeners) listener(provider)
+        expect(workspace.snapshot.status).toBe("provider-unavailable")
+        expect(await workspace.retry()).toBe(true)
+        expect(workspace.snapshot).toMatchObject({
+            documentId: "first",
+            status: "ready",
+            state: { pageNumber: 7, scrollPosition: 0.4 },
+        })
+        expect(workspace.annotations("first").drafts).toHaveLength(1)
+        await workspace.dispose()
+    })
+
+    it.each(["selection", "close"] as const)(
+        "does not let a pending recovery retry supersede a newer %s",
+        async (supersession) => {
+            const { files, released } = fileAccess()
+            const { workspace } = reader(
+                files,
+                {
+                    open: async () => {
+                        throw new Error("private format failure")
+                    },
+                },
+                { storage: new ReadingStorage(readingNamespace()) },
+            )
+            await workspace.open("first")
+            expect(await workspace.loadDocument()).toBeUndefined()
+            expect(workspace.snapshot.status).toBe("provider-unavailable")
+            const pending = deferred<string>()
+            const entered = deferred<void>()
+            files.getFileUrl = async (id) => {
+                if (id === "first") {
+                    entered.resolve()
+                    return pending.promise
+                }
+                return `blob:${id}`
+            }
+            const retrying = workspace.retry()
+            await entered.promise
+            if (supersession === "selection") await workspace.open("second")
+            else expect((await workspace.requestClose()).status).toBe("closed")
+            pending.resolve("blob:late-first")
+            expect(await retrying).toBe(false)
+            expect(workspace.snapshot.documentId).toBe(
+                supersession === "selection" ? "second" : null,
+            )
+            expect(released).toContain("blob:late-first")
+            await workspace.dispose()
+        },
+    )
+
+    it.each(["selection", "content-replacement"])(
+        "does not let a late obsolete format failure fence a reopened document after %s",
+        async (replacement) => {
+            const { files } = fileAccess()
+            let generation = 0
+            files.getContentGeneration = () => generation
+            files.isCurrentContent = (_id, value) => generation === value
+            let acquisition = 0
+            files.getFileUrl = async (id) => `blob:${id}:${++acquisition}`
+            const pending = deferred<void>()
+            const { workspace } = reader(files, {
+                open: async () => ({
+                    kind: "reflowable",
+                    metadata: { title: "Test", author: null },
+                    capabilities: new Set(),
+                    getSections: async () => {
+                        await pending.promise
+                        throw new Error("obsolete format failure")
+                    },
+                    close: async () => undefined,
+                }),
+            })
+            await workspace.open("first")
+            const obsolete = await workspace.loadDocument()
+            if (obsolete?.kind !== "reflowable") throw new Error("Expected document")
+            const operation = obsolete.getSections()
+            if (replacement === "selection") {
+                await workspace.open("second")
+                await workspace.open("first")
+            } else {
+                generation++
+                await workspace.synchronize(true)
+            }
+            await workspace.loadDocument()
+            pending.resolve()
+            await expect(operation).rejects.toThrow("obsolete format failure")
+            expect(workspace.snapshot.status).toBe("ready")
+            await workspace.dispose()
+        },
+    )
+
+    it("does not confuse a caller-cancelled render with format provider failure", async () => {
+        const controller = new AbortController()
+        const { workspace } = reader(undefined, {
+            open: async () => ({
+                kind: "paged",
+                metadata: { title: "Test", author: null },
+                capabilities: new Set(),
+                pageCount: 1,
+                getPage: async (pageNumber) => ({ pageNumber, width: 1, height: 1 }),
+                renderPage: async (_page, options) => {
+                    options?.signal?.throwIfAborted()
+                    throw new Error("Unexpected render")
+                },
+                close: async () => undefined,
+            }),
+        })
+        await workspace.open("first")
+        const document = await workspace.loadDocument()
+        if (document?.kind !== "paged") throw new Error("Expected paged document")
+        controller.abort()
+        await expect(document.renderPage(1, { signal: controller.signal })).rejects.toMatchObject({
+            name: "AbortError",
+        })
+        expect(workspace.snapshot.status).toBe("ready")
+        await workspace.dispose()
+    })
+
     const sparseDraftRecords: unknown[] = []
     sparseDraftRecords.length = 1
 

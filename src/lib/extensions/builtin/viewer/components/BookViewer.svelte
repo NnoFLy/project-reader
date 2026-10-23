@@ -195,7 +195,7 @@
             preview: {
                 getPreviewUrl: (id) => vfsStore.getPreviewUrl(id),
                 onNodeInvalidated: (listener) => vfsStore.onNodeInvalidated(listener),
-                revokePreviewUrl: (id) => vfsMutations.revokePreviewUrl(id),
+                revokePreviewUrl: (id, url) => vfsMutations.revokePreviewUrl(id, url),
             },
             list: () => bookmarksStore.bookmarks,
             resolveBookName: (bookId) => vfsStore.nodes[bookId]?.name ?? m.unknown_book(),
@@ -391,6 +391,16 @@
     let nextPageDim1 = $state<{ width: number; height: number } | null>(null)
     let nextPageDim2 = $state<{ width: number; height: number } | null>(null)
     let isPageLoading = $state(false)
+    let retryingReading = $state(false)
+    async function retryReading() {
+        if (retryingReading) return
+        retryingReading = true
+        try {
+            await viewerStore.workspace.retry()
+        } finally {
+            retryingReading = false
+        }
+    }
 
     let totalPages = $state(0)
 
@@ -1141,17 +1151,30 @@
     }
 </script>
 
-{#if viewerStore.reading.status === "unavailable" || viewerStore.reading.status === "missing"}
-    <section class="reading-access-state" role="status" aria-label="Reading access">
-        <h1>
-            {viewerStore.reading.status === "missing"
-                ? "Document no longer in Library"
-                : "Document access unavailable"}
+{#if viewerStore.reading.status === "unavailable" || viewerStore.reading.status === "missing" || viewerStore.reading.status === "provider-unavailable"}
+    <section
+        class="reading-access-state"
+        role="status"
+        aria-labelledby="reading-access-heading"
+        data-reading-state={viewerStore.reading.status}
+    >
+        <h1 id="reading-access-heading">
+            {#if viewerStore.reading.status === "provider-unavailable"}
+                {m.viewer_provider_unavailable_title()}
+            {:else}
+                {viewerStore.reading.status === "missing"
+                    ? "Document no longer in Library"
+                    : "Document access unavailable"}
+            {/if}
         </h1>
         <p>
-            {viewerStore.reading.status === "missing"
-                ? "The saved document reference is absent or has been deleted. Choose another document from Library."
-                : "Your reading position is retained. Retry access or relink the file in Library."}
+            {#if viewerStore.reading.status === "provider-unavailable"}
+                {m.viewer_provider_unavailable_description()}
+            {:else}
+                {viewerStore.reading.status === "missing"
+                    ? "The saved document reference is absent or has been deleted. Choose another document from Library."
+                    : "Your reading position is retained. Retry access or relink the file in Library."}
+            {/if}
         </p>
         {#if notesStore.drafts.length}
             <section aria-label={m.note_drafts()}>
@@ -1165,7 +1188,13 @@
             </section>
         {/if}
         <div class="reading-access-actions">
-            <Button onclick={() => void viewerStore.workspace.retry()}>Retry</Button>
+            {#if viewerStore.reading.status === "provider-unavailable"}
+                <Button aria-disabled={retryingReading} onclick={() => void retryReading()}>
+                    {retryingReading ? m.viewer_provider_retrying() : m.viewer_provider_retry()}
+                </Button>
+            {:else}
+                <Button onclick={() => void retryReading()}>Retry</Button>
+            {/if}
             {#if viewerStore.reading.status === "unavailable"}
                 <Button onclick={() => viewerStore.workspace.requestRelink()}>Relink file</Button>
             {/if}

@@ -1,3 +1,6 @@
+import type { ProviderAvailability } from "$lib/extension-api/providers"
+import type { ReadingRecoveryRecord } from "./readingWorkspace"
+
 import type { Component } from "svelte"
 import { KeyboardHandler } from "$lib/core/commands"
 import type { CommandContribution, Disposable, ExtensionContext } from "$lib/extension-api"
@@ -34,6 +37,8 @@ export type {
     ViewerPromptCapability,
     ViewerSettingsCapability,
 } from "./viewerHost"
+
+const recoveryHandoffs = new WeakMap<ProviderAvailability, ReadingRecoveryRecord>()
 
 export const VIEWER_VIEW_ID = "viewer.reader"
 
@@ -79,13 +84,22 @@ export async function activateViewer(
         host: context.host,
         commandExecutor: (commandId, payload) => context.commands.execute(commandId, payload),
     })
+    const providers = context.host?.providers
+    const recovery = providers && recoveryHandoffs.get(providers)
+    if (providers) recoveryHandoffs.delete(providers)
+    const signals = [context.host?.writeSignal, context.lifecycle.signal].filter(
+        (signal): signal is AbortSignal => !!signal,
+    )
+    const writeSignal = signals.length ? AbortSignal.any(signals) : undefined
     const notificationHandles = new Set<Disposable>()
     const store = new ViewerStore({
         files: fileCapability,
         library: libraryCapability,
         mutations: libraryMutationCapability,
         loader,
-        writeSignal: context.host?.writeSignal,
+        writeSignal,
+        providers,
+        recovery,
         defaults: () => ({
             scale: context.host?.settings?.settingsStore.scale ?? 1.5,
             layout: context.host?.settings?.settingsStore.layout ?? "scroll",
@@ -97,7 +111,16 @@ export async function activateViewer(
             notificationHandles.add(notification)
         },
     })
-    context.lifecycle.onDispose(() => store.dispose())
+    const revoke = () => {
+        const record = store.workspace.captureRecovery()
+        if (providers && record) recoveryHandoffs.set(providers, record)
+        void store.dispose()
+    }
+    context.lifecycle.signal?.addEventListener("abort", revoke, { once: true })
+    context.lifecycle.onDispose(() => {
+        context.lifecycle.signal?.removeEventListener("abort", revoke)
+        return store.dispose()
+    })
     // Annotation controls are registered only after persistence has been configured.
     await store.configureStorage(viewerStorage)
     if (context.lifecycle.isDisposed()) return
@@ -121,11 +144,21 @@ export async function activateViewer(
         },
     }
     if (context.host) context.host.readingDisplay = readingDisplay
+    const readingRecovery = {
+        get documentId() {
+            return store.reading.documentId
+        },
+        get status() {
+            return store.reading.status
+        },
+        retry: () => store.workspace.retry(),
+    }
+    if (context.host) context.host.readingRecovery = readingRecovery
     const runtime = createViewerRuntime(
         store,
         (id, payload) => context.commands.execute(id, payload),
         relinkHost,
-        context.host?.writeSignal,
+        writeSignal,
         context.host?.settings,
     )
     const { notes: notesStore, bookmarks: bookmarksStore, search: searchStore } = runtime
@@ -140,6 +173,8 @@ export async function activateViewer(
         if (context.host?.readingSummaries === readingSummaries)
             context.host.readingSummaries = undefined
         if (context.host?.readingDisplay === readingDisplay) context.host.readingDisplay = undefined
+        if (context.host?.readingRecovery === readingRecovery)
+            context.host.readingRecovery = undefined
         context.host?.contextualStatus?.clear()
         await store.dispose()
     })

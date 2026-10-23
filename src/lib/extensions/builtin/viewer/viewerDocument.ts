@@ -66,6 +66,8 @@ export type ViewerReflowDocument = ReflowableDocument
 export type ViewerDocument = ViewerPagedDocument | ViewerReflowDocument
 
 export interface ViewerDocumentLoader {
+    /** Host declaration metadata only; core still selects the exact adapter. */
+    requiredProviders?(name: string): readonly string[]
     open(
         input: {
             readonly id: string
