@@ -1,5 +1,9 @@
 {
     "$schema": "https://inlang.com/schema/inlang-message-format",
+    "viewer_provider_unavailable_title": "Просмотр недоступен",
+    "viewer_provider_unavailable_description": "Состояние чтения и черновики сохранены. Повторите попытку, чтобы восстановить доступ.",
+    "viewer_provider_retry": "Повторить попытку",
+    "viewer_provider_retrying": "Повторная попытка…",
     "writer_checking_title": "Проверяем доступность библиотеки",
     "writer_idle_description": "Это окно откроет библиотеку, только когда ей будет безопасно пользоваться.",
     "writer_acquiring_description": "Проверяем, не используется ли эта библиотека в другом окне.",

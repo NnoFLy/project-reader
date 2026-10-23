@@ -1,5 +1,9 @@
 {
     "$schema": "https://inlang.com/schema/inlang-message-format",
+    "viewer_provider_unavailable_title": "Viewer is unavailable",
+    "viewer_provider_unavailable_description": "Your reading state and drafts are kept. Try again to restore access.",
+    "viewer_provider_retry": "Try again",
+    "viewer_provider_retrying": "Trying again…",
     "writer_checking_title": "Checking Library availability",
     "writer_idle_description": "This window will open only when the Library is safe to use.",
     "writer_acquiring_description": "Checking whether another window is using this Library.",
