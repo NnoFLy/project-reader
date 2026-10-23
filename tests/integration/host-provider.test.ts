@@ -343,6 +343,46 @@ describe("ExtensionHost provider lifetimes", () => {
         await host.dispose()
     })
 
+    it("fences a storage-draining enable when a newer disable repeats disabled intent", async () => {
+        const entered = deferred()
+        const finish = deferred()
+        const storage = new MemoryStorageBackend()
+        const set = storage.set.bind(storage)
+        vi.spyOn(storage, "set").mockImplementation(async (key, value) => {
+            entered.resolve()
+            await finish.promise
+            await set(key, value)
+        })
+        let context!: ExtensionContext
+        const activate = vi.fn((value: ExtensionContext) => {
+            context = value
+        })
+        const host = new ExtensionHost({ extensions: [extension(activate)], storage })
+        try {
+            await host.start()
+            const write = context.storage.set("draft", "retained").catch(() => undefined)
+            await entered.promise
+            await host.disable("test.provider")
+            const disabled = host.providers.get("test.provider")!
+            const enabling = host.enable("test.provider")
+            await host.disable("test.provider")
+            finish.resolve()
+            await write
+            await enabling
+            expect(host.providers.get("test.provider")).toBe(disabled)
+            expect(disabled.signal.aborted).toBe(true)
+            await expect(host.activate("test.provider")).rejects.toThrow("not enabled")
+            expect(activate).toHaveBeenCalledOnce()
+            await host.enable("test.provider")
+            await host.activate("test.provider")
+            expect(host.providers.get("test.provider")?.generation).toBe(disabled.generation + 1)
+            await expect(context.storage.get("draft")).resolves.toBe("retained")
+        } finally {
+            finish.resolve()
+            await host.dispose()
+        }
+    })
+
     it("invalidates pending activation synchronously and fences obsolete publication", async () => {
         const started = deferred()
         const finish = deferred()

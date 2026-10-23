@@ -25,9 +25,10 @@ describe("Reading workspace browser persistence", () => {
                 "--eval",
                 `
             const { createServer } = await import('vite');
+                    const { realpathSync } = await import('node:fs');
             const server = await createServer({
                 cacheDir: ${JSON.stringify(join(profile, "vite-cache"))},
-                server: {host: '127.0.0.1', port: 0}
+                server: {host: '127.0.0.1', port: 0, fs: {allow: [process.cwd(), realpathSync('node_modules')]}}
             });
             await server.listen();
             server.printUrls();
@@ -128,6 +129,327 @@ describe("Reading workspace browser persistence", () => {
         await page.waitFor(ready)
         await page.evaluate(bindings)
     }
+
+    // Trusted composition: suspend the shell, wait for the native writer lock, then
+    // mount the real static route against a real, gated WriterApplication.
+    async function mountProviderRoute(page: BrowserPage) {
+        await page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+        await page.waitFor(
+            "navigator.locks.query().then(result => result.held.every(lock => !lock.name.endsWith(':writer')))",
+        )
+        await page.evaluate(`(async () => {
+            const {createBrowserApplication} = await import('/src/lib/app/bootstrap.ts');
+            const {IndexedDBStorageBackend} = await import('/src/lib/core/storage/index.ts');
+            // Use the route's Vite-resolved runtime, not a second unoptimized Svelte copy.
+            const routeModule = await (await fetch('/src/lib/app/routes/ViewerRoute.svelte')).text();
+            const runtimeUrl = routeModule.match(/import \\{ getContext, onDestroy \\} from "([^"]+)"/)[1];
+            const {mount} = await import(runtimeUrl);
+            const {default: ViewerRoute} = await import('/src/lib/app/routes/ViewerRoute.svelte');
+            const {APP_HOST_CONTEXT} = await import('/src/lib/app/hostContext.ts');
+            window.writer = createBrowserApplication({storage: lifetime => window.backend = new IndexedDBStorageBackend({lifetime})});
+            await window.writer.start();
+            if (!window.writer.ready) throw new Error('Provider test writer unavailable');
+            window.host = window.writer.application.host;
+            const context = {
+                get application() { return window.writer.application; },
+                get ready() { return window.writer.ready; },
+                services: {executeCommand: (id, payload) => window.writer.executeCommand(id, payload)}
+            };
+            const target = document.createElement('div');
+            target.id = 'provider-test-route'; document.body.append(target);
+            window.providerRoute = mount(ViewerRoute, {target, context: new Map([[APP_HOST_CONTEXT, context], ['app-host-services', context.services]])});
+        })()`)
+        await page.evaluate(bindings)
+    }
+
+    async function nativeRetry(page: BrowserPage, selector: string, key = "Enter") {
+        await page.evaluate(`(() => {
+            window.retryButton = document.querySelector(${JSON.stringify(selector)});
+            window.retryButton.focus();
+        })()`)
+        const code = key === "Enter" ? "Enter" : "Space"
+        const number = key === "Enter" ? 13 : 32
+        await page.call("Input.dispatchKeyEvent", {
+            type: "keyDown",
+            key,
+            code,
+            windowsVirtualKeyCode: number,
+            text: key === "Enter" ? "\r" : " ",
+        })
+        await page.call("Input.dispatchKeyEvent", {
+            type: "keyUp",
+            key,
+            code,
+            windowsVirtualKeyCode: number,
+        })
+    }
+
+    it.each([1280, 390])(
+        "recovers PDF, Library and Viewer loss with keyboard retry, safe drafts and native writer exclusion at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            let contender: BrowserPage | undefined
+            try {
+                await page.call("Emulation.setDeviceMetricsOverride", {
+                    width,
+                    height: 844,
+                    deviceScaleFactor: 1,
+                    mobile: width < 500,
+                })
+                await page.call("Page.navigate", { url: `${origin}/en` })
+                await bind(page)
+                const id = await page.evaluate(`(async () => {
+                    const [result] = await window.library.importFiles([{name:'provider-recovery.pdf', source:new File([${JSON.stringify(pdf)}], 'provider-recovery.pdf', {type:'application/pdf'})}], null);
+                    return result.id;
+                })()`)
+                await mountProviderRoute(page)
+                await page.evaluate(`window.reader.workspace.open(${JSON.stringify(id)})`)
+                await page.waitFor(
+                    "window.reader.totalPages === 8 && document.querySelectorAll('.fullscreen-viewer').length === 1",
+                )
+                await page.evaluate(`(async () => {
+                    await window.command('settings.layout', {value:'single'});
+                    await window.command('settings.zoom.in', {value:1.5});
+                    window.reader.goToPage(3, {scrollPosition:0.2});
+                    await window.notes.openDraft({bookId:${JSON.stringify(id)},pageNumber:3,start:0,end:7,text:'<img src=x onerror=alert(1)> passage',noteContent:'Recovered <img src=x> draft',color:'purple'});
+                    await window.reader.workspace.flush();
+                })()`)
+                await page.waitFor(
+                    "document.querySelector('textarea')?.value === 'Recovered <img src=x> draft'",
+                )
+                await page.evaluate(
+                    "Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Got it')?.click()",
+                )
+                await nativeRetry(page, "[role=dialog]:has(textarea) [aria-label=Close]")
+                await page.waitFor("!document.querySelector('textarea')")
+                const retained = {
+                    documentId: id,
+                    state: { pageNumber: 3, scrollPosition: 0.2, scale: 1.5, layout: "single" },
+                }
+                for (const provider of ["builtin.pdf", "builtin.library", "builtin.viewer"]) {
+                    if (provider === "builtin.viewer") {
+                        // A real backend operation stays pending across disable. Host retry
+                        // must fail closed until it drains, without replacing the button.
+                        await page.evaluate(`(() => {
+                            const set = window.backend.set.bind(window.backend);
+                            let delayed = false;
+                            window.backend.set = async (key, value) => {
+                                if (!delayed && key.includes(':reading-v1-document-')) {
+                                    delayed = true;
+                                    await new Promise(resolve => window.releaseProviderWrite = resolve);
+                                }
+                                return set(key, value);
+                            };
+                            window.reader.workspace.setPosition(3, 0.25);
+                        })()`)
+                        await page.waitFor("typeof window.releaseProviderWrite === 'function'")
+                        retained.state.scrollPosition = 0.25
+                    }
+                    await page.evaluate(`window.host.disable(${JSON.stringify(provider)})`)
+                    const feedback =
+                        provider === "builtin.viewer"
+                            ? "[data-provider-feedback]"
+                            : '[data-reading-state="provider-unavailable"]'
+                    await page.waitFor(`!!document.querySelector(${JSON.stringify(feedback)})`)
+                    expect(
+                        await page.evaluate(
+                            "document.querySelectorAll('.fullscreen-viewer').length",
+                        ),
+                    ).toBe(0)
+                    expect(
+                        await page.evaluate("window.host.documentService.openDocumentCount"),
+                    ).toBe(0)
+                    expect(
+                        await page.evaluate(`(() => {
+                        const region = document.querySelector(${JSON.stringify(feedback)});
+                        const status = region.matches('[role=status]') ? region : region.querySelector('[role=status]');
+                        return !!status && !!document.getElementById(status.getAttribute('aria-labelledby')) && !region.querySelector('img');
+                    })()`),
+                    ).toBe(true)
+                    // Provider loss is not application shutdown: another same-origin page
+                    // remains blocked even when no reader resource is mounted.
+                    if (!contender) {
+                        contender = await browser!.page()
+                        await contender.call("Page.navigate", { url: `${origin}/en/viewer` })
+                    }
+                    await contender.waitFor(
+                        "!!document.querySelector('[data-writer-state=blocked]')",
+                    )
+                    await nativeRetry(contender, "[data-writer-state=blocked] button")
+                    await contender.waitFor(
+                        "document.querySelector('[data-writer-state=blocked] button')?.getAttribute('aria-disabled') === 'false'",
+                    )
+                    expect(
+                        await contender.evaluate(
+                            "document.activeElement === window.retryButton && !document.querySelector('#app-root, .fullscreen-viewer, textarea')",
+                        ),
+                    ).toBe(true)
+                    await page.call("Page.bringToFront")
+                    const retrySelector =
+                        provider === "builtin.viewer"
+                            ? `${feedback} button`
+                            : `${feedback} .reading-access-actions button`
+                    await nativeRetry(page, retrySelector, " ")
+                    await page.waitFor(
+                        `document.querySelector(${JSON.stringify(retrySelector)})?.getAttribute('aria-disabled') === 'false'`,
+                    )
+                    expect(
+                        await page.evaluate(`(() => {
+                            const button = window.retryButton;
+                            const rect = button.getBoundingClientRect();
+                            return document.activeElement === button && button.isConnected
+                                && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.height >= 30;
+                        })()`),
+                    ).toBe(true)
+                    expect(
+                        await page.evaluate(
+                            `window.host.providers.get(${JSON.stringify(provider)}).state`,
+                        ),
+                    ).toBe("disabled")
+                    expect(
+                        await page.evaluate(
+                            "document.body.textContent.includes('ProviderRecoveryBlockedError') || document.body.textContent.includes('Error:')",
+                        ),
+                    ).toBe(false)
+                    if (provider === "builtin.viewer") {
+                        await page.evaluate("window.releaseProviderWrite()")
+                        await page.evaluate("window.reader.workspace.flush()")
+                        // Host-owned retry enables Viewer; Reading access still needs its
+                        // own explicit retry, never an implicit document resurrection.
+                        await nativeRetry(page, `${feedback} button`)
+                        await page.waitFor(
+                            "window.host.providers.get('builtin.viewer').state === 'active' && !!document.querySelector('[data-reading-state=provider-unavailable]')",
+                        )
+                        await page.evaluate(bindings)
+                    } else {
+                        await page.evaluate(
+                            `(async () => {await window.host.enable(${JSON.stringify(provider)}); await window.host.activate(${JSON.stringify(provider)});})()`,
+                        )
+                    }
+                    expect(await page.evaluate(snapshot)).toMatchObject({
+                        ...retained,
+                        status: "provider-unavailable",
+                    })
+                    await nativeRetry(
+                        page,
+                        '[data-reading-state="provider-unavailable"] .reading-access-actions button',
+                    )
+                    await page.waitFor(
+                        "window.reader.totalPages === 8 && document.querySelectorAll('.fullscreen-viewer').length === 1",
+                    )
+                    expect(await page.evaluate(snapshot)).toMatchObject({
+                        ...retained,
+                        status: "ready",
+                    })
+                    expect(
+                        await page.evaluate(
+                            `window.reader.workspace.annotations(${JSON.stringify(id)}).drafts.map(draft => [draft.noteContent, draft.color])`,
+                        ),
+                    ).toEqual([["Recovered <img src=x> draft", "purple"]])
+                    await page.evaluate("window.notes.showDraft(window.notes.drafts[0].id)")
+                    await page.waitFor(
+                        "document.querySelector('textarea')?.value === 'Recovered <img src=x> draft'",
+                    )
+                    expect(
+                        await page.evaluate("!document.querySelector('[role=dialog] img')"),
+                    ).toBe(true)
+                    await nativeRetry(page, "[role=dialog]:has(textarea) [aria-label=Close]")
+                    await page.waitFor("!document.querySelector('textarea')")
+                    expect(
+                        await page.evaluate(
+                            "navigator.locks.query().then(result => result.held.filter(lock => lock.name.endsWith(':writer')).length)",
+                        ),
+                    ).toBe(1)
+                }
+                await page.evaluate("window.writer.stop()")
+                await contender!.waitFor(
+                    "navigator.locks.query().then(result => result.held.every(lock => !lock.name.endsWith(':writer')))",
+                )
+                await nativeRetry(contender!, "[data-writer-state=blocked] button")
+                await bind(contender!)
+                await contender!.waitFor(
+                    "window.reader.totalPages === 8 && document.querySelectorAll('.fullscreen-viewer').length === 1",
+                )
+                expect(await contender!.evaluate(snapshot)).toMatchObject({
+                    ...retained,
+                    status: "ready",
+                })
+                expect(
+                    await contender!.evaluate(
+                        `window.reader.workspace.annotations(${JSON.stringify(id)}).drafts.map(draft => draft.noteContent)`,
+                    ),
+                ).toEqual(["Recovered <img src=x> draft"])
+            } finally {
+                await browser!.closeTarget(page.targetId)
+                if (contender) await browser!.closeTarget(contender.targetId)
+            }
+        },
+        120000,
+    )
+
+    it.each(["selection", "close"])(
+        "does not resurrect a provider-recovery retry after a newer %s in Chromium",
+        async (supersession) => {
+            const page = await browser!.page()
+            try {
+                await page.call("Page.navigate", { url: `${origin}/en` })
+                await bind(page)
+                const ids = (await page.evaluate(`(async () => {
+                    const results = await window.library.importFiles(['retry-old','retry-new'].map(name => ({name:name+'.pdf', source:new File([${JSON.stringify(pdf)}],name+'.pdf',{type:'application/pdf'})})),null);
+                    return results.map(result => result.id);
+                })()`)) as string[]
+                await mountProviderRoute(page)
+                await page.evaluate(`window.reader.workspace.open(${JSON.stringify(ids[0])})`)
+                await page.waitFor(
+                    "window.reader.totalPages === 8 && !!document.querySelector('.fullscreen-viewer')",
+                )
+                await page.evaluate(`(async () => {
+                    await window.host.disable('builtin.library');
+                    await window.host.enable('builtin.library');
+                    await window.host.activate('builtin.library');
+                    const get = window.backend.get.bind(window.backend);
+                    let delayed = false;
+                    window.backend.get = async key => {
+                        if (!delayed && key.endsWith(':library:fileContents.' + ${JSON.stringify(ids[0])})) {
+                            delayed = true;
+                            await new Promise(resolve => window.releaseRetryRead = resolve);
+                        }
+                        return get(key);
+                    };
+                    window.retryResult = window.reader.workspace.retry();
+                })()`)
+                await page.waitFor("typeof window.releaseRetryRead === 'function'")
+                if (supersession === "selection") {
+                    await page.evaluate(`window.reader.workspace.open(${JSON.stringify(ids[1])})`)
+                    await page.waitFor(
+                        "window.reader.totalPages === 8 && document.querySelectorAll('.fullscreen-viewer').length === 1",
+                    )
+                } else {
+                    await page.evaluate("window.reader.workspace.close()")
+                    await page.waitFor(
+                        "window.reader.workspace.snapshot.status === 'closed' && !document.querySelector('.fullscreen-viewer')",
+                    )
+                }
+                await page.evaluate(
+                    "document.activeElement?.blur(); window.selectionFocus = document.createElement('button'); window.selectionFocus.textContent = 'Current action'; document.body.append(window.selectionFocus); window.selectionFocus.focus(); window.releaseRetryRead()",
+                )
+                expect(await page.evaluate("window.retryResult")).toBe(false)
+                expect(
+                    await page.evaluate("document.activeElement === window.selectionFocus"),
+                ).toBe(true)
+                expect(await page.evaluate(snapshot)).toMatchObject({
+                    documentId: supersession === "selection" ? ids[1] : null,
+                    status: supersession === "selection" ? "ready" : "closed",
+                })
+                expect(
+                    await page.evaluate("document.querySelectorAll('.fullscreen-viewer').length"),
+                ).toBe(supersession === "selection" ? 1 : 0)
+            } finally {
+                await browser!.closeTarget(page.targetId)
+            }
+        },
+        90000,
+    )
 
     it("saves independent reading actions, closes/reopens, and restores only the current PDF on actual reload", async () => {
         const page = await browser!.page()
@@ -703,7 +1025,7 @@ describe("Reading workspace browser persistence", () => {
             await page.waitFor(`${ready} && performance.timeOrigin !== ${parserReload}`)
             await bind(page)
             await page.waitFor(
-                "document.querySelector('[role=alert]')?.textContent.includes('Unable to load the document') && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+                "document.querySelector('[data-reading-state=provider-unavailable][role=status]')?.textContent.includes('Viewer is unavailable') && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
             )
             expect(await page.evaluate("window.reader.workspace.snapshot.documentId")).toBe(id)
             expect(await page.evaluate("document.body.textContent")).not.toContain(
@@ -894,7 +1216,7 @@ describe("Reading workspace browser persistence", () => {
             await page.waitFor(`${ready} && performance.timeOrigin !== ${previousDocument}`)
             await bind(page)
             await page.waitFor(
-                "document.querySelector('[aria-label=\"Reading access\"]')?.textContent.includes('Document access unavailable')",
+                "document.querySelector('[data-reading-state=unavailable][role=status]')?.textContent.includes('Document access unavailable')",
             )
             const retained = {
                 documentId: id,

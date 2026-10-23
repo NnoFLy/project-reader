@@ -26,9 +26,10 @@ describe.skipIf(!existsSync(chromiumPath))("same-origin Library writer windows",
                     "--eval",
                     `
                     const { createServer } = await import('vite');
+                    const { realpathSync } = await import('node:fs');
                     const server = await createServer({
                         cacheDir: ${JSON.stringify(join(profile, "vite-cache"))},
-                        server: {host: '127.0.0.1', port: 0}
+                        server: {host: '127.0.0.1', port: 0, fs: {allow: [process.cwd(), realpathSync('node_modules')]}}
                     });
                     await server.listen();
                     server.printUrls();

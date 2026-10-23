@@ -49,6 +49,7 @@ interface ExtensionRuntime {
     error?: ExtensionActivationError
     activation?: Promise<void>
     generation: number
+    intentRevision: number
     snapshot: ProviderSnapshot
 }
 
@@ -122,6 +123,7 @@ export class ExtensionHost {
                 storageLifetime,
                 state: "enabled",
                 generation: 1,
+                intentRevision: 0,
                 snapshot: Object.freeze({
                     extensionId: manifest.id,
                     generation: 1,
@@ -209,7 +211,11 @@ export class ExtensionHost {
 
     disable(extensionId: string): Promise<void> {
         const runtime = this.requireRuntime(extensionId)
-        if (runtime.state === "disposed" || runtime.state === "disabled") return Promise.resolve()
+        if (runtime.state === "disposed" || runtime.state === "disabled") {
+            // Repeated disable still supersedes an enable waiting for obsolete work.
+            runtime.intentRevision++
+            return Promise.resolve()
+        }
         return this.invalidate(runtime, "disabled")
     }
 
@@ -219,6 +225,7 @@ export class ExtensionHost {
             throw new Error(`Extension host is disposing: ${extensionId}`)
         if (runtime.state !== "disabled" && runtime.state !== "failed") return
         const previous = runtime.lifecycle
+        const intentRevision = ++runtime.intentRevision
         let quiescent = false
         await this.bounded(
             Promise.all([
@@ -230,7 +237,7 @@ export class ExtensionHost {
         )
         if (!quiescent) throw new ProviderRecoveryBlockedError(extensionId)
         if (this.disposing) throw new Error(`Extension host is disposing: ${extensionId}`)
-        if (runtime.lifecycle !== previous) return
+        if (runtime.lifecycle !== previous || runtime.intentRevision !== intentRevision) return
         runtime.lifecycle = new ExtensionLifecycle("enabled")
         runtime.storageLifetime = new ExtensionStorageLifetime(
             this.storage,
@@ -288,6 +295,7 @@ export class ExtensionHost {
         runtime: ExtensionRuntime,
         state: "disabled" | "failed" | "disposed",
     ): Promise<void> {
+        runtime.intentRevision++
         const lifecycle = runtime.lifecycle
         runtime.state = state
         const cleanup = lifecycle.dispose()
