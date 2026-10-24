@@ -454,6 +454,168 @@ describe("Global Settings browser", () => {
         90000,
     )
 
+    it("returns keyboard Back focus to the selected mobile navigation without losing an invalid attempt", async () => {
+        const page = await browser!.page()
+        try {
+            await setup(page, 390)
+            await synthetic(page)
+            await open(page)
+            await page.evaluate(`${buttonExpression("Reading")}.focus()`)
+            await key(page, "Enter")
+            await page.waitFor("document.activeElement?.tagName === 'H3'")
+            await type(page, fieldExpression("Default zoom"), "99")
+            await key(page, "Tab")
+            await page.waitFor(
+                `${fieldExpression("Default zoom")}.getAttribute('aria-invalid') === 'true'`,
+            )
+            await page.evaluate(`${buttonExpression("Back")}.focus()`)
+            await key(page, "Enter")
+            await page.waitFor(
+                "document.querySelector('[role=dialog] nav').getBoundingClientRect().width > 0",
+            )
+            expect(
+                await page.evaluate(`document.activeElement === ${buttonExpression("Reading")}`),
+            ).toBe(true)
+            await key(page, "Enter")
+            await page.waitFor("document.activeElement?.tagName === 'H3'")
+            expect(await page.evaluate(`${fieldExpression("Default zoom")}.value`)).toBe("99")
+            expect(
+                await page.evaluate(
+                    `${fieldExpression("Default zoom")}.getAttribute('aria-invalid')`,
+                ),
+            ).toBe("true")
+            expect(await page.evaluate("document.querySelectorAll('[role=dialog]').length")).toBe(1)
+            expect(page.errors).toEqual([])
+        } finally {
+            await finish(page)
+        }
+    }, 90000)
+
+    it.each(["navigation", "page"])(
+        "recovers responsive hidden %s focus inside the same Settings",
+        async (region) => {
+            const page = await browser!.page()
+            const resize = (width: number) =>
+                page.call("Emulation.setDeviceMetricsOverride", {
+                    width,
+                    height: 844,
+                    deviceScaleFactor: 1,
+                    mobile: false,
+                })
+            try {
+                await setup(page, 1280)
+                await synthetic(page)
+                await open(page)
+                if (region === "navigation") {
+                    await click(page, buttonExpression("Reading"))
+                    await type(page, fieldExpression("Default zoom"), "99")
+                    await key(page, "Tab")
+                    await page.waitFor(
+                        `${fieldExpression("Default zoom")}.getAttribute('aria-invalid') === 'true'`,
+                    )
+                    await page.evaluate(`${buttonExpression("Reading")}.focus()`)
+                } else {
+                    // The initial desktop page is visible even before entering drill-down.
+                    await page.evaluate(`${fieldExpression("Language")}.focus()`)
+                }
+                await resize(801)
+                expect(
+                    await page.evaluate("document.activeElement.getClientRects().length > 0"),
+                ).toBe(true)
+                await resize(800)
+                await page.waitFor(
+                    region === "navigation"
+                        ? "document.querySelector('[role=dialog] nav').getClientRects().length === 0"
+                        : "document.querySelector('[role=dialog] section').getClientRects().length === 0",
+                )
+                await page.waitFor(
+                    "document.activeElement !== document.body && !!document.activeElement.closest('[role=dialog]:not([inert])') && document.activeElement.getClientRects().length > 0",
+                )
+                expect(
+                    await page.evaluate(
+                        region === "navigation"
+                            ? "document.activeElement.tagName === 'H3'"
+                            : `document.activeElement === ${buttonExpression("General")}`,
+                    ),
+                ).toBe(true)
+                await resize(390)
+                if (region === "navigation") {
+                    expect(await page.evaluate(`${fieldExpression("Default zoom")}.value`)).toBe(
+                        "99",
+                    )
+                    expect(
+                        await page.evaluate(
+                            `${fieldExpression("Default zoom")}.getAttribute('aria-invalid')`,
+                        ),
+                    ).toBe("true")
+                    await page.evaluate(`${buttonExpression("Back")}.focus()`)
+                    await resize(1280)
+                    await page.waitFor(
+                        "document.activeElement.tagName === 'H3' && document.activeElement.getClientRects().length > 0",
+                    )
+                }
+                expect(
+                    await page.evaluate("document.querySelectorAll('[role=dialog]').length"),
+                ).toBe(1)
+                expect(page.errors).toEqual([])
+            } finally {
+                await finish(page)
+            }
+        },
+        90000,
+    )
+
+    it("does not take responsive focus from a confirmation or replacement Prompt", async () => {
+        const page = await browser!.page()
+        const resize = (width: number) =>
+            page.call("Emulation.setDeviceMetricsOverride", {
+                width,
+                height: 844,
+                deviceScaleFactor: 1,
+                mobile: false,
+            })
+        try {
+            await setup(page, 1280)
+            await synthetic(page)
+            await open(page)
+            await click(page, buttonExpression("Reading"))
+            await type(page, fieldExpression("Default zoom"), "99")
+            await key(page, "Tab")
+            await click(page, `document.querySelector(${JSON.stringify(close)})`)
+            await page.waitFor(
+                "!!document.activeElement.closest('[role=alertdialog]:not([inert])')",
+            )
+            await page.evaluate("window.retainedFocus = document.activeElement")
+            await resize(390)
+            expect(
+                await page.evaluate(
+                    "document.activeElement === window.retainedFocus && !!document.activeElement.closest('[role=alertdialog]:not([inert])')",
+                ),
+            ).toBe(true)
+            await click(page, buttonExpression("Stay", '[role="alertdialog"]'))
+            await page.waitFor("!document.querySelector('[role=alertdialog]')")
+            await resize(1280)
+            await page.evaluate(`${buttonExpression("Reading")}.focus()`)
+            await page.evaluate(`(async () => {
+                const {openCommandPalette} = await import('/src/lib/extensions/builtin/prompt/index.ts');
+                window.settingsReplacement = openCommandPalette(undefined, 'Open Settings');
+            })()`)
+            await page.waitFor(
+                "document.activeElement.tagName === 'INPUT' && document.activeElement.closest('[role=dialog]')?.textContent.includes('Open Settings')",
+            )
+            await page.evaluate("window.retainedFocus = document.activeElement")
+            await resize(390)
+            expect(
+                await page.evaluate(
+                    "document.activeElement === window.retainedFocus && !document.activeElement.closest('[inert]') && document.activeElement.getClientRects().length > 0",
+                ),
+            ).toBe(true)
+            expect(page.errors).toEqual([])
+        } finally {
+            await finish(page)
+        }
+    }, 90000)
+
     it.each([1280, 390])(
         "contains native keyboard focus, guards Escape and restores the opener at %ipx",
         async (width) => {
@@ -624,60 +786,69 @@ describe("Global Settings browser", () => {
         90000,
     )
 
-    it("opens from the native Command palette selection and applies durable language navigation in the real Library", async () => {
-        const page = await browser!.page()
-        try {
-            await setup(page, 1280)
-            await page.evaluate(`(async () => {
+    it.each([1280, 390])(
+        "opens from the native Command palette selection and applies durable language navigation in the real Library at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            try {
+                await setup(page, width)
+                await page.evaluate(`(async () => {
                 const {openCommandPalette} = await import('/src/lib/extensions/builtin/prompt/index.ts');
                 window.settingsPalette = openCommandPalette(undefined, 'Open Settings');
             })()`)
-            await page.waitFor(
-                "document.activeElement?.tagName === 'INPUT' && document.querySelector('[role=dialog]')?.textContent.includes('Open Settings')",
-            )
-            await key(page, "Enter")
-            await page.waitFor(
-                `document.activeElement === document.querySelector(${JSON.stringify(search)}) && document.querySelectorAll('[role=dialog]').length === 1`,
-            )
-            await choose(page, "Language", 1)
-            await page.waitFor("document.documentElement.lang === 'en'")
-            const beforeRussian = await page.evaluate("performance.timeOrigin")
-            await choose(page, "Language", 0)
-            await page.waitFor(
-                `performance.timeOrigin !== ${beforeRussian} && location.pathname === '/' && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
-            )
-            expect(await page.evaluate("document.documentElement.lang")).toBe("ru")
-            await click(
-                page,
-                "document.querySelector('#app-root nav[aria-label=Настройки] button')",
-            )
-            await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
-            expect(await page.evaluate(`${fieldExpression("Язык")}.value`)).toBe("0")
-            expect(
-                await page.evaluate("document.querySelector('[role=dialog]').textContent"),
-            ).toContain("Поиск настроек")
-            const beforeReload = await page.evaluate("performance.timeOrigin")
-            await page.call("Page.reload")
-            await page.waitFor(
-                `performance.timeOrigin !== ${beforeReload} && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
-            )
-            await click(
-                page,
-                "document.querySelector('#app-root nav[aria-label=Настройки] button')",
-            )
-            await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
-            expect(await page.evaluate(`${fieldExpression("Язык")}.value`)).toBe("0")
-            const beforeEnglish = await page.evaluate("performance.timeOrigin")
-            await choose(page, "Язык", 1)
-            await page.waitFor(
-                `performance.timeOrigin !== ${beforeEnglish} && location.pathname === '/en' && !!document.querySelector('#app-root nav[aria-label=Settings] button')`,
-            )
-            expect(await page.evaluate("document.documentElement.lang")).toBe("en")
-            expect(page.errors).toEqual([])
-        } finally {
-            await finish(page)
-        }
-    }, 90000)
+                await page.waitFor(
+                    "document.activeElement?.tagName === 'INPUT' && document.querySelector('[role=dialog]')?.textContent.includes('Open Settings')",
+                )
+                await key(page, "Enter")
+                await page.waitFor(
+                    `!!document.querySelector('[role=dialog] nav[aria-label=Settings]') && document.activeElement === document.querySelector(${JSON.stringify(search)}) && document.querySelectorAll('[role=dialog]').length === 1`,
+                )
+                await click(page, buttonExpression("General"))
+                await choose(page, "Language", 1)
+                await page.waitFor("document.documentElement.lang === 'en'")
+                const beforeRussian = await page.evaluate("performance.timeOrigin")
+                await choose(page, "Language", 0)
+                await page.waitFor(
+                    `performance.timeOrigin !== ${beforeRussian} && location.pathname === '/' && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
+                )
+                expect(await page.evaluate("document.documentElement.lang")).toBe("ru")
+                await click(
+                    page,
+                    "document.querySelector('#app-root nav[aria-label=Настройки] button')",
+                )
+                await page.waitFor("!!document.querySelector('[role=dialog]')")
+                await click(page, buttonExpression("Основные"))
+                await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
+                expect(await page.evaluate(`${fieldExpression("Язык")}.value`)).toBe("0")
+                expect(
+                    await page.evaluate("document.querySelector('[role=dialog]').textContent"),
+                ).toContain("Поиск настроек")
+                const beforeReload = await page.evaluate("performance.timeOrigin")
+                await page.call("Page.reload")
+                await page.waitFor(
+                    `performance.timeOrigin !== ${beforeReload} && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
+                )
+                await click(
+                    page,
+                    "document.querySelector('#app-root nav[aria-label=Настройки] button')",
+                )
+                await page.waitFor("!!document.querySelector('[role=dialog]')")
+                await click(page, buttonExpression("Основные"))
+                await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
+                expect(await page.evaluate(`${fieldExpression("Язык")}.value`)).toBe("0")
+                const beforeEnglish = await page.evaluate("performance.timeOrigin")
+                await choose(page, "Язык", 1)
+                await page.waitFor(
+                    `performance.timeOrigin !== ${beforeEnglish} && location.pathname === '/en' && !!document.querySelector('#app-root nav[aria-label=Settings] button')`,
+                )
+                expect(await page.evaluate("document.documentElement.lang")).toBe("en")
+                expect(page.errors).toEqual([])
+            } finally {
+                await finish(page)
+            }
+        },
+        90000,
+    )
 
     it("guards native language navigation with an invalid draft, held unrelated write, Stay and later Discard", async () => {
         const page = await browser!.page()
@@ -763,6 +934,247 @@ describe("Global Settings browser", () => {
                 ),
             ).toBe(4)
             expect(await page.evaluate("location.pathname")).toBe("/")
+            expect(page.errors).toEqual([])
+        } finally {
+            await finish(page)
+        }
+    }, 90000)
+
+    it.each(["plugin page", "search result"])(
+        "recovers valid narrow navigation when an edited %s disappears",
+        async (surface) => {
+            const page = await browser!.page()
+            const plugin = "Paper Tools <img src=x onerror=window.metadataExecuted=true>"
+            try {
+                await setup(page, 390)
+                await synthetic(page)
+                await open(page)
+                await click(page, buttonExpression("Plugins"))
+                await click(page, buttonExpression(plugin))
+                await type(page, fieldExpression("Count"), "8")
+                await key(page, "Tab")
+                await page.waitFor(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.count').then(value => value === 8)",
+                )
+                if (surface === "search result") {
+                    await type(page, `document.querySelector(${JSON.stringify(search)})`, "Count")
+                }
+                await type(page, fieldExpression("Count"), "3")
+                await key(page, "Tab")
+                await page.waitFor(
+                    `${fieldExpression("Count")}.getAttribute('aria-invalid') === 'true'`,
+                )
+                await page.evaluate("window.settingsFixture.host.disable('test.browser-options')")
+                await page.waitFor(
+                    "!document.querySelector('[role=dialog] article') && document.querySelector('[role=dialog]').textContent.includes('unsaved edits were discarded')",
+                )
+                expect(
+                    await page.evaluate(
+                        "document.querySelector('[role=dialog] section').textContent",
+                    ),
+                ).toContain(
+                    surface === "search result"
+                        ? "No matching settings"
+                        : "No plugin settings are available",
+                )
+                await page.evaluate(`${buttonExpression("Back")}.focus()`)
+                await key(page, "Enter")
+                await page.waitFor(`document.activeElement === ${buttonExpression("Plugins")}`)
+                await key(page, "Enter")
+                await page.waitFor("document.activeElement.tagName === 'H3'")
+                expect(
+                    await page.evaluate(
+                        "document.querySelector('[role=dialog] section').textContent",
+                    ),
+                ).toContain("No plugin settings are available")
+                await page.evaluate("window.settingsFixture.host.enable('test.browser-options')")
+                expect(
+                    await page.evaluate("document.querySelector('[role=dialog] article') === null"),
+                ).toBe(true)
+                await page.evaluate("window.settingsFixture.host.activate('test.browser-options')")
+                await page.waitFor(`!!${buttonExpression(plugin)}`)
+                await click(page, buttonExpression(plugin))
+                await page.waitFor(
+                    "document.querySelector('[role=dialog] article[aria-label=Count] input')?.value === '8'",
+                )
+                expect(
+                    await page.evaluate(`${fieldExpression("Count")}.getAttribute('aria-invalid')`),
+                ).toBe("false")
+                expect(
+                    await page.evaluate(
+                        "window.settingsFixture.host.settings.getValue('test.browser-options.count')",
+                    ),
+                ).toBe(8)
+                await click(page, buttonExpression("Back"))
+                await click(page, buttonExpression("General"))
+                await page.waitFor(`${fieldExpression("Language")}.getClientRects().length > 0`)
+                expect(
+                    await page.evaluate("document.querySelectorAll('[role=dialog]').length"),
+                ).toBe(1)
+                expect(page.errors).toEqual([])
+            } finally {
+                await finish(page)
+            }
+        },
+        90000,
+    )
+
+    it("retains a narrow search Reset through pending Back, failure, Stay, clear, Retry and reconstruction", async () => {
+        const page = await browser!.page()
+        const plugin = "Paper Tools <img src=x onerror=window.metadataExecuted=true>"
+        const countRow = `document.querySelector('[role=dialog] article[aria-label="Count"]')`
+        const reset = `${countRow}.querySelector('fieldset button')`
+        const failedReset = `${fieldExpression("Count")}.value === '2' && ${countRow}.textContent.includes('Not saved') && ${countRow}.textContent.includes('Modified')`
+        const resize = async (width: number) => {
+            await page.call("Emulation.setDeviceMetricsOverride", {
+                width,
+                height: 844,
+                deviceScaleFactor: 1,
+                mobile: false,
+            })
+            // Wait for the real Modal presentation before measuring native pointer targets.
+            await page.waitFor(`(() => {
+                const rect = document.querySelector('[role=dialog]').getBoundingClientRect();
+                return innerWidth === ${width} && (${width} === 390
+                    ? Math.abs(rect.width-innerWidth)<2 && Math.abs(rect.height-innerHeight)<2
+                    : rect.width < innerWidth);
+            })()`)
+            await page.waitFor(`(() => {
+                const node = document.querySelector(${JSON.stringify(search)});
+                const rect = node.getBoundingClientRect();
+                return document.elementFromPoint(rect.left+rect.width/2, rect.top+rect.height/2) === node;
+            })()`)
+        }
+        try {
+            await setup(page, 390)
+            await synthetic(page)
+            const databaseName = (await page.evaluate(
+                "window.settingsFixture.databaseName",
+            )) as string
+            await open(page)
+            await type(page, `document.querySelector(${JSON.stringify(search)})`, "Enabled")
+            await click(page, fieldExpression("Enabled"))
+            await page.waitFor(
+                "window.settingsFixture.host.settings.getValue('test.browser-options.enabled').then(value => value === true)",
+            )
+            await type(page, `document.querySelector(${JSON.stringify(search)})`, "Count")
+            await type(page, fieldExpression("Count"), "8")
+            await key(page, "Tab")
+            await page.waitFor(
+                `${countRow}.textContent.includes('Modified') && !${countRow}.querySelector('[role=status]')`,
+            )
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.count')",
+                ),
+            ).toBe(8)
+            await page.evaluate(`(() => {
+                const backend = window.settingsFixture.backend;
+                window.originalSettingsSet = backend.set.bind(backend);
+                backend.set = async (key, value) => {
+                    if (key.endsWith(':test.browser-options.count') && value === 2) {
+                        await new Promise(resolve => window.releaseSettingsReset = resolve);
+                        throw new Error('private reset diagnostic');
+                    }
+                    return window.originalSettingsSet(key, value);
+                };
+            })()`)
+            await click(page, reset)
+            await page.waitFor(
+                `typeof window.releaseSettingsReset === 'function' && ${countRow}.textContent.includes('Saving') && ${countRow}.textContent.includes('Modified')`,
+            )
+            await page.evaluate(`${buttonExpression("Back")}.focus()`)
+            await key(page, "Enter")
+            await page.waitFor(`document.activeElement === ${buttonExpression("General")}`)
+            await click(page, buttonExpression("Plugins"))
+            await click(page, buttonExpression(plugin))
+            expect(await page.evaluate(`${fieldExpression("Count")}.value`)).toBe("2")
+            expect(await page.evaluate(`${countRow}.textContent`)).toContain("Saving")
+            expect(await page.evaluate(`${countRow}.textContent`)).toContain("Modified")
+            await resize(1280)
+            await page.evaluate(`${buttonExpression(plugin, '[role="dialog"] nav')}.focus()`)
+            await resize(390)
+            await page.waitFor(
+                "document.activeElement.tagName === 'H3' && document.activeElement.getClientRects().length > 0",
+            )
+            expect(
+                await page.evaluate(
+                    `${fieldExpression("Count")}.value === '2' && ${countRow}.textContent.includes('Saving') && ${countRow}.textContent.includes('Modified')`,
+                ),
+            ).toBe(true)
+            await page.waitFor(`(() => {
+                const modal = document.querySelector('[role=dialog]').getBoundingClientRect();
+                const node = document.querySelector(${JSON.stringify(close)});
+                const rect = node.getBoundingClientRect();
+                return Math.abs(modal.width-innerWidth)<2 && Math.abs(modal.height-innerHeight)<2 &&
+                    node.contains(document.elementFromPoint(rect.left+rect.width/2, rect.top+rect.height/2));
+            })()`)
+            await click(page, `document.querySelector(${JSON.stringify(close)})`)
+            await page.waitFor("document.querySelector('[aria-busy=true]') !== null")
+            expect(
+                await page.evaluate("document.querySelector('[role=alertdialog]') === null"),
+            ).toBe(true)
+            await page.evaluate("window.releaseSettingsReset()")
+            await page.waitFor(
+                "!!document.activeElement.closest('[role=alertdialog]:not([inert])')",
+            )
+            await click(page, buttonExpression("Stay", '[role="alertdialog"]'))
+            await page.waitFor("!document.querySelector('[role=alertdialog]')")
+            await resize(1280)
+            await resize(390)
+            expect(await page.evaluate(failedReset)).toBe(true)
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.count')",
+                ),
+            ).toBe(8)
+            expect(await page.evaluate("document.body.textContent")).not.toContain(
+                "private reset diagnostic",
+            )
+            await type(page, `document.querySelector(${JSON.stringify(search)})`, "Count")
+            expect(await page.evaluate(failedReset)).toBe(true)
+            await click(page, buttonExpression("Clear search"))
+            expect(await page.evaluate(failedReset)).toBe(true)
+            await click(page, buttonExpression("Back"))
+            expect(
+                await page.evaluate(`document.activeElement === ${buttonExpression(plugin)}`),
+            ).toBe(true)
+            await click(page, buttonExpression(plugin))
+            expect(await page.evaluate(failedReset)).toBe(true)
+            await type(page, `document.querySelector(${JSON.stringify(search)})`, "Count")
+            await page.evaluate("window.settingsFixture.backend.set = window.originalSettingsSet")
+            await click(page, buttonExpression("Retry"))
+            await page.waitFor(
+                `!${countRow}.textContent.includes('Not saved') && !${countRow}.textContent.includes('Modified') && !${countRow}.textContent.includes('Saving')`,
+            )
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.count')",
+                ),
+            ).toBe(2)
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.enabled')",
+                ),
+            ).toBe(true)
+            await click(page, `document.querySelector(${JSON.stringify(close)})`)
+            await page.waitFor("!document.querySelector('[role=dialog]')")
+            await page.evaluate("window.settingsFixture.stop()")
+            await synthetic(page, databaseName)
+            await open(page)
+            await type(page, `document.querySelector(${JSON.stringify(search)})`, "Count")
+            await page.waitFor(`${fieldExpression("Count")}.value === '2'`)
+            expect(await page.evaluate(`${countRow}.textContent.includes('Modified')`)).toBe(false)
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.count')",
+                ),
+            ).toBe(2)
+            expect(
+                await page.evaluate(
+                    "window.settingsFixture.host.settings.getValue('test.browser-options.enabled')",
+                ),
+            ).toBe(true)
             expect(page.errors).toEqual([])
         } finally {
             await finish(page)

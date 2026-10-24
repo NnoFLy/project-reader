@@ -117,11 +117,70 @@
         query = ""
         search?.focus()
     }
+    function focusNavigation(shell: Element) {
+        const target =
+            shell.querySelector<HTMLButtonElement>("nav button[aria-current]") ??
+            shell.querySelector<HTMLButtonElement>("nav button[aria-expanded]")
+        target?.focus()
+    }
+    async function recoverHiddenFocus(shell: Element, target: Element | null) {
+        // Follow rendered custom-media visibility, including phone landscape, without a second breakpoint.
+        if (!target || !shell.contains(target) || target.getClientRects().length) return
+        const pane = target.closest("nav, section")
+        if (
+            getComputedStyle(target).display !== "none" &&
+            (!pane || getComputedStyle(pane).display !== "none")
+        )
+            return
+        await tick()
+        if (
+            !alive ||
+            confirming ||
+            !canDismiss() ||
+            shell.closest("[inert]") ||
+            !target.isConnected ||
+            target.getClientRects().length ||
+            (document.activeElement !== target && document.activeElement !== document.body)
+        )
+            return
+        if (shell.querySelector("section")?.getClientRects().length)
+            document.getElementById(`${uid}-page`)?.focus()
+        else focusNavigation(shell)
+    }
+    function keepFocusVisible(shell: HTMLElement) {
+        const onFocusOut = (event: FocusEvent) => {
+            if (event.target instanceof Element) void recoverHiddenFocus(shell, event.target)
+        }
+        shell.addEventListener("focusout", onFocusOut)
+        return () => shell.removeEventListener("focusout", onFocusOut)
+    }
+    function onResize() {
+        const shell = search?.closest(".settings-shell")
+        if (shell) void recoverHiddenFocus(shell, document.activeElement)
+    }
+    async function back(event: MouseEvent) {
+        const button = event.currentTarget
+        page = false
+        query = ""
+        await tick()
+        if (
+            !alive ||
+            confirming ||
+            !canDismiss() ||
+            search?.closest("[inert]") ||
+            (document.activeElement !== button && document.activeElement !== document.body)
+        )
+            return
+        const shell = search?.closest(".settings-shell")
+        if (shell) focusNavigation(shell)
+    }
     onDestroy(() => {
         alive = false
         navigation = undefined
     })
 </script>
+
+<svelte:window onresize={onResize} />
 
 <Modal
     title={m.settings()}
@@ -132,7 +191,7 @@
     onClose={() => void requestClose()}
     initialFocus={() => search ?? null}
 >
-    <div class="settings-shell" aria-busy={closing}>
+    <div class="settings-shell" aria-busy={closing} {@attach keepFocusVisible}>
         <div class="search">
             <label for={`${uid}-search`}>{m.settings_search()}</label>
             <input
@@ -182,13 +241,7 @@
                       ? plugins.find(([id]) => location === `plugin:${id}`)?.[1]
                       : titles[location as SettingCategory]()}
             >
-                <button
-                    class="back"
-                    onclick={() => {
-                        page = false
-                        query = ""
-                    }}>{m.settings_back()}</button
-                >
+                <button class="back" onclick={back}>{m.settings_back()}</button>
                 <h3 id={`${uid}-page`} tabindex="-1">
                     {searching
                         ? m.settings_search()
