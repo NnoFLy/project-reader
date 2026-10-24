@@ -165,25 +165,17 @@ export class DocumentService {
                 if (key === "close") return close
                 const value = Reflect.get(target, key, target)
                 if (typeof value !== "function") return value
+                const takesSignalArgument =
+                    key === "getText" || key === "getAnnotations" || key === "validateRenderBounds"
                 return (...args: unknown[]) => {
                     let requestSignal: AbortSignal | undefined
                     if (key === "renderPage")
                         requestSignal = (args[1] as { signal?: AbortSignal } | undefined)?.signal
-                    else if (
-                        key === "getText" ||
-                        key === "getAnnotations" ||
-                        key === "validateRenderBounds"
-                    )
-                        requestSignal = args[1] as AbortSignal | undefined
+                    else if (takesSignalArgument) requestSignal = args[1] as AbortSignal | undefined
                     const operationSignal = combinedSignal(signal, requestSignal)
                     if (key === "renderPage")
                         args[1] = { ...(args[1] as object), signal: operationSignal }
-                    else if (
-                        key === "getText" ||
-                        key === "getAnnotations" ||
-                        key === "validateRenderBounds"
-                    )
-                        args[1] = operationSignal
+                    else if (takesSignalArgument) args[1] = operationSignal
                     return runDocumentOperation(operationSignal, () => value.apply(target, args))
                 }
             },
