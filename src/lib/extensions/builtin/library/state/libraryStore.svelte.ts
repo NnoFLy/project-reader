@@ -15,11 +15,12 @@ import type {
     ImportResult,
 } from "./libraryStore.types"
 import { FolderNameError } from "./libraryStore.types"
-import { LibraryStorage } from "./libraryStorage"
+import { LibraryStorage, isReadingDeletionIntent } from "./libraryStorage"
 import type {
     ExtensionStorage,
     StorageNamespace,
     ReadingSummaryCapability,
+    ReadingDeletionCapability,
 } from "$lib/extension-api"
 import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "$lib/core/files"
 import type {
@@ -297,6 +298,7 @@ export class VFSStore {
     private metadataEnrichmentOwners = 0
     private disposed = false
     private readonly disposalPromise: Promise<void>
+    private readonly readingCleanupController = new AbortController()
     private disposalCompletion: Promise<void> | null = null
     private resolveDisposal!: () => void
     private metadataEnrichmentController: AbortController | null = null
@@ -319,11 +321,108 @@ export class VFSStore {
         else if (this.metadataEnrichmentOwners > 0) this.scheduleMetadataEnrichment()
     }
 
+    readingCleanupPending = $state(false)
+    readingCleanupBusy = $state(false)
+    /** Reuse Library's mutation gate, never race an active compensating transaction. */
+    admitReadingDeletions(): Promise<void> {
+        return this.serializeNodeMutation(() => this.admitReadingDeletionsUnlocked())
+    }
+
+    private async admitReadingDeletionsUnlocked(signal?: AbortSignal): Promise<void> {
+        let pending = false
+        for await (const intent of this.db.readingDeletionIntents()) {
+            this.throwIfDisposed()
+            signal?.throwIfAborted()
+            const exists = await this.db.files.get(intent.id)
+            this.throwIfDisposed()
+            signal?.throwIfAborted()
+            if (exists) continue
+            this.readDeletion?.()?.fence([intent.id], intent.phase)
+            pending ||= intent.phase !== "retired"
+        }
+        this.readingCleanupPending = pending
+    }
+
+    async resumeReadingDeletions(): Promise<boolean> {
+        const signal = AbortSignal.any([
+            AbortSignal.timeout(2000),
+            this.readingCleanupController.signal,
+        ])
+        // The caller's deadline never releases the physical mutation gate. A stalled storage
+        // acknowledgement must settle before another pass can enter, even after cancellation.
+        const task = this.serializeNodeMutation(() => this.resumeReadingDeletionsUnlocked(signal))
+        let abort!: () => void
+        try {
+            return await Promise.race([
+                task,
+                this.disposalPromise.then(() => false),
+                new Promise<boolean>((resolve) => {
+                    abort = () => resolve(false)
+                    if (signal.aborted) abort()
+                    else signal.addEventListener("abort", abort, { once: true })
+                }),
+            ])
+        } finally {
+            signal.removeEventListener("abort", abort)
+            if (signal.aborted && !this.disposed) {
+                this.readingCleanupBusy = false
+                this.readingCleanupPending = true
+            }
+        }
+    }
+
+    private async resumeReadingDeletionsUnlocked(signal: AbortSignal): Promise<boolean> {
+        this.readingCleanupBusy = true
+        let prepared = false
+        const check = () => {
+            this.throwIfDisposed()
+            if (signal.aborted) throw new Error("Reading cleanup deadline exceeded")
+        }
+        try {
+            await this.admitReadingDeletionsUnlocked(signal)
+            check()
+            prepared = true
+            const capability = this.readDeletion?.()
+            if (!capability) return !this.readingCleanupPending
+            let success = true
+            for await (const intent of this.db.readingDeletionIntents()) {
+                check()
+                if (await this.db.files.get(intent.id)) continue
+                check()
+                try {
+                    if (intent.phase === "retired") continue
+                    if (intent.phase === "pending") {
+                        await capability.delete([intent.id], signal)
+                        check()
+                        await this.db.readingDeletions.put({ ...intent, phase: "complete" })
+                    }
+                    check()
+                    await capability.complete([intent.id], signal)
+                    check()
+                    await this.db.readingDeletions.put({ ...intent, phase: "retired" })
+                    check()
+                } catch {
+                    success = false
+                }
+            }
+            this.readingCleanupPending = !success
+            return success
+        } catch (error) {
+            this.readingCleanupPending = true
+            // Startup must fail closed if the complete admission fence could not be read.
+            if (!prepared) throw error
+            return false
+        } finally {
+            this.readingCleanupBusy = false
+        }
+    }
+
     constructor(
         initialNodes: VFSNodes = {},
         storage?: StorageNamespace,
         private readonly documentService = installedDocumentService,
         private readonly readSummary?: ReadingSummaryCapability["getSummary"],
+        private readonly readDeletion?: () => ReadingDeletionCapability | undefined,
     ) {
         this.db = new LibraryStorage(storage ?? new MemoryLibraryStorageNamespace())
         this.disposalPromise = new Promise<void>((resolve) => {
@@ -832,6 +931,7 @@ export class VFSStore {
     dispose(): Promise<void> {
         if (this.disposalCompletion) return this.disposalCompletion
         this.disposed = true
+        this.readingCleanupController.abort()
         this.resolveDisposal()
         this.disposalCompletion = this.completeDispose()
         return this.disposalCompletion
@@ -1193,6 +1293,7 @@ export class VFSStore {
 
                     const currentRelinkEpoch = this.relinkEpochs.get(id) ?? 0
                     try {
+                        // Internal resource rollback is not a confirmed reading-data cascade.
                         await this.deleteNodeUnlocked(id, currentRelinkEpoch)
                     } catch (error) {
                         if (error instanceof ContentSupersededError) {
@@ -2460,10 +2561,17 @@ export class VFSStore {
     }
 
     async deleteNode(id: string) {
-        return this.serializeNodeMutation(() => this.deleteNodeUnlocked(id))
+        await this.serializeNodeMutation(() => this.deleteNodeUnlocked(id, undefined, true))
+        // Replay enters the same physical gate only after the source mutation has released it.
+        if (!this.disposed && this.readingCleanupPending)
+            await this.resumeReadingDeletions().catch(() => false)
     }
 
-    private async deleteNodeUnlocked(id: string, expectedRelinkEpoch?: number) {
+    private async deleteNodeUnlocked(
+        id: string,
+        expectedRelinkEpoch?: number,
+        cascadeReading = false,
+    ) {
         const rootNode = this.nodes[id]
         if (!rootNode) return
         if (
@@ -2522,7 +2630,14 @@ export class VFSStore {
             // PHASE 4 OPTIMIZATION: Use bulkDelete for efficient batch removal
             await this.db.transaction(
                 "rw",
-                ["books", "folders", "previews", "fileContents", "indexedTexts"],
+                [
+                    "books",
+                    "folders",
+                    "previews",
+                    "fileContents",
+                    "indexedTexts",
+                    "readingDeletions",
+                ],
                 async () => {
                     this.throwIfDisposed()
                     assertRelinkEpoch()
@@ -2609,6 +2724,24 @@ export class VFSStore {
                             this.invalidateContent(fileId)
                         }
                     }
+                    if (cascadeReading) {
+                        this.readDeletion?.()?.prepare(fileIds)
+                        for (const fileId of fileIds) {
+                            if (
+                                !isReadingDeletionIntent({
+                                    id: fileId,
+                                    version: 1,
+                                    phase: "pending",
+                                })
+                            )
+                                throw new Error("Invalid Library deletion ID")
+                            await this.db.readingDeletions.put({
+                                id: fileId,
+                                version: 1,
+                                phase: "pending",
+                            })
+                        }
+                    }
                     if (fileIds.length > 0) {
                         assertRelinkEpoch()
                         await this.db.files.bulkDelete(fileIds)
@@ -2658,6 +2791,7 @@ export class VFSStore {
                     this.notifyNodeInvalidated(fileId)
                     this.notifyContentRestored(fileId)
                 }
+                if (cascadeReading) this.readDeletion?.()?.rollback(fileIds)
                 throw error
             }
             // Disposal may reject the post-commit continuation. Cleanup below still owns the
@@ -2742,6 +2876,10 @@ export class VFSStore {
             }
         }
         for (const fileId of fileIds) this.settleDeletion(fileId)
+
+        if (cascadeReading && !this.disposed) {
+            this.readingCleanupPending = fileIds.length > 0
+        }
 
         if (!this.disposed) {
             for (const listener of this.nodeDeletionListeners) {
@@ -3557,8 +3695,9 @@ export function configureLibraryStore(
     storage: StorageNamespace,
     service?: VfsDocumentService,
     readSummary?: ReadingSummaryCapability["getSummary"],
+    readDeletion?: () => ReadingDeletionCapability | undefined,
 ): VFSStore {
-    vfsStore = new VFSStore({}, storage, service, readSummary)
+    vfsStore = new VFSStore({}, storage, service, readSummary, readDeletion)
     libraryStore = vfsStore
     return vfsStore
 }

@@ -39,6 +39,7 @@ export interface ViewerStoreOptions {
     loader?: ViewerDocumentLoader
     writeSignal?: AbortSignal
     defaults?: () => Pick<ReadingDocumentState, "scale" | "layout">
+    storage?: ReadingStorage
     onStorageError?: (error: ReadingStorageError) => void
 }
 
@@ -138,6 +139,7 @@ export class ViewerStore {
                     files.isCurrentFileUrl(id, url, generation),
                 clearForwardHistory: () => mutations.clearForwardHistory(),
             },
+            storage: this.options.storage,
             loader: this.options.loader,
             providers: this.options.providers,
             recovery: this.options.recovery,
@@ -359,7 +361,12 @@ export class ViewerStore {
     }
 
     private async clearDeletedBook(id: string) {
-        if (this.book?.id !== id || this.files.nodes[id]?.type === "file") return
+        if (
+            this.book?.id !== id ||
+            this.files.nodes[id]?.type === "file" ||
+            this.reading.status === "deletion-pending"
+        )
+            return
         await this.workspace.synchronize()
     }
 

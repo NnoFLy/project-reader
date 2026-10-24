@@ -99,11 +99,34 @@ export interface ReadingSummaryCapability {
 /** Viewer-owned recovery reference only; no document or annotation material. */
 export interface ReadingRecoveryCapability {
     readonly documentId: string | null
-    readonly status: "closed" | "ready" | "unavailable" | "missing" | "provider-unavailable"
+    readonly status:
+        | "closed"
+        | "ready"
+        | "unavailable"
+        | "missing"
+        | "provider-unavailable"
+        | "deletion-pending"
     retry(): Promise<boolean>
 }
 
+/** Committed source-deletion IDs only; annotation payloads never cross the host. */
+export interface ReadingDeletionCapability {
+    prepare(documentIds: readonly string[]): void
+    fence(documentIds: readonly string[], phase: "pending" | "complete" | "retired"): void
+    complete(documentIds: readonly string[], signal?: AbortSignal): Promise<void>
+    rollback(documentIds: readonly string[]): void
+    delete(documentIds: readonly string[], signal?: AbortSignal): Promise<void>
+}
+
+/** Small-record admission precedes restoration; payload replay runs after runtime publication. */
+export interface ReadingDeletionRecoveryCapability {
+    admit(): Promise<void>
+    resume(): Promise<boolean>
+}
+
 export interface HostContext {
+    readingDeletion?: ReadingDeletionCapability
+    readingDeletionRecovery?: ReadingDeletionRecoveryCapability
     readingRecovery?: ReadingRecoveryCapability
     readonly providers?: import("./providers").ProviderAvailability
     readingSummaries?: ReadingSummaryCapability

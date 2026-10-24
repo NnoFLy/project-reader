@@ -39,6 +39,8 @@ const VERSION = 1
 const CURRENT_KEY = "reading-v1-current"
 const DOCUMENT_PREFIX = "reading-v1-document-"
 const ANNOTATIONS_PREFIX = "reading-v1-annotations-"
+const DELETION_PREFIX = "reading-v1-deletion-recovery-"
+const DELETION_CURRENT_KEY = "reading-v1-deletion-current"
 const MAX_DOCUMENT_ID_LENGTH = 1024
 
 export function isDocumentId(value: unknown): value is string {
@@ -118,8 +120,111 @@ export function readAnnotations(value: unknown, documentId: string): ReadingReco
  * Drafts use the validated note shape but remain unfinished; one envelope permits
  * atomic save-to-note + draft removal. The host namespace owns writer fencing.
  */
+export interface ReadingDeletionRecovery extends ReadingRecords {
+    readonly state: ReadingDocumentState | null
+}
+
 export class ReadingStorage {
     constructor(private readonly storage: StorageNamespace) {}
+
+    private deletionRecovery(value: unknown, documentId: string): ReadingDeletionRecovery {
+        const records =
+            isRecord(value) && value.version === VERSION && value.documentId === documentId
+                ? readAnnotations(value, documentId)
+                : null
+        const state = isRecord(value) && isRecord(value.state) ? readState(value.state) : null
+        if (!records || !isRecord(value) || (value.state !== null && !state))
+            throw new ReadingStorageError("reading.storage.read")
+        return { ...records, state }
+    }
+
+    async readDeletionCurrent(): Promise<string | null> {
+        const value = await this.storage.get<unknown>(DELETION_CURRENT_KEY)
+        if (value === undefined) return null
+        if (!isRecord(value) || !isDocumentId(value.documentId))
+            throw new ReadingStorageError("reading.storage.read")
+        this.deletionRecovery(value, value.documentId)
+        return value.documentId
+    }
+
+    async readDeletionRecovery(documentId: string): Promise<ReadingDeletionRecovery | null> {
+        const value = await this.storage.get<unknown>(documentKey(documentId, DELETION_PREFIX))
+        if (value !== undefined) return this.deletionRecovery(value, documentId)
+        const current = await this.storage.get<unknown>(DELETION_CURRENT_KEY)
+        return isRecord(current) && current.documentId === documentId
+            ? this.deletionRecovery(current, documentId)
+            : null
+    }
+
+    /** Acknowledged recovery precedes every destructive primary-key mutation. */
+    async retainDeletionRecovery(
+        documentId: string,
+        memory: ReadingDeletionRecovery & { readonly loaded: boolean },
+        owns: () => boolean,
+    ): Promise<ReadingDeletionRecovery> {
+        // An unsupported reference is not authority to replace or destroy recovery material.
+        await this.readDeletionCurrent()
+        let recovery = await this.readDeletionRecovery(documentId)
+        if (!recovery) {
+            const state = memory.state ?? (await this.readDocument(documentId))
+            // Loaded empty snapshots are authoritative too (for example a failed last-note removal).
+            const records = memory.loaded
+                ? freezeAnnotations(memory.notes, memory.bookmarks, memory.drafts)
+                : await this.readAnnotations(documentId)
+            recovery = { ...records, state }
+            if (!owns()) throw new ReadingStorageError("reading.storage.write")
+            await this.storage.set(documentKey(documentId, DELETION_PREFIX), {
+                version: VERSION,
+                documentId,
+                ...recovery,
+            })
+        }
+        const current = await this.readCurrent()
+        if (!owns()) throw new ReadingStorageError("reading.storage.write")
+        if (current === documentId)
+            await this.storage.set(DELETION_CURRENT_KEY, {
+                version: VERSION,
+                documentId,
+                ...recovery,
+            })
+        return recovery
+    }
+
+    /** Retire only supported matching recovery, after Library acknowledges primary cleanup. */
+    async retireDeletionRecovery(documentId: string, owns: () => boolean): Promise<void> {
+        const recovery = await this.readDeletionRecovery(documentId)
+        const current = await this.readDeletionCurrent()
+        if (!owns()) throw new ReadingStorageError("reading.storage.write")
+        // The matching reference also carries recovery until its own retirement acknowledges.
+        if (recovery) await this.storage.delete(documentKey(documentId, DELETION_PREFIX))
+        if (!owns()) throw new ReadingStorageError("reading.storage.write")
+        if (current === documentId) await this.storage.delete(DELETION_CURRENT_KEY)
+    }
+
+    /** Exact supported v1 envelopes only; unsupported/legacy data is not purge authority. */
+    async deleteDocument(documentId: string, owns: () => boolean = () => true): Promise<void> {
+        try {
+            for (const prefix of [ANNOTATIONS_PREFIX, DOCUMENT_PREFIX]) {
+                const key = documentKey(documentId, prefix)
+                const value = await this.storage.get<unknown>(key)
+                if (!owns()) throw new ReadingStorageError("reading.storage.write")
+                if (
+                    isRecord(value) &&
+                    value.version === VERSION &&
+                    value.documentId === documentId &&
+                    (prefix === ANNOTATIONS_PREFIX
+                        ? readAnnotations(value, documentId)
+                        : readState(value))
+                )
+                    await this.storage.delete(key)
+            }
+            const current = await this.readCurrent()
+            if (!owns()) throw new ReadingStorageError("reading.storage.write")
+            if (current === documentId) await this.storage.delete(CURRENT_KEY)
+        } catch {
+            throw new ReadingStorageError("reading.storage.write")
+        }
+    }
 
     async readAnnotations(documentId: string): Promise<ReadingRecords> {
         const key = documentKey(documentId, ANNOTATIONS_PREFIX)
@@ -169,6 +274,8 @@ export class ReadingStorage {
             throw new ReadingStorageError("reading.storage.invalid-input")
         }
         try {
+            // A newer selection/explicit close supersedes the old deletion-recovery reference.
+            if (await this.readDeletionCurrent()) await this.storage.delete(DELETION_CURRENT_KEY)
             if (documentId === null) await this.storage.delete(CURRENT_KEY)
             else await this.storage.set(CURRENT_KEY, { version: VERSION, documentId })
         } catch {

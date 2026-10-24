@@ -9,6 +9,26 @@ import type {
     UserNote,
 } from "./libraryStore.types"
 
+export interface ReadingDeletionIntent {
+    id: string
+    version: 1
+    // Completed records remain terminal fences; no age-based purge can admit stale handoffs.
+    phase: "pending" | "complete" | "retired"
+}
+
+export function isReadingDeletionIntent(value: unknown): value is ReadingDeletionIntent {
+    if (!value || typeof value !== "object") return false
+    const record = value as Record<string, unknown>
+    return (
+        record.version === 1 &&
+        (record.phase === "pending" || record.phase === "complete" || record.phase === "retired") &&
+        typeof record.id === "string" &&
+        record.id.length > 0 &&
+        record.id.length <= 1024 &&
+        !!record.id.trim()
+    )
+}
+
 type LibraryRecord = { id: string }
 type TableName =
     | "books"
@@ -18,6 +38,7 @@ type TableName =
     | "indexedTexts"
     | "userNotes"
     | "bookmarks"
+    | "readingDeletions"
 
 type LibraryTable<T extends LibraryRecord> = {
     get(id: string): Promise<T | undefined>
@@ -52,6 +73,7 @@ const JOURNAL_KEY = "library-transaction-journal"
 export class LibraryStorage {
     private queue = Promise.resolve()
     private readonly ready: Promise<void>
+    private repairRequired = false
     private activeJournal: TransactionJournal | null = null
     private readonly storage: StorageNamespace
     private readonly tables: Record<TableName, StorageNamespace>
@@ -67,8 +89,10 @@ export class LibraryStorage {
                 "indexedTexts",
                 "userNotes",
                 "bookmarks",
+                "readingDeletions",
             ].map((name) => [name, tableStorage(storage, name)]),
         ) as Record<TableName, StorageNamespace>
+        this.readingDeletions = this.table<ReadingDeletionIntent>("readingDeletions")
         this.files = this.table<FileNode>("books")
         this.previews = this.table<BookPreview>("previews")
         this.folders = this.table<FolderNode>("folders")
@@ -79,6 +103,7 @@ export class LibraryStorage {
         this.ready = this.repairJournal(storage)
     }
 
+    readonly readingDeletions: LibraryTable<ReadingDeletionIntent>
     readonly files: LibraryTable<FileNode>
     readonly previews: LibraryTable<BookPreview>
     readonly folders: LibraryTable<FolderNode>
@@ -86,6 +111,18 @@ export class LibraryStorage {
     readonly indexedTexts: IndexedLibraryTable<IndexedText>
     readonly userNotes: IndexedLibraryTable<UserNote>
     readonly bookmarks: IndexedLibraryTable<Bookmark>
+
+    /** Small records streamed sequentially; a mismatched key never authorizes cleanup. */
+    async *readingDeletionIntents(): AsyncGenerator<ReadingDeletionIntent> {
+        await this.transaction("r", [], async () => undefined)
+        const table = this.tables.readingDeletions
+        let count = 0
+        for (const id of await table.keys()) {
+            const value = await table.get<unknown>(id)
+            if (isReadingDeletionIntent(value) && value.id === id) yield value
+            if (++count % 32 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        }
+    }
 
     /**
      * StorageNamespace has no multi-key transaction primitive. A durable journal makes the
@@ -95,7 +132,7 @@ export class LibraryStorage {
     transaction<T>(mode: "r" | "rw", tables: string[], callback: () => Promise<T>): Promise<T> {
         void tables
         const operation = this.queue.then(async () => {
-            await this.ready
+            await this.recoverBeforeOperation()
             if (mode === "r") return callback()
 
             const journal: TransactionJournal = { phase: "active", entries: [] }
@@ -104,15 +141,20 @@ export class LibraryStorage {
             this.activeJournal = journal
             try {
                 const result = await callback()
-                journal.phase = "committed"
-                await storage.set(JOURNAL_KEY, journal)
-                await storage.delete(JOURNAL_KEY)
+                await storage.set(JOURNAL_KEY, { ...journal, phase: "committed" })
+                // Retirement is not the commit point. Never compensate an acknowledged commit.
+                try {
+                    await storage.delete(JOURNAL_KEY)
+                } catch {
+                    /* Startup retires it. */
+                }
                 return result
             } catch (error) {
                 try {
                     await this.restoreJournal(journal)
                     await storage.delete(JOURNAL_KEY)
                 } catch (rollbackError) {
+                    this.repairRequired = true
                     // Keep the active journal if compensation itself fails. The next startup
                     // will retry it rather than reporting a silently partial transaction.
                     throw new AggregateError([error, rollbackError], "Library transaction failed")
@@ -129,6 +171,14 @@ export class LibraryStorage {
         return operation
     }
 
+    private async recoverBeforeOperation(): Promise<void> {
+        await this.ready
+        if (this.repairRequired) {
+            await this.repairJournal(this.storage)
+            this.repairRequired = false
+        }
+    }
+
     private storageForJournal(): StorageNamespace {
         return this.storage
     }
@@ -138,7 +188,7 @@ export class LibraryStorage {
         // would deadlock the callback, so their table writes use the active journal directly.
         if (this.activeJournal) return operation()
         const task = this.queue.then(async () => {
-            await this.ready
+            await this.recoverBeforeOperation()
             return operation()
         })
         this.queue = task.then(

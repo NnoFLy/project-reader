@@ -120,6 +120,152 @@ function documentLoader() {
 }
 
 describe("Reading workspace", () => {
+    it("cancels a deleted pending open without abandoning the reader it would have replaced", async () => {
+        const { files } = fileAccess()
+        const namespace = readingNamespace()
+        const { workspace, current } = reader(files, undefined, {
+            storage: new ReadingStorage(namespace),
+        })
+        await workspace.open("second")
+        const entered = deferred<void>()
+        const release = deferred<string>()
+        files.getFileUrl = async (id) => {
+            if (id === "first") {
+                entered.resolve()
+                return release.promise
+            }
+            return `blob:${id}`
+        }
+        const opening = workspace.open("first")
+        await entered.promise
+        await workspace.deleteReadingData(["first"])
+        await workspace.completeReadingDeletion(["first"])
+        release.resolve("blob:first")
+        expect(await opening).toBe(false)
+        expect(current()?.id).toBe("second")
+        expect(await workspace.retry()).toBe(true)
+        expect(workspace.snapshot.documentId).toBe("second")
+    })
+
+    it("keeps partial deletion recovery read-only when an earlier close finishes late", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const { workspace, current } = reader(undefined, undefined, { storage })
+        await workspace.open("first")
+        await workspace.flush()
+        const entered = deferred<void>()
+        const release = deferred<void>()
+        const remove = namespace.delete.bind(namespace)
+        namespace.delete = async (key) => {
+            if (key === "reading-v1-current") {
+                entered.resolve()
+                await release.promise
+                await remove(key)
+            } else throw new Error("injected cleanup failure")
+        }
+        const closing = workspace.requestClose()
+        await entered.promise
+        const deleting = expect(workspace.deleteReadingData(["first"])).rejects.toThrow()
+        release.resolve()
+        await deleting
+        expect((await closing).status).toBe("superseded")
+        expect(current()?.id).toBe("first")
+        expect(workspace.snapshot.status).toBe("deletion-pending")
+    })
+
+    it("drains an issued pointer save before terminal cleanup and preserves a newer selection", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const { workspace, current } = reader(undefined, undefined, { storage })
+        const entered = deferred<void>()
+        const release = deferred<void>()
+        const set = namespace.set.bind(namespace)
+        let delayed = false
+        namespace.set = async (key, value) => {
+            if (!delayed && key === "reading-v1-current") {
+                delayed = true
+                entered.resolve()
+                await release.promise
+            }
+            await set(key, value)
+        }
+        await workspace.open("first")
+        await entered.promise
+        workspace.setPosition(9)
+        const deleting = workspace.deleteReadingData(["first"])
+        await workspace.open("second")
+        release.resolve()
+        await deleting
+        await workspace.completeReadingDeletion(["first"])
+        await workspace.flush()
+        expect(current()?.id).toBe("second")
+        expect(await storage.readCurrent()).toBe("second")
+        expect(await storage.readDocument("first")).toBeNull()
+        expect(await workspace.open("first")).toBe(false)
+    })
+
+    it("retains read-only recovery on partial cleanup and retries without closing a newer reader", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const { workspace, current } = reader(undefined, undefined, { storage })
+        await workspace.open("first")
+        await workspace.createDraft("first", noteInput())
+        const remove = namespace.delete.bind(namespace)
+        namespace.delete = async () => {
+            throw new Error("injected cleanup failure")
+        }
+        await expect(workspace.deleteReadingData(["first"])).rejects.toThrow()
+        expect(workspace.snapshot.status).toBe("deletion-pending")
+        expect(workspace.captureRecovery()?.annotations[0]?.records.drafts).toHaveLength(1)
+        expect(
+            (
+                await workspace.updateDraft("first", workspace.annotations("first").drafts[0].id, {
+                    noteContent: "must not save",
+                    color: "yellow",
+                })
+            ).ok,
+        ).toBe(false)
+        await workspace.open("second")
+        namespace.delete = remove
+        await workspace.deleteReadingData(["first"])
+        await workspace.completeReadingDeletion(["first"])
+        expect(current()?.id).toBe("second")
+        await workspace.flush()
+        expect(await storage.readCurrent()).toBe("second")
+        expect(workspace.captureRecovery()?.annotations).toEqual([])
+    })
+
+    it("confirmed deletion removes only its reading data and cannot reopen or save drafts", async () => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const { workspace, current } = reader(undefined, undefined, { storage })
+        await workspace.open("first")
+        await workspace.createDraft("first", noteInput())
+        workspace.setPosition(8)
+        await workspace.flush()
+        await storage.writeDocument("second", {
+            pageNumber: 3,
+            scrollPosition: 0,
+            scale: 1,
+            layout: "single",
+        })
+        await namespace.set("legacy-progress", { untouched: true })
+
+        await workspace.deleteReadingData(["first"])
+        expect(workspace.snapshot.status).toBe("deletion-pending")
+        expect(workspace.annotations("first").drafts).toHaveLength(1)
+        await workspace.completeReadingDeletion(["first"])
+
+        expect(current()).toBeNull()
+        expect(await workspace.open("first")).toBe(false)
+        expect((await workspace.createDraft("first", noteInput())).ok).toBe(false)
+        expect(await storage.readCurrent()).toBeNull()
+        expect(await storage.readDocument("first")).toBeNull()
+        expect((await storage.readAnnotations("first")).drafts).toEqual([])
+        expect((await storage.readDocument("second"))?.pageNumber).toBe(3)
+        expect(await namespace.get("legacy-progress")).toEqual({ untouched: true })
+    })
+
     it("retains Library loss as provider unavailability and retries explicitly without discarding drafts", async () => {
         const listeners = new Set<
             (snapshot: import("$lib/extension-api/providers").ProviderSnapshot) => void
@@ -3070,3 +3216,80 @@ describe("Reading workspace", () => {
         expect(released).toEqual(["blob:first"])
     })
 })
+
+it("retains an authoritative empty recovery snapshot rather than resurrecting the last saved note", async () => {
+    const namespace = readingNamespace()
+    const storage = new ReadingStorage(namespace)
+    const workspace = reader(undefined, undefined, { storage }).workspace
+    const saved = await workspace.createNote("first", noteInput())
+    if (!saved.ok) throw new Error("fixture note failed")
+    const set = namespace.set.bind(namespace)
+    namespace.set = async (key, value) => {
+        if (key.startsWith("reading-v1-annotations-")) throw new Error("failed note deletion save")
+        await set(key, value)
+    }
+    expect((await workspace.deleteNote("first", saved.value.id)).ok).toBe(false)
+    expect(workspace.annotations("first")).toMatchObject({ notes: [], loaded: true, dirty: true })
+    const remove = namespace.delete.bind(namespace)
+    namespace.delete = async () => {
+        throw new Error("persistent cleanup failure")
+    }
+    try {
+        await expect(workspace.deleteReadingData(["first"])).rejects.toThrow()
+        expect(workspace.annotations("first").notes).toEqual([])
+    } finally {
+        namespace.set = set
+        namespace.delete = remove
+        await workspace.dispose()
+    }
+})
+
+it.each([false, true])(
+    "does not publish delayed deletion recovery after retirement or newer selection (%s)",
+    async (selectNewer) => {
+        const namespace = readingNamespace()
+        const storage = new ReadingStorage(namespace)
+        const first = reader(undefined, undefined, { storage }).workspace
+        await first.open("first")
+        await first.createDraft("first", noteInput())
+        await first.flush()
+        const remove = namespace.delete.bind(namespace)
+        namespace.delete = async () => {
+            throw new Error("interrupted primary cleanup")
+        }
+        await expect(first.deleteReadingData(["first"])).rejects.toThrow()
+        namespace.delete = remove
+        await first.dispose()
+        const get = namespace.get.bind(namespace)
+        const entered = deferred<void>()
+        const release = deferred<void>()
+        let delayed = false
+        namespace.get = async <T>(key: string) => {
+            const value = await get<T>(key)
+            if (!delayed && key.startsWith("reading-v1-deletion-recovery-")) {
+                delayed = true
+                entered.resolve()
+                await release.promise
+            }
+            return value
+        }
+        const restored = reader(undefined, undefined, { storage }).workspace
+        restored.fenceDeletion(["first"], "pending")
+        try {
+            const restoring = restored.restore()
+            await entered.promise
+            expect(await restoring).toBe("pending")
+            if (selectNewer) await restored.open("second")
+            await restored.deleteReadingData(["first"])
+            await restored.completeReadingDeletion(["first"])
+            release.resolve()
+            await new Promise((resolve) => setTimeout(resolve, 0))
+            expect(restored.snapshot.documentId).toBe(selectNewer ? "second" : null)
+            expect(restored.annotations("first").drafts).toEqual([])
+        } finally {
+            release.resolve()
+            namespace.get = get
+            await restored.dispose()
+        }
+    },
+)

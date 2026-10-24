@@ -1,3 +1,4 @@
+import { publishNotification } from "../state/libraryNotifications"
 import { requestLibraryRelink } from "../state/relinkRequest.svelte"
 import type { LibraryUIController } from "../state/libraryUI.svelte"
 import { relinkLibraryNode } from "./libraryRelinkExecution"
@@ -426,7 +427,12 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                     return
                 }
                 libraryUI.isDeleteModalOpen = false
-                for (const id of nodeIds) await vfsStore.deleteNode(id)
+                try {
+                    for (const id of nodeIds) await vfsStore.deleteNode(id)
+                } catch {
+                    publishNotification(m.library_delete_failed(), "error")
+                    return
+                }
                 libraryUI.nodesToDeleteIds = []
                 if (libraryUI.isSelectionMode && vfsStore.selectedIds.size === 0) {
                     libraryUI.isSelectionMode = false
@@ -481,7 +487,12 @@ export function createLibraryCommands(libraryUI: LibraryUIController) {
                     return
                 }
                 libraryUI.isDeleteModalOpen = false
-                await vfsStore.deleteNode(payload.nodeId)
+                try {
+                    await vfsStore.deleteNode(payload.nodeId)
+                } catch {
+                    publishNotification(m.library_delete_failed(), "error")
+                    return
+                }
                 libraryUI.nodesToDeleteIds = []
             },
         },

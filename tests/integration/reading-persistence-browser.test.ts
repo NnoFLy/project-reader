@@ -181,6 +181,131 @@ describe("Reading workspace browser persistence", () => {
     }
 
     it.each([1280, 390])(
+        "warns, cancels and retries confirmed deletion with keyboard at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            try {
+                await page.call("Emulation.setDeviceMetricsOverride", {
+                    width,
+                    height: 844,
+                    deviceScaleFactor: 1,
+                    mobile: width < 500,
+                })
+                await page.call("Page.navigate", { url: `${origin}/en` })
+                await bind(page)
+                const id = await page.evaluate(`(async () => {
+                    const [result] = await window.library.importFiles([{name:'delete-${width}.pdf', source:new File([${JSON.stringify(pdf)}], 'delete.pdf', {type:'application/pdf'})}], null);
+                    await window.reader.workspace.open(result.id);
+                    await window.reader.workspace.createDraft(result.id, {pageNumber:1,start:0,end:7,text:'passage',noteContent:'Private draft',color:'purple',association:{contentHash:null,verification:'unverified'}});
+                    await window.reader.workspace.flush();
+                    return result.id;
+                })()`)
+                await page.evaluate(
+                    `window.command('library.node.delete', {nodeId:${JSON.stringify(id)}})`,
+                )
+                await page.waitFor("!!document.querySelector('[role=alertdialog]')")
+                const warning = await page.evaluate(
+                    "document.querySelector('[role=alertdialog]').textContent",
+                )
+                for (const label of ["progress", "bookmarks", "saved notes", "Note drafts"])
+                    expect(warning).toContain(label)
+                await nativeRetry(
+                    page,
+                    "[role=alertdialog] .confirmation-actions button:first-child",
+                )
+                await page.waitFor("!document.querySelector('[role=alertdialog]')")
+                expect(await page.evaluate(`window.reader.workspace.snapshot.documentId`)).toBe(id)
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.annotations(${JSON.stringify(id)}).drafts.length`,
+                    ),
+                ).toBe(1)
+                expect(await page.evaluate(`!!window.library.nodes[${JSON.stringify(id)}]`)).toBe(
+                    true,
+                )
+
+                await page.evaluate(`(() => {
+                    const remove = IDBObjectStore.prototype.delete;
+                    window.restoreDelete = () => IDBObjectStore.prototype.delete = remove;
+                    window.cleanupDeleteFailures = 0;
+                    IDBObjectStore.prototype.delete = function(key) {
+                        if (typeof key === 'string' && key.includes(':reading-v1-annotations-')) {
+                            window.cleanupDeleteFailures++;
+                            throw new DOMException('injected cleanup failure', 'UnknownError');
+                        }
+                        return remove.call(this, key);
+                    };
+                })()`)
+                await page.evaluate(
+                    `window.command('library.node.delete', {nodeId:${JSON.stringify(id)}})`,
+                )
+                await page.waitFor("!!document.querySelector('[role=alertdialog]')")
+                await nativeRetry(
+                    page,
+                    "[role=alertdialog] .confirmation-actions button:last-child",
+                )
+                // Pending feedback starts at source commit, before Viewer cleanup runs.
+                // Observe the injected failure and settled attempt, not just that early flag.
+                await page.waitFor(
+                    "window.cleanupDeleteFailures > 0 && !window.library.readingCleanupBusy && window.library.readingCleanupPending && !document.querySelector('[role=alertdialog]')",
+                )
+                expect(await page.evaluate("document.body.textContent")).toContain(
+                    "Reading-data cleanup is incomplete",
+                )
+                expect(await page.evaluate("window.reader.workspace.snapshot.status")).toBe(
+                    "deletion-pending",
+                )
+                expect(await page.evaluate(`!!window.library.nodes[${JSON.stringify(id)}]`)).toBe(
+                    false,
+                )
+                await page.evaluate(`(() => {
+                    const link = document.createElement('a');
+                    link.id = 'deletion-reader-link'; link.href = '/en/viewer'; link.textContent = 'Reading recovery';
+                    document.body.append(link);
+                })()`)
+                await nativeRetry(page, "#deletion-reader-link")
+                await page.waitFor(
+                    "!!document.querySelector('[data-reading-state=deletion-pending]')",
+                )
+                expect(
+                    await page.evaluate(
+                        "document.querySelector('[data-reading-state=deletion-pending]').textContent",
+                    ),
+                ).toContain("Private draft")
+                expect(
+                    await page.evaluate(
+                        "document.querySelectorAll('textarea, .fullscreen-viewer').length",
+                    ),
+                ).toBe(0)
+                await page.evaluate("window.restoreDelete()")
+                await nativeRetry(page, "[data-reading-state=deletion-pending] button", " ")
+                await page.waitFor(
+                    "!window.library.readingCleanupPending && window.reader.workspace.snapshot.documentId === null",
+                )
+                expect(
+                    await page.evaluate("document.querySelectorAll('.fullscreen-viewer').length"),
+                ).toBe(0)
+                expect(await page.evaluate("!!document.querySelector('.container')")).toBe(true)
+                const before = await page.evaluate("performance.timeOrigin")
+                await page.call("Page.reload")
+                await page.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
+                await bind(page)
+                expect(
+                    await page.evaluate("window.reader.workspace.snapshot.documentId"),
+                ).toBeNull()
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.createDraft(${JSON.stringify(id)}, {pageNumber:1,start:0,end:1,text:'x',noteContent:'late',color:'yellow',association:{contentHash:null,verification:'unverified'}}).then(result => result.ok)`,
+                    ),
+                ).toBe(false)
+            } finally {
+                await browser!.closeTarget(page.targetId)
+            }
+        },
+        90000,
+    )
+
+    it.each([1280, 390])(
         "recovers PDF, Library and Viewer loss with keyboard retry, safe drafts and native writer exclusion at %ipx",
         async (width) => {
             const page = await browser!.page()

@@ -49,6 +49,7 @@ describe("built-in contributions", () => {
             }),
         ])
         expect(host.contributions.listCommands().map(({ id }) => id)).toEqual([
+            "library.reading.cleanup.retry",
             "library.book.open",
             "library.book.open-recursive",
             "library.book.read-state.toggle",

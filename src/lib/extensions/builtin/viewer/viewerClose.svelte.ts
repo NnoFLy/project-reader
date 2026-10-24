@@ -39,6 +39,23 @@ export class ViewerCloseController {
         await this.navigation
     }
 
+    /** Confirmed cascade has already disposed drafts; never ask for a second close decision. */
+    async deleted(revision: number): Promise<void> {
+        if (
+            this.store.workspace.selectionRevision !== revision ||
+            this.store.workspace.snapshot.documentId
+        )
+            return
+        this.request++
+        this.token = null
+        this.failed = false
+        this.busy = false
+        const navigation = goto(resolve(localizedPath("/") as "/")).catch(() => undefined)
+        this.navigation = navigation
+        await navigation
+        if (this.navigation === navigation) this.navigation = undefined
+    }
+
     async close(): Promise<void> {
         if (this.busy) return
         const request = ++this.request

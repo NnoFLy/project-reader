@@ -341,6 +341,17 @@
 
 <div class="container">
     <Header />
+    {#if vfsStore.readingCleanupPending}
+        <section class="cleanup-status" role="status" aria-label={m.reading_cleanup_retry()}>
+            <p>{m.reading_cleanup_pending()}</p>
+            <Button
+                disabled={vfsStore.readingCleanupBusy}
+                onclick={() => void vfsStore.resumeReadingDeletions().catch(() => false)}
+            >
+                {vfsStore.readingCleanupBusy ? m.reading_cleanup_busy() : m.reading_cleanup_retry()}
+            </Button>
+        </section>
+    {/if}
     <Breadcrumbs {breadcrumbs} />
 
     <div class="library-actions" role="toolbar" aria-label={m.action_controls()}>
@@ -514,6 +525,14 @@
 </div>
 
 <style>
+    .cleanup-status {
+        padding: 1rem;
+        margin-block: 1rem;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg, 1rem);
+        background: var(--bg-secondary);
+    }
+
     .container {
         max-inline-size: 1280px;
         margin-block: 0;

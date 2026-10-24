@@ -15,6 +15,7 @@
     import * as m from "$lib/paraglide/messages"
     import { untrack, onMount, onDestroy } from "svelte"
     import { on } from "svelte/events"
+    import ReadingDeletionPending from "./ReadingDeletionPending.svelte"
     import NeedsReviewList from "./NeedsReviewList.svelte"
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
@@ -1152,7 +1153,9 @@
     }
 </script>
 
-{#if viewerStore.reading.status === "unavailable" || viewerStore.reading.status === "missing" || viewerStore.reading.status === "provider-unavailable"}
+{#if viewerStore.reading.status === "deletion-pending"}
+    <ReadingDeletionPending documentId={viewerStore.reading.documentId!} />
+{:else if viewerStore.reading.status === "unavailable" || viewerStore.reading.status === "missing" || viewerStore.reading.status === "provider-unavailable"}
     <section
         class="reading-access-state"
         role="status"
@@ -1543,11 +1546,13 @@
     </div>
 {/if}
 
-<ViewerModals />
-{#if closing.token}
-    <CloseDocumentModal {closing} />
-{:else if closing.failed}
-    <p role="alert">{m.reading_annotations_error()}</p>
+{#if viewerStore.reading.status !== "deletion-pending" && viewerStore.reading.documentId}
+    <ViewerModals />
+    {#if closing.token}
+        <CloseDocumentModal {closing} />
+    {:else if closing.failed}
+        <p role="alert">{m.reading_annotations_error()}</p>
+    {/if}
 {/if}
 
 <style>

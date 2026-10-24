@@ -1,4 +1,5 @@
 import type { ProviderAvailability } from "$lib/extension-api/providers"
+import { ReadingStorage } from "./readingStorage"
 import type { ReadingRecoveryRecord } from "./readingWorkspace"
 
 import type { Component } from "svelte"
@@ -93,6 +94,7 @@ export async function activateViewer(
     const writeSignal = signals.length ? AbortSignal.any(signals) : undefined
     const notificationHandles = new Set<Disposable>()
     const store = new ViewerStore({
+        storage: new ReadingStorage(viewerStorage),
         files: fileCapability,
         library: libraryCapability,
         mutations: libraryMutationCapability,
@@ -122,6 +124,28 @@ export async function activateViewer(
         return store.dispose()
     })
     // Annotation controls are registered only after persistence has been configured.
+    let finishDeletion: ((revision: number) => Promise<void>) | undefined
+    const readingDeletion = {
+        prepare: (ids: readonly string[]) => store.workspace.prepareDeletion(ids),
+        rollback: (ids: readonly string[]) => store.workspace.rollbackDeletion(ids),
+        fence: (ids: readonly string[], phase: "pending" | "complete" | "retired") =>
+            store.workspace.fenceDeletion(ids, phase),
+        delete: (ids: readonly string[], signal?: AbortSignal) =>
+            store.workspace.deleteReadingData(ids, signal),
+        complete: async (ids: readonly string[], signal?: AbortSignal) => {
+            const revision = store.workspace.selectionRevision
+            const matching = ids.includes(store.workspace.snapshot.documentId ?? "")
+            await store.workspace.completeReadingDeletion(ids, signal)
+            if (
+                matching &&
+                store.workspace.selectionRevision === revision + 1 &&
+                !store.workspace.snapshot.documentId
+            )
+                await finishDeletion?.(revision + 1)
+        },
+    }
+    if (context.host) context.host.readingDeletion = readingDeletion
+    await context.host?.readingDeletionRecovery?.admit()
     await store.configureStorage(viewerStorage)
     if (context.lifecycle.isDisposed()) return
     const readingSummaries = { getSummary: (id: string) => store.workspace.getReadingSummary(id) }
@@ -161,6 +185,7 @@ export async function activateViewer(
         writeSignal,
         context.host?.settings,
     )
+    finishDeletion = (revision) => runtime.closing.deleted(revision)
     const { notes: notesStore, bookmarks: bookmarksStore, search: searchStore } = runtime
     installViewerRuntime(runtime)
     context.lifecycle.onDispose(async () => {
@@ -170,6 +195,8 @@ export async function activateViewer(
         if (viewerStore === store) {
             installViewerHostCapabilities({})
         }
+        if (context.host?.readingDeletion === readingDeletion)
+            context.host.readingDeletion = undefined
         if (context.host?.readingSummaries === readingSummaries)
             context.host.readingSummaries = undefined
         if (context.host?.readingDisplay === readingDisplay) context.host.readingDisplay = undefined
@@ -308,5 +335,10 @@ export async function activateViewer(
             setViewerRuntimeContext(() => runtime)
             return ViewerStatus(anchor, props)
         }) satisfies typeof ViewerStatus,
+    })
+    // Publish recovery, retry controls and the runtime before touching pending payloads.
+    void context.host?.readingDeletionRecovery?.resume().catch(() => {
+        if (!context.lifecycle.isDisposed())
+            notificationHandles.add(context.notifications.error(m.reading_cleanup_failed()))
     })
 }

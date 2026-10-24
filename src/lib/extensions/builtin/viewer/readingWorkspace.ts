@@ -75,7 +75,13 @@ export interface ViewerOpenFailure {
 export interface ReadingSnapshot {
     readonly documentId: string | null
     readonly state: ReadingDocumentState
-    readonly status: "closed" | "ready" | "unavailable" | "missing" | "provider-unavailable"
+    readonly status:
+        | "closed"
+        | "ready"
+        | "unavailable"
+        | "missing"
+        | "provider-unavailable"
+        | "deletion-pending"
 }
 
 export interface ReadingRecoveryRecord {
@@ -121,6 +127,11 @@ interface PendingDraftPromotion {
 /** Viewer-owned single-reader behavior; core owns acquisition and resource correctness. */
 export class ReadingWorkspace {
     private readonly access: DocumentAccess
+    private readonly deletionController = new AbortController()
+    private readonly primaryCleanedDocuments = new Set<string>()
+    private readonly pendingDeletions = new Set<string>()
+    private readonly cleanedDocuments = new Set<string>()
+    private readonly deletedDocuments = new Set<string>()
     private intendedId: string | null = null
     private retryRevision?: number
     private resourceController = new AbortController()
@@ -175,18 +186,153 @@ export class ReadingWorkspace {
         if (options.recovery) this.restoreRecovery(options.recovery)
     }
 
+    private deletionBlocked(documentId: string | null): boolean {
+        return (
+            !!documentId &&
+            (this.pendingDeletions.has(documentId) || this.deletedDocuments.has(documentId))
+        )
+    }
+
+    /** Reversible admission fence; dirty/recovery records remain available read-only. */
+    prepareDeletion(documentIds: readonly string[]): void {
+        for (const id of documentIds) {
+            if (!isDocumentId(id)) continue
+            this.pendingDeletions.add(id)
+            this.invalidateAnnotations(id)
+        }
+    }
+
+    rollbackDeletion(documentIds: readonly string[]): void {
+        for (const id of documentIds) {
+            this.pendingDeletions.delete(id)
+            this.resumeAnnotations(id)
+            if (this.annotations(id).dirty) void this.persistDrafts(id)
+        }
+        if (documentIds.includes(this.current.documentId ?? "")) this.save(true)
+    }
+
+    /** Small-record admission never reads historical document or annotation payloads. */
+    fenceDeletion(documentIds: readonly string[], phase: "pending" | "complete" | "retired"): void {
+        this.prepareDeletion(documentIds)
+        for (const id of documentIds) {
+            this.deletedDocuments.add(id)
+            if (phase !== "pending") this.primaryCleanedDocuments.add(id)
+            if (phase === "retired") {
+                this.cleanedDocuments.add(id)
+                this.states.delete(id)
+                this.annotationStates.delete(id)
+                this.pendingPromotions.delete(id)
+            }
+        }
+    }
+
+    /** A logical deadline does not release the physical writer queue or authorize late writes. */
+    private async deletionOperation(
+        operation: (owns: () => boolean) => Promise<void>,
+        cancellation?: AbortSignal,
+    ): Promise<void> {
+        const signals = [
+            this.deletionController.signal,
+            AbortSignal.timeout(1000),
+            this.options.writeSignal,
+            cancellation,
+        ].filter((signal): signal is AbortSignal => !!signal)
+        const signal = AbortSignal.any(signals)
+        const owns = () => !signal.aborted && !this.disposed && !this.writesClosed
+        const task = this.queue.then(async () => {
+            if (!owns()) throw new ReadingStorageError("reading.storage.write")
+            await operation(owns)
+            if (!owns()) throw new ReadingStorageError("reading.storage.write")
+        })
+        this.queue = task.catch(() => undefined)
+        let abort!: () => void
+        try {
+            await Promise.race([
+                task,
+                new Promise<never>((_, reject) => {
+                    abort = () => reject(new ReadingStorageError("reading.storage.write"))
+                    if (signal.aborted) abort()
+                    else signal.addEventListener("abort", abort, { once: true })
+                }),
+            ])
+        } finally {
+            signal.removeEventListener("abort", abort)
+        }
+    }
+
+    /** Primary cleanup retains acknowledged durable recovery until Library's completion ack. */
+    async deleteReadingData(documentIds: readonly string[], signal?: AbortSignal): Promise<void> {
+        if (!this.storage) throw new ReadingStorageError("reading.storage.write")
+        this.fenceDeletion(documentIds, "pending")
+        if (documentIds.includes(this.current.documentId ?? ""))
+            this.change(this.current.documentId, this.current.state, "deletion-pending")
+        await this.deletionOperation(async (owns) => {
+            for (const id of documentIds) {
+                const recovery = await this.storage!.retainDeletionRecovery(
+                    id,
+                    {
+                        ...this.annotations(id),
+                        state: this.states.get(id) ?? null,
+                    },
+                    owns,
+                )
+                if (!owns()) throw new ReadingStorageError("reading.storage.write")
+                this.publishAnnotations(id, recovery, true, false)
+                await this.storage!.deleteDocument(id, owns)
+            }
+        }, signal)
+    }
+
+    /** Library has durably acknowledged primary cleanup; retirement is idempotent and validated. */
+    async completeReadingDeletion(
+        documentIds: readonly string[],
+        signal?: AbortSignal,
+    ): Promise<void> {
+        if (!this.storage) throw new ReadingStorageError("reading.storage.write")
+        this.fenceDeletion(documentIds, "complete")
+        await this.deletionOperation(async (owns) => {
+            for (const id of documentIds) await this.storage!.retireDeletionRecovery(id, owns)
+        }, signal)
+        for (const id of documentIds) {
+            this.cleanedDocuments.add(id)
+            this.states.delete(id)
+            this.pendingPromotions.delete(id)
+            this.recoveryConflicts.delete(id)
+            this.annotationStates.delete(id)
+            this.pendingDeletions.delete(id)
+            this.publishAnnotations(id, freezeAnnotations([]), true, false)
+        }
+        // No asynchronous gap between checking ownership and releasing this selection.
+        if (documentIds.includes(this.intendedId ?? "")) {
+            this.revision++
+            this.intendedId = documentIds.includes(this.current.documentId ?? "")
+                ? null
+                : this.current.documentId
+        }
+        if (documentIds.includes(this.current.documentId ?? "")) {
+            const closing = this.access.close(false)
+            this.options.publish(null)
+            this.change(null, this.defaultState(), "closed")
+            await closing
+        }
+    }
+
     /** Data only: validated copies never transfer a disposed resource or callback lifetime. */
     captureRecovery(): ReadingRecoveryRecord | undefined {
         if (this.revision === 0 && this.intendedId === null) return undefined
         const states = [...this.states].flatMap(([documentId, state]) => {
             const validated = readState(state as unknown as Record<string, unknown>)
-            return isDocumentId(documentId) && validated
+            return !this.cleanedDocuments.has(documentId) && isDocumentId(documentId) && validated
                 ? [Object.freeze({ documentId, state: Object.freeze(validated) })]
                 : []
         })
         const annotations = [...this.annotationStates].flatMap(([documentId, snapshot]) => {
             const records = readAnnotations(snapshot, documentId)
-            return snapshot.loaded && snapshot.dirty && isDocumentId(documentId) && records
+            return !this.cleanedDocuments.has(documentId) &&
+                snapshot.loaded &&
+                (snapshot.dirty || this.pendingDeletions.has(documentId)) &&
+                isDocumentId(documentId) &&
+                records
                 ? [Object.freeze({ documentId, records, dirty: snapshot.dirty })]
                 : []
         })
@@ -195,7 +341,7 @@ export class ReadingWorkspace {
                 { notes: [], bookmarks: [], drafts: promotion.drafts },
                 documentId,
             )
-            return records
+            return records && !this.cleanedDocuments.has(documentId)
                 ? [
                       Object.freeze({
                           documentId,
@@ -210,7 +356,7 @@ export class ReadingWorkspace {
                 : []
         })
         return Object.freeze({
-            documentId: this.intendedId,
+            documentId: this.cleanedDocuments.has(this.intendedId ?? "") ? null : this.intendedId,
             promotions: Object.freeze(promotions),
             states: Object.freeze(states),
             annotations: Object.freeze(annotations),
@@ -262,7 +408,7 @@ export class ReadingWorkspace {
     private async reconcileRecovery(): Promise<boolean> {
         if (!this.storage) return false
         for (const [documentId, promotion] of this.pendingPromotions) {
-            if (!promotion.recovering) continue
+            if (!promotion.recovering || this.deletionBlocked(documentId)) continue
             const snapshot = this.annotations(documentId)
             if (!snapshot.dirty) {
                 this.pendingPromotions.delete(documentId)
@@ -271,7 +417,7 @@ export class ReadingWorkspace {
             }
             try {
                 const durable = await this.storage.readAnnotations(documentId)
-                if (this.disposed) return false
+                if (this.disposed || this.deletionBlocked(documentId)) return false
                 if (this.pendingPromotions.get(documentId) !== promotion) continue
                 let records: ReadingRecords = this.annotations(documentId)
                 let conflict = false
@@ -473,12 +619,16 @@ export class ReadingWorkspace {
                 return code < 32 || code === 127
             }) ||
             this.disposed ||
+            this.deletionBlocked(documentId) ||
             this.writesClosed ||
             this.options.writeSignal?.aborted
         )
             return null
         // Draft lifetime is independent of resources and annotation invalidation epochs.
-        return () => !this.writesClosed && !this.options.writeSignal?.aborted
+        return () =>
+            !this.writesClosed &&
+            !this.options.writeSignal?.aborted &&
+            !this.deletionBlocked(documentId)
     }
 
     /** Recover unfinished work even when Library resources are missing or unavailable. */
@@ -839,6 +989,7 @@ export class ReadingWorkspace {
         const node = this.options.files.nodes[documentId]
         if (
             this.disposed ||
+            this.deletionBlocked(documentId) ||
             this.invalidAnnotations.has(documentId) ||
             this.options.writeSignal?.aborted ||
             !node ||
@@ -850,6 +1001,7 @@ export class ReadingWorkspace {
         return () =>
             !this.writesClosed &&
             !this.options.writeSignal?.aborted &&
+            !this.deletionBlocked(documentId) &&
             !this.invalidAnnotations.has(documentId) &&
             (this.annotationEpochs.get(documentId) ?? 0) === epoch &&
             this.options.files.nodes[documentId] === node &&
@@ -1123,15 +1275,51 @@ export class ReadingWorkspace {
             this.recoveryReconciliation = this.reconcileRecovery()
             if (!(await this.bounded(this.recoveryReconciliation))) return "pending"
         }
-        if (this.revision !== 0) {
+        const deletedIntent = this.deletionBlocked(this.intendedId)
+        if (this.revision !== 0 && !deletedIntent) {
             this.save(true)
             return "complete"
+        }
+        if (deletedIntent) {
+            this.options.publish(null)
+            this.intendedId = null
+            this.change(null, this.defaultState(), "closed")
         }
         const revision = this.revision
         const restore = async () => {
             try {
-                const id = await storage.readCurrent()
-                if (this.disposed || revision !== this.revision || !id) return
+                const id = (await storage.readCurrent()) ?? (await storage.readDeletionCurrent())
+                if (
+                    this.disposed ||
+                    revision !== this.revision ||
+                    !id ||
+                    this.cleanedDocuments.has(id)
+                )
+                    return
+                if (this.deletionBlocked(id)) {
+                    const recovery = await storage.readDeletionRecovery(id)
+                    const state =
+                        recovery?.state ??
+                        (this.primaryCleanedDocuments.has(id)
+                            ? null
+                            : await storage.readDocument(id))
+                    const records =
+                        recovery ??
+                        (this.primaryCleanedDocuments.has(id)
+                            ? null
+                            : await storage.readAnnotations(id))
+                    if (
+                        this.disposed ||
+                        revision !== this.revision ||
+                        this.cleanedDocuments.has(id) ||
+                        !records
+                    )
+                        return
+                    this.intendedId = id
+                    this.publishAnnotations(id, records, true, false)
+                    this.change(id, state ?? this.defaultState(), "deletion-pending")
+                    return
+                }
                 this.intendedId = id
                 await this.select(id, true, undefined, false, revision, true)
             } catch (error) {
@@ -1145,7 +1333,8 @@ export class ReadingWorkspace {
         id: string,
         onFailure?: (failure: ViewerOpenFailure) => void | Promise<void>,
     ): Promise<boolean> {
-        if (this.disposed || !isDocumentId(id)) return Promise.resolve(false)
+        if (this.disposed || !isDocumentId(id) || this.deletionBlocked(id))
+            return Promise.resolve(false)
         this.intendedId = id
         for (const providerId of this.requiredProviders()) this.watchProvider(providerId)
         if (!this.providersAvailable()) {
@@ -1179,7 +1368,12 @@ export class ReadingWorkspace {
     }
 
     private update(changes: Partial<ReadingDocumentState>): void {
-        if (this.disposed || !this.current.documentId) return
+        if (
+            this.disposed ||
+            !this.current.documentId ||
+            this.deletionBlocked(this.current.documentId)
+        )
+            return
         const state = { ...this.current.state, ...changes }
         if (
             Object.entries(changes).every(
@@ -1198,7 +1392,12 @@ export class ReadingWorkspace {
         if (!storage || this.disposed || this.options.writeSignal?.aborted) return
         // Capture immutable identity/state now, never read the visible document in queued work.
         this.queue = this.queue.then(async () => {
-            if (this.writesClosed || this.options.writeSignal?.aborted) return
+            if (
+                this.writesClosed ||
+                this.options.writeSignal?.aborted ||
+                this.deletionBlocked(documentId)
+            )
+                return
             if (documentId && knownState) {
                 try {
                     await storage.writeDocument(documentId, state)
@@ -1206,7 +1405,12 @@ export class ReadingWorkspace {
                     this.report(error, "reading.storage.write")
                 }
             }
-            if (pointer && !this.writesClosed && !this.options.writeSignal?.aborted) {
+            if (
+                pointer &&
+                !this.writesClosed &&
+                !this.options.writeSignal?.aborted &&
+                !this.deletionBlocked(documentId)
+            ) {
                 try {
                     await storage.writeCurrent(documentId)
                 } catch (error) {
@@ -1278,7 +1482,8 @@ export class ReadingWorkspace {
         revision = this.revision,
         restoring = false,
     ): Promise<boolean> {
-        const current = () => !this.disposed && revision === this.revision
+        const current = () =>
+            !this.disposed && revision === this.revision && !this.deletionBlocked(id)
         if (!current()) return false
         if (!this.providersAvailable()) {
             this.providerUnavailable()
@@ -1410,7 +1615,13 @@ export class ReadingWorkspace {
     }
 
     async loadDocument(signal?: AbortSignal): Promise<ViewerDocument | undefined> {
-        if (this.disposed || this.current.status !== "ready" || !this.current.documentId) return
+        if (
+            this.disposed ||
+            this.current.status !== "ready" ||
+            !this.current.documentId ||
+            this.deletionBlocked(this.current.documentId)
+        )
+            return
         const documentId = this.current.documentId
         const controller = this.resourceController
         const contentGeneration = this.options.files.getContentGeneration(documentId)
@@ -1571,6 +1782,7 @@ export class ReadingWorkspace {
         const status = (): "superseded" | "changed" | null => {
             if (
                 this.disposed ||
+                this.deletionBlocked(documentId) ||
                 this.revision !== selectionRevision ||
                 this.current.documentId !== documentId
             )
@@ -1632,6 +1844,7 @@ export class ReadingWorkspace {
             // Fence publication and new mutations synchronously. The host has already revoked
             // its write signal on shutdown; never revive that lifetime to finish saving.
             this.disposed = true
+            this.deletionController.abort()
             this.resourceController.abort()
             this.providerSubscription?.dispose()
             for (const unsubscribe of this.providerWatches.values()) unsubscribe()

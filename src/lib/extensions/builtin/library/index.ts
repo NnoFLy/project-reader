@@ -1,3 +1,4 @@
+import * as m from "$lib/paraglide/messages"
 import type { AnyCommandDefinition } from "./commands/commands.types"
 import type { HostCommandMetadata } from "$lib/core/commands"
 import type { CommandContribution, ExtensionContext } from "$lib/extension-api"
@@ -43,9 +44,15 @@ export async function activateLibrary(
         libraryStorage,
         documentService,
         (id) => context.host?.readingSummaries?.getSummary(id) ?? Promise.resolve(null),
+        () => context.host?.readingDeletion,
     )
     installRelinkRequest(request)
     await store.init()
+    const readingDeletionRecovery = {
+        admit: () => store.admitReadingDeletions(),
+        resume: () => store.resumeReadingDeletions(),
+    }
+    if (context.host) context.host.readingDeletionRecovery = readingDeletionRecovery
     configureLibraryUIStorage(libraryStorage)
     configurePromptStorage(libraryStorage)
     const unavailablePrompt: PromptService = {
@@ -73,6 +80,19 @@ export async function activateLibrary(
         notificationHandles.add(handle)
         return handle
     })
+
+    const cleanupRegistration = context.commands.register({
+        id: "library.reading.cleanup.retry",
+        label: m.reading_cleanup_retry,
+        englishLabel: () => m.reading_cleanup_retry({}, { locale: "en" }),
+        execute: async () => {
+            const success = await store.resumeReadingDeletions().catch(() => false)
+            if (!success)
+                notificationHandles.add(context.notifications.error(m.reading_cleanup_failed()))
+            return success
+        },
+    })
+    context.lifecycle.onDispose(() => cleanupRegistration.dispose())
 
     const libraryUI = new LibraryUIController()
     configureLibraryUIController(libraryUI)
@@ -118,6 +138,8 @@ export async function activateLibrary(
             configureLibraryNotifications(undefined)
         }
         context.host?.contextualStatus?.clear()
+        if (context.host?.readingDeletionRecovery === readingDeletionRecovery)
+            context.host.readingDeletionRecovery = undefined
         request.cancel()
         onDispose?.()
         await store.dispose()

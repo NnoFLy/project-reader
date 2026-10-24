@@ -397,6 +397,18 @@ export class ExtensionHost {
                     set prompt(value: HostContext["prompt"]) {
                         publish("prompt", value)
                     },
+                    get readingDeletion() {
+                        return current() ? hostContext.readingDeletion : undefined
+                    },
+                    set readingDeletion(value: HostContext["readingDeletion"]) {
+                        publish("readingDeletion", value)
+                    },
+                    get readingDeletionRecovery() {
+                        return current() ? hostContext.readingDeletionRecovery : undefined
+                    },
+                    set readingDeletionRecovery(value: HostContext["readingDeletionRecovery"]) {
+                        publish("readingDeletionRecovery", value)
+                    },
                     get readingSummaries() {
                         return current() ? hostContext.readingSummaries : undefined
                     },

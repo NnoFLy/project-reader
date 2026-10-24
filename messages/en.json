@@ -214,8 +214,8 @@
     "matched_label": "Matched",
     "keymap_exit_selection_mode": "Exit selection mode",
     "delete_confirmation_title": "Confirm deletion",
-    "delete_confirmation_single": "Are you sure you want to delete this item? This action cannot be undone.",
-    "delete_confirmation_multiple": "Are you sure you want to delete {count} items? This action cannot be undone.",
+    "delete_confirmation_single": "Delete this item and its contained documents? Associated reading progress, preferences, bookmarks, saved notes and Note drafts (including review material) will also be removed. This cannot be undone.",
+    "delete_confirmation_multiple": "Delete {count} items and their contained documents? Associated reading progress, preferences, bookmarks, saved notes and Note drafts (including review material) will also be removed. This cannot be undone.",
     "delete": "Delete",
     "viewer_footer": "Viewer controls",
     "viewer_sidebar_tabs": "Document sidebar",
@@ -318,5 +318,10 @@
     "review_discard_failed": "Unable to save the discard. Try again before leaving this window.",
     "review_note": "Note",
     "review_draft": "Note draft",
-    "review_bookmark": "Bookmark"
+    "review_bookmark": "Bookmark",
+    "reading_cleanup_pending": "Document deleted. Reading-data cleanup is incomplete. Recovery information is read-only until cleanup succeeds.",
+    "reading_cleanup_retry": "Retry reading-data cleanup",
+    "reading_cleanup_busy": "Cleaning up reading data…",
+    "reading_cleanup_failed": "Reading-data cleanup could not finish. Retry from Library.",
+    "library_delete_failed": "The document could not be deleted. Its reading data has been preserved."
 }
