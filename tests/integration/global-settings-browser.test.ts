@@ -176,6 +176,41 @@ describe("Global Settings browser", () => {
         await key(page, "Tab")
     }
 
+    async function assertFocusedHeading(page: BrowserPage, name: string) {
+        await page.waitFor(`(() => {
+            const active = document.activeElement;
+            const rect = active.getBoundingClientRect();
+            return active.matches('h1,h2,h3,h4,h5,h6,[role="heading"]') &&
+                rect.width > 0 && rect.height > 0 && getComputedStyle(active).visibility === 'visible';
+        })()`)
+        const accessibility = (await page.call("Accessibility.getFullAXTree")) as unknown as {
+            nodes: {
+                role?: { value: string }
+                name?: { value: string }
+                properties?: { name: string; value: { value: unknown } }[]
+            }[]
+        }
+        expect(
+            accessibility.nodes.some(
+                (node) =>
+                    node.role?.value === "heading" &&
+                    node.name?.value === name &&
+                    node.properties?.some(
+                        (property) => property.name === "focused" && property.value.value === true,
+                    ),
+            ),
+        ).toBe(true)
+    }
+
+    async function resizeViewport(page: BrowserPage, width: number) {
+        await page.call("Emulation.setDeviceMetricsOverride", {
+            width,
+            height: 844,
+            deviceScaleFactor: 1,
+            mobile: false,
+        })
+    }
+
     async function setup(page: BrowserPage, width: number) {
         await page.call("Emulation.setDeviceMetricsOverride", {
             width,
@@ -462,7 +497,7 @@ describe("Global Settings browser", () => {
             await open(page)
             await page.evaluate(`${buttonExpression("Reading")}.focus()`)
             await key(page, "Enter")
-            await page.waitFor("document.activeElement?.tagName === 'H3'")
+            await assertFocusedHeading(page, "Reading")
             await type(page, fieldExpression("Default zoom"), "99")
             await key(page, "Tab")
             await page.waitFor(
@@ -477,7 +512,7 @@ describe("Global Settings browser", () => {
                 await page.evaluate(`document.activeElement === ${buttonExpression("Reading")}`),
             ).toBe(true)
             await key(page, "Enter")
-            await page.waitFor("document.activeElement?.tagName === 'H3'")
+            await assertFocusedHeading(page, "Reading")
             expect(await page.evaluate(`${fieldExpression("Default zoom")}.value`)).toBe("99")
             expect(
                 await page.evaluate(
@@ -495,13 +530,7 @@ describe("Global Settings browser", () => {
         "recovers responsive hidden %s focus inside the same Settings",
         async (region) => {
             const page = await browser!.page()
-            const resize = (width: number) =>
-                page.call("Emulation.setDeviceMetricsOverride", {
-                    width,
-                    height: 844,
-                    deviceScaleFactor: 1,
-                    mobile: false,
-                })
+            const resize = (width: number) => resizeViewport(page, width)
             try {
                 await setup(page, 1280)
                 await synthetic(page)
@@ -531,13 +560,15 @@ describe("Global Settings browser", () => {
                 await page.waitFor(
                     "document.activeElement !== document.body && !!document.activeElement.closest('[role=dialog]:not([inert])') && document.activeElement.getClientRects().length > 0",
                 )
-                expect(
-                    await page.evaluate(
-                        region === "navigation"
-                            ? "document.activeElement.tagName === 'H3'"
-                            : `document.activeElement === ${buttonExpression("General")}`,
-                    ),
-                ).toBe(true)
+                if (region === "navigation") {
+                    await assertFocusedHeading(page, "Reading")
+                } else {
+                    expect(
+                        await page.evaluate(
+                            `document.activeElement === ${buttonExpression("General")}`,
+                        ),
+                    ).toBe(true)
+                }
                 await resize(390)
                 if (region === "navigation") {
                     expect(await page.evaluate(`${fieldExpression("Default zoom")}.value`)).toBe(
@@ -550,9 +581,7 @@ describe("Global Settings browser", () => {
                     ).toBe("true")
                     await page.evaluate(`${buttonExpression("Back")}.focus()`)
                     await resize(1280)
-                    await page.waitFor(
-                        "document.activeElement.tagName === 'H3' && document.activeElement.getClientRects().length > 0",
-                    )
+                    await assertFocusedHeading(page, "Reading")
                 }
                 expect(
                     await page.evaluate("document.querySelectorAll('[role=dialog]').length"),
@@ -567,13 +596,7 @@ describe("Global Settings browser", () => {
 
     it("does not take responsive focus from a confirmation or replacement Prompt", async () => {
         const page = await browser!.page()
-        const resize = (width: number) =>
-            page.call("Emulation.setDeviceMetricsOverride", {
-                width,
-                height: 844,
-                deviceScaleFactor: 1,
-                mobile: false,
-            })
+        const resize = (width: number) => resizeViewport(page, width)
         try {
             await setup(page, 1280)
             await synthetic(page)
@@ -981,7 +1004,7 @@ describe("Global Settings browser", () => {
                 await key(page, "Enter")
                 await page.waitFor(`document.activeElement === ${buttonExpression("Plugins")}`)
                 await key(page, "Enter")
-                await page.waitFor("document.activeElement.tagName === 'H3'")
+                await assertFocusedHeading(page, "Plugins")
                 expect(
                     await page.evaluate(
                         "document.querySelector('[role=dialog] section').textContent",
@@ -1023,15 +1046,13 @@ describe("Global Settings browser", () => {
         const page = await browser!.page()
         const plugin = "Paper Tools <img src=x onerror=window.metadataExecuted=true>"
         const countRow = `document.querySelector('[role=dialog] article[aria-label="Count"]')`
-        const reset = `${countRow}.querySelector('fieldset button')`
+        const reset = buttonExpression(
+            "Reset to default",
+            '[role="dialog"] article[aria-label="Count"]',
+        )
         const failedReset = `${fieldExpression("Count")}.value === '2' && ${countRow}.textContent.includes('Not saved') && ${countRow}.textContent.includes('Modified')`
         const resize = async (width: number) => {
-            await page.call("Emulation.setDeviceMetricsOverride", {
-                width,
-                height: 844,
-                deviceScaleFactor: 1,
-                mobile: false,
-            })
+            await resizeViewport(page, width)
             // Wait for the real Modal presentation before measuring native pointer targets.
             await page.waitFor(`(() => {
                 const rect = document.querySelector('[role=dialog]').getBoundingClientRect();
@@ -1094,9 +1115,7 @@ describe("Global Settings browser", () => {
             await resize(1280)
             await page.evaluate(`${buttonExpression(plugin, '[role="dialog"] nav')}.focus()`)
             await resize(390)
-            await page.waitFor(
-                "document.activeElement.tagName === 'H3' && document.activeElement.getClientRects().length > 0",
-            )
+            await assertFocusedHeading(page, plugin)
             expect(
                 await page.evaluate(
                     `${fieldExpression("Count")}.value === '2' && ${countRow}.textContent.includes('Saving') && ${countRow}.textContent.includes('Modified')`,

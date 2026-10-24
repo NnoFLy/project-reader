@@ -96,8 +96,8 @@ async function mountAppSettings(host: ReturnType<typeof createBuiltinHost>) {
         else Reflect.deleteProperty(Element.prototype, "animate")
     }
 }
-const settingsButton = (name: string) =>
-    [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+const settingsButton = (name: string, scope: ParentNode = document) =>
+    [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
         (node) => node.textContent?.trim() === name,
     )!
 const settingsRow = (name: string) =>
@@ -557,12 +557,8 @@ describe("Reading workspace host lifetime", () => {
             expect(store.layout).toBe("single")
             await first.commands.execute("settings.zoom.out", { value: 0.75 })
             await first.commands.execute("settings.layout", { value: "single" })
-            settingsRow(m.settings_scale_label())
-                .querySelector<HTMLButtonElement>("button")!
-                .click()
-            settingsRow(m.settings_layout_label())
-                .querySelector<HTMLButtonElement>("button")!
-                .click()
+            settingsButton(m.settings_reset(), settingsRow(m.settings_scale_label())).click()
+            settingsButton(m.settings_reset(), settingsRow(m.settings_layout_label())).click()
             await vi.waitFor(async () => {
                 expect(await first.settings.getValue("settings.scale")).toBe(1.5)
                 expect(await first.settings.getValue("settings.layout")).toBe("scroll")

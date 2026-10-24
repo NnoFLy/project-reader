@@ -56,8 +56,8 @@ const settle = async () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     flushSync()
 }
-const button = (name: string) =>
-    [...document.querySelectorAll("button")].find((node) => node.textContent?.trim() === name)!
+const button = (name: string, scope: ParentNode = document) =>
+    [...scope.querySelectorAll("button")].find((node) => node.textContent?.trim() === name)!
 const search = () => document.querySelector<HTMLInputElement>('[type="search"]')!
 const settingRow = (label: string) =>
     document.querySelector<HTMLElement>(`article[aria-label="${label}"]`)!
@@ -157,7 +157,7 @@ it("applies generated Theme edits, restores the current choice, and durably rese
         )
         expect(document.documentElement.classList.contains("dark")).toBe(false)
         await app.host.commands.execute("settings.animations.toggle", { value: false })
-        const reset = settingRow("Theme").querySelector<HTMLButtonElement>("button")!
+        const reset = button("Reset to default", settingRow("Theme"))
         reset.click()
         await vi.waitFor(async () =>
             expect(await app.host.settings.getValue("settings.theme")).toBe("system"),
@@ -269,7 +269,7 @@ it("retains the effective Theme and Modified indicator through a held failed res
             }
             await set(key, value)
         }
-        settingRow("Theme").querySelector<HTMLButtonElement>("button")!.click()
+        button("Reset to default", settingRow("Theme")).click()
         await vi.waitFor(() => expect(release).toBeDefined())
         expect(settingControl("Theme").value).toBe("2")
         expect(settingRow("Theme").textContent).toContain("Saving")
