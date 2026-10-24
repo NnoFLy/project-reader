@@ -56,9 +56,18 @@ export class NotesStore {
         this.unsubscribe =
             workspace?.subscribeAnnotations((id, snapshot) => {
                 if (id !== this.documentId || this.disposed) return
-                this.notes = [...snapshot.notes].sort((a, b) => a.createdAt - b.createdAt)
+                this.notes = [...this.workspace!.anchoredAnnotations(id).notes].sort(
+                    (a, b) => a.createdAt - b.createdAt,
+                )
                 this.failed = snapshot.error !== null
-                this.syncDraftEditors(snapshot.drafts)
+                const eligible = this.workspace!.anchoredAnnotations(id)
+                this.editors = this.editors.filter((editor) =>
+                    [...eligible.notes, ...eligible.drafts].some(
+                        (record) => record.id === editor.note.id,
+                    ),
+                )
+                this.activeSelection = null
+                this.syncDraftEditors(this.workspace!.anchoredAnnotations(id).drafts)
                 if (this.activePopup) {
                     const note = this.notes.find(({ id }) => id === this.activePopup?.note.id)
                     this.activePopup = note ? { ...this.activePopup, note } : null
@@ -218,9 +227,11 @@ export class NotesStore {
         if (this.disposed || generation !== this.loadGeneration || this.documentId !== bookId)
             return
         const snapshot = this.workspace.annotations(bookId)
-        this.notes = [...snapshot.notes].sort((a, b) => a.createdAt - b.createdAt)
+        this.notes = [...this.workspace.anchoredAnnotations(bookId).notes].sort(
+            (a, b) => a.createdAt - b.createdAt,
+        )
         this.failed = snapshot.error !== null
-        this.syncDraftEditors(snapshot.drafts)
+        this.syncDraftEditors(this.workspace.anchoredAnnotations(bookId).drafts)
         this.queueHighlightUpdate()
     }
 
@@ -382,6 +393,7 @@ export class NotesStore {
                 for (const item of noteRanges) {
                     const { noteId, range, color } = item
                     if (
+                        [...this.notes, ...this.drafts].some((note) => note.id === noteId) &&
                         range &&
                         range.startContainer &&
                         range.startContainer.isConnected &&

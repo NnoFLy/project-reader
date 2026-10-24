@@ -97,6 +97,7 @@ export class ViewerStore {
     lastSetPageState = $state<any>(null)
     private listening = false
     private bookSwitchGeneration = 0
+    private bookContentGeneration: number | undefined
     private disposalEpoch = 0
     private disposed = false
     workspace: ReadingWorkspace
@@ -162,6 +163,9 @@ export class ViewerStore {
         this.mutations.setActiveFileId(book?.id ?? null)
         this.bookSwitchGeneration++
         this.book = book
+        this.bookContentGeneration = book?.url
+            ? this.files.getContentGeneration(book.id)
+            : undefined
         this.pageNumber = book?.pageNumber || 1
         this.pageScroll = book?.scrollPosition || 0
         this.totalPages = book?.totalPages || 0
@@ -174,11 +178,27 @@ export class ViewerStore {
             this.files.onNodesDeleting?.((ids) => {
                 for (const id of ids) this.workspace.invalidateAnnotations(id)
             }) ?? (() => undefined),
-            this.files.onNodeInvalidated?.((id) => this.workspace.invalidateAnnotations(id)) ??
-                (() => undefined),
+            this.files.onNodeInvalidated?.((id) => {
+                // Preview changes share this notification; only positive source ownership
+                // evidence can spare the reader's annotation/resource lifetime.
+                const generation = this.bookContentGeneration
+                if (
+                    this.book?.id === id &&
+                    !!this.book.url &&
+                    generation !== undefined &&
+                    !this.files.isNodeDeleting(id) &&
+                    this.files.isCurrentContent(id, generation) &&
+                    this.files.isCurrentFileUrl(id, this.book.url, generation)
+                )
+                    return
+                if (this.book?.id === id) this.bookContentGeneration = undefined
+                this.workspace.invalidateAnnotations(id)
+            }) ?? (() => undefined),
             this.files.onContentRestored?.((id) => {
-                if (this.files.nodes[id]?.type === "file" && !this.files.isNodeDeleting(id))
+                if (this.files.nodes[id]?.type === "file" && !this.files.isNodeDeleting(id)) {
                     this.workspace.resumeAnnotations(id)
+                    if (this.book?.id === id) void this.workspace.synchronize(true)
+                }
             }) ?? (() => undefined),
         )
         this.vfsUnsubscribers.push(

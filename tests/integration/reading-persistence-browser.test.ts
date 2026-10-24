@@ -204,6 +204,7 @@ describe("Reading workspace browser persistence", () => {
                     "window.reader.totalPages === 8 && document.querySelectorAll('.fullscreen-viewer').length === 1",
                 )
                 await page.evaluate(`(async () => {
+                    await window.reader.workspace.loadDocument();
                     await window.command('settings.layout', {value:'single'});
                     await window.command('settings.zoom.in', {value:1.5});
                     window.reader.goToPage(3, {scrollPosition:0.2});
@@ -342,7 +343,10 @@ describe("Reading workspace browser persistence", () => {
                             `window.reader.workspace.annotations(${JSON.stringify(id)}).drafts.map(draft => [draft.noteContent, draft.color])`,
                         ),
                     ).toEqual([["Recovered <img src=x> draft", "purple"]])
-                    await page.evaluate("window.notes.showDraft(window.notes.drafts[0].id)")
+                    await page.evaluate(`(async () => {
+                        await window.reader.workspace.loadDocument();
+                        window.notes.showDraft(window.notes.drafts[0].id);
+                    })()`)
                     await page.waitFor(
                         "document.querySelector('textarea')?.value === 'Recovered <img src=x> draft'",
                     )
@@ -832,16 +836,18 @@ describe("Reading workspace browser persistence", () => {
                 await page.waitFor(
                     "window.reader.totalPages === 8 && !!document.querySelector('.fullscreen-viewer')",
                 )
-                // Use the UI adapter, not storage fixtures, to create distinct unfinished work.
+                // Use the UI adapter after actual source identity is ready, not storage fixtures.
                 await page.evaluate(`(async () => {
+                await window.reader.workspace.loadDocument();
                 await window.notes.openDraft({bookId:${JSON.stringify(ids[0])}, pageNumber:1, start:0, end:7, text:'<img src=x onerror=alert(1)> passage', noteContent:'First unfinished', color:'blue'});
                 await window.notes.openDraft({bookId:${JSON.stringify(ids[0])}, pageNumber:2, start:8, end:14, text:'Other passage', noteContent:'Second unfinished', color:'purple'});
                 await window.command('viewer.open', {bookId:${JSON.stringify(ids[1])}});
             })()`)
                 await page.waitFor("window.notes.editors.length === 0")
-                await page.evaluate(
-                    `window.notes.openDraft({bookId:${JSON.stringify(ids[1])}, pageNumber:3, start:0, end:1, text:'B', noteContent:'Only B', color:'pink'})`,
-                )
+                await page.evaluate(`(async () => {
+                    await window.reader.workspace.loadDocument();
+                    await window.notes.openDraft({bookId:${JSON.stringify(ids[1])}, pageNumber:3, start:0, end:1, text:'B', noteContent:'Only B', color:'pink'});
+                })()`)
                 await page.waitFor("document.querySelectorAll('textarea').length === 1")
                 expect(
                     await page.evaluate(
@@ -986,7 +992,7 @@ describe("Reading workspace browser persistence", () => {
         120000,
     )
 
-    it("presents recovered drafts when the restored resource is unavailable and hiding never discards them", async () => {
+    it("presents unavailable-source drafts for review without reviving unverified editors", async () => {
         const page = await browser!.page()
         try {
             await page.call("Page.navigate", { url: `${origin}/en` })
@@ -1021,7 +1027,7 @@ describe("Reading workspace browser persistence", () => {
             await page.waitFor(`${ready} && performance.timeOrigin !== ${parserReload}`)
             await bind(page)
             await page.waitFor(
-                "document.querySelector('[data-reading-state=provider-unavailable][role=status]')?.textContent.includes('Viewer is unavailable') && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+                "document.querySelector('[data-reading-state=provider-unavailable][role=status]')?.textContent.includes('Viewer is unavailable') && document.querySelector('section[aria-label=\"Needs review\"]')?.textContent.includes('Unloaded unfinished')",
             )
             expect(await page.evaluate("window.reader.workspace.snapshot.documentId")).toBe(id)
             expect(await page.evaluate("document.body.textContent")).not.toContain(
@@ -1039,20 +1045,24 @@ describe("Reading workspace browser persistence", () => {
             await page.waitFor(`${ready} && performance.timeOrigin !== ${before}`)
             await bind(page)
             await page.waitFor(
-                "window.reader.workspace.snapshot.status === 'unavailable' && document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+                "window.reader.workspace.snapshot.status === 'unavailable' && document.querySelector('section[aria-label=\"Needs review\"]')?.textContent.includes('Unloaded unfinished')",
             )
             expect(await page.evaluate("window.notes.notes.length")).toBe(0)
-            await page.evaluate(
-                "document.querySelector('[role=dialog] [aria-label=Close]').click()",
-            )
-            await page.waitFor("!document.querySelector('textarea')")
-            expect(await page.evaluate("window.notes.drafts.length")).toBe(1)
-            await page.evaluate(
-                "Array.from(document.querySelectorAll('.reading-access-state button')).find(button => button.textContent.includes('Unloaded unfinished')).click()",
-            )
+            expect(await page.evaluate("document.querySelector('textarea') === null")).toBe(true)
+            expect(
+                await page.evaluate(
+                    `window.reader.workspace.needsReview(${JSON.stringify(id)}).length`,
+                ),
+            ).toBe(1)
+            await nativeRetry(page, 'section[aria-label="Needs review"] button')
             await page.waitFor(
-                "document.querySelector('textarea')?.value === 'Unloaded unfinished'",
+                "Array.from(document.querySelectorAll('[role=status]')).some(node => node.textContent.includes('Copied. The anchor is still unverified.'))",
             )
+            expect(
+                await page.evaluate(
+                    `window.reader.workspace.annotations(${JSON.stringify(id)}).drafts.length`,
+                ),
+            ).toBe(1)
             await page.evaluate("window.ui.execute('viewer.close')")
             await page.waitFor(
                 "!!document.querySelector('[aria-labelledby=reading-close-decision-title]')",
@@ -1175,6 +1185,110 @@ describe("Reading workspace browser persistence", () => {
             await browser!.closeTarget(page.targetId)
         }
     }, 90000)
+
+    it.each([1280, 390])(
+        "reviews changed-content relinks by keyboard and persists explicit discard at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            try {
+                await page.call("Emulation.setDeviceMetricsOverride", {
+                    width,
+                    height: 844,
+                    deviceScaleFactor: 1,
+                    mobile: width === 390,
+                })
+                await page.call("Page.navigate", { url: `${origin}/en` })
+                await bind(page)
+                const id = await page.evaluate(`(async () => {
+                const [result] = await window.library.importFiles([{name:'review.pdf', source:new File([${JSON.stringify(pdf)}], 'review.pdf', {type:'application/pdf'})}], null);
+                await window.command('viewer.open', {bookId:result.id});
+                return result.id;
+            })()`)
+                await page.waitFor(
+                    "window.reader.totalPages === 8 && !!document.querySelector('.textLayer span')",
+                )
+                await page.evaluate(`(async () => {
+                const id = ${JSON.stringify(id)};
+                const input = {pageNumber:2,start:0,end:7,text:'<img src=x> preserved',noteContent:'Private review note',color:'blue',association:{contentHash:null,verification:'unverified'}};
+                await window.reader.workspace.createNote(id,input);
+                await window.reader.workspace.createDraft(id,{...input,noteContent:'Unfinished review draft'});
+                await window.notes.closeEditor();
+                await window.reader.workspace.createBookmark(id,{pageNumber:8,name:'Old chapter',association:input.association});
+                window.reader.workspace.requestRelink();
+            })()`)
+                await page.waitFor("!!document.querySelector('input[type=file]')")
+                // Keyboard users can reach the existing Library locate control. File selection
+                // itself is supplied at the browser boundary, as in the existing relink test.
+                expect(
+                    await page.evaluate(
+                        `Array.from(document.querySelectorAll('[role=dialog] button')).some(button => button.textContent.trim() === 'Locate File' && button.tabIndex === 0)`,
+                    ),
+                ).toBe(true)
+                await page.evaluate(`(() => {
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([${JSON.stringify(pdf.replace("Reading passage", "Changed passage"))}], 'review.pdf', {type:'application/pdf'}));
+                const input = document.querySelector('input[type=file]');
+                input.files = transfer.files;
+                input.dispatchEvent(new Event('change', {bubbles:true}));
+            })()`)
+                await page.waitFor(
+                    `!document.querySelector('[role=dialog]') && window.reader.workspace.needsReview(${JSON.stringify(id)}).length === 3 && window.notes.notes.length === 0`,
+                )
+                await page.evaluate("window.ui.execute('viewer.sidebar.notes.toggle')")
+                const review = 'section[aria-label="Needs review"]'
+                await page.waitFor(
+                    `document.querySelector(${JSON.stringify(review)})?.textContent.includes('Unfinished review draft')`,
+                )
+                expect(
+                    await page.evaluate(`(() => {
+                const region = document.querySelector(${JSON.stringify(review)});
+                return region.querySelectorAll('li').length === 3 && !region.querySelector('img,script')
+                    && Array.from(region.querySelectorAll('button')).every(button => {
+                        const rect = button.getBoundingClientRect();
+                        return rect.left >= 0 && rect.right <= innerWidth + 1 && rect.height >= 30;
+                    });
+            })()`),
+                ).toBe(true)
+                await nativeRetry(page, `${review} li button`)
+                await page.waitFor(
+                    "Array.from(document.querySelectorAll('[role=status]')).some(node => node.textContent.includes('Copied. The anchor is still unverified.'))",
+                )
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.needsReview(${JSON.stringify(id)}).length`,
+                    ),
+                ).toBe(3)
+                await nativeRetry(page, `${review} li button:nth-of-type(2)`)
+                await page.waitFor(
+                    `window.reader.workspace.needsReview(${JSON.stringify(id)}).length === 2`,
+                )
+                await page.evaluate("window.reader.workspace.flush()")
+                const previous = await page.evaluate("performance.timeOrigin")
+                await page.call("Page.reload")
+                await page.waitFor(`${ready} && performance.timeOrigin !== ${previous}`)
+                await bind(page)
+                await page.waitFor("window.reader.totalPages === 8")
+                await page.evaluate("window.ui.execute('viewer.sidebar.notes.toggle')")
+                await page.waitFor(
+                    `document.querySelector(${JSON.stringify(review)})?.querySelectorAll('li').length === 2`,
+                )
+                expect(
+                    await page.evaluate(
+                        `window.reader.workspace.anchoredAnnotations(${JSON.stringify(id)})`,
+                    ),
+                ).toEqual({ notes: [], drafts: [], bookmarks: [] })
+                expect(
+                    await page.evaluate("document.querySelectorAll('.fullscreen-viewer').length"),
+                ).toBe(1)
+            } finally {
+                await page
+                    .evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+                    .catch(() => undefined)
+                page.close()
+            }
+        },
+        90000,
+    )
 
     it("retains an unavailable restored source and safely retries/relinks through Library UI", async () => {
         const page = await browser!.page()

@@ -5,17 +5,39 @@ import { ReadingStorage } from "../readingStorage"
 import type { ViewerFileCapability } from "../viewerHost"
 import { NotesStore } from "./notesStore.svelte"
 
-function reader(backend = new MemoryStorageBackend()) {
+async function reader(backend = new MemoryStorageBackend()) {
     const files = {
-        nodes: { a: { id: "a", type: "file" }, b: { id: "b", type: "file" } },
+        nodes: {
+            a: { id: "a", name: "A", type: "file", metadata: {} },
+            b: { id: "b", name: "B", type: "file", metadata: {} },
+        },
+        isLockedMap: {},
         getContentGeneration: () => 0,
+        isCurrentContent: () => true,
+        isCurrentFileUrl: () => true,
+        getFileUrl: async (id: string) => `blob:${id}`,
+        releaseFileUrl: () => true,
     } as unknown as ViewerFileCapability
     const workspace = new ReadingWorkspace({
         files,
         storage: new ReadingStorage(createExtensionStorage(backend, "test.viewer")),
         getCurrentBook: () => null,
         publish: () => true,
+        loader: {
+            open: async () => ({
+                kind: "reflowable",
+                contentHash: "a".repeat(64),
+                metadata: { title: "Fixture", author: null },
+                capabilities: new Set(),
+                getSections: async () => [],
+                close: async () => undefined,
+            }),
+        },
     })
+    for (const id of ["b", "a"]) {
+        await workspace.open(id)
+        await workspace.loadDocument()
+    }
     const notes = new NotesStore(workspace)
     return { backend, workspace, notes }
 }
@@ -31,7 +53,7 @@ const draft = {
 
 describe("NotesStore workspace editor adapter", () => {
     it("keeps editors independent, reuses their identity, and saves only the requested editor", async () => {
-        const { notes, workspace } = reader()
+        const { notes, workspace } = await reader()
         try {
             await notes.loadNotesForBook("a")
             const first = await notes.openDraft(draft)
@@ -53,7 +75,7 @@ describe("NotesStore workspace editor adapter", () => {
     })
 
     it("recovers independent drafts across selection, hidden editors and persisted reload without saving notes", async () => {
-        const { notes, workspace, backend } = reader()
+        const { notes, workspace, backend } = await reader()
         await notes.loadNotesForBook("a")
         const first = await notes.openDraft(draft)
         const second = await notes.openDraft({ ...draft, text: "Other", start: 8, end: 13 })
@@ -72,7 +94,7 @@ describe("NotesStore workspace editor adapter", () => {
         await workspace.flush()
         notes.dispose()
         await workspace.dispose()
-        const restored = reader(backend)
+        const restored = await reader(backend)
         await restored.notes.loadNotesForBook("a")
         expect(restored.notes.editors.map((e) => e.note)).toMatchObject([
             { text: "Passage", noteContent: "First", color: "blue" },
@@ -84,7 +106,7 @@ describe("NotesStore workspace editor adapter", () => {
     })
 
     it("retains failed new work and retries the same annotation instead of duplicating it", async () => {
-        const { backend, notes, workspace } = reader()
+        const { backend, notes, workspace } = await reader()
         const set = backend.set.bind(backend)
         let fail = true
         backend.set = async (key, value) => {
@@ -113,7 +135,7 @@ describe("NotesStore workspace editor adapter", () => {
     })
 
     it("keeps an existing editor and its latest input open when closing cannot persist", async () => {
-        const { backend, notes, workspace } = reader()
+        const { backend, notes, workspace } = await reader()
         try {
             await notes.loadNotesForBook("a")
             const saved = await notes.addNote("a", 2, 0, 7, "Passage", "Original", "yellow")
@@ -136,7 +158,7 @@ describe("NotesStore workspace editor adapter", () => {
     })
 
     it("never publishes a completed old-document editor action into the new document", async () => {
-        const { backend, notes, workspace } = reader()
+        const { backend, notes, workspace } = await reader()
         const set = backend.set.bind(backend)
         let release!: () => void
         const blocked = new Promise<void>((resolve) => (release = resolve))
@@ -170,7 +192,7 @@ describe("NotesStore workspace editor adapter", () => {
     })
 
     it("deletes only the matching note and clears only presentation when leaving a document", async () => {
-        const { notes, workspace } = reader()
+        const { notes, workspace } = await reader()
         try {
             await notes.loadNotesForBook("a")
             const first = await notes.addNote("a", 1, 0, 1, "A", "First", "yellow")

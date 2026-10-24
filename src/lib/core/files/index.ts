@@ -9,3 +9,5 @@ export {
 export type { BoundedDocumentSourceOptions, DocumentSourceReader } from "./file-source"
 export { createFileService, FileService } from "./file-service"
 export type { FileRecord } from "./file-service"
+
+export { hashDocumentSource } from "./source-identity"

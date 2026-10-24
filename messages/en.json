@@ -309,5 +309,14 @@
     "discard": "Discard",
     "discard_draft": "Discard draft",
     "close_drafts_title": "Close document with drafts?",
-    "close_drafts_message": "Save your Note drafts as notes, discard them, or cancel to keep reading."
+    "close_drafts_message": "Save your Note drafts as notes, discard them, or cancel to keep reading.",
+    "review_title": "Needs review",
+    "review_description": "These anchors are unverified. Preserved material is not attached to replacement text. Copy or discard it explicitly.",
+    "review_copy": "Copy preserved text",
+    "review_copied": "Copied. The anchor is still unverified.",
+    "review_copy_failed": "Unable to copy. Select and copy the text below.",
+    "review_discard_failed": "Unable to save the discard. Try again before leaving this window.",
+    "review_note": "Note",
+    "review_draft": "Note draft",
+    "review_bookmark": "Bookmark"
 }

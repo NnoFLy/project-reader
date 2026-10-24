@@ -831,6 +831,7 @@ describe("Reading workspace host lifetime", () => {
                     color: "yellow",
                     noteContent: title,
                 })
+                await notes.addNote("book", 1, 0, 1, title, title, "yellow")
                 const runtime: ViewerRuntime = {
                     closing: new ViewerCloseController(store),
                     store,
@@ -864,7 +865,7 @@ describe("Reading workspace host lifetime", () => {
                     const range = globalThis.document.createRange()
                     range.selectNodeContents(text)
                     reader.notes.registerPageRanges(99, [
-                        { noteId: "note", range, color: "yellow" },
+                        { noteId: reader.notes.notes[0].id, range, color: "yellow" },
                     ])
                     reader.runtime.search.registerPageRanges(99, [range])
                     return { text, range }

@@ -5,14 +5,22 @@ import { ReadingStorage } from "../readingStorage"
 import type { ViewerFileCapability, ViewerLibraryCapability } from "../viewerHost"
 import { BookmarksStore } from "./bookmarksStore.svelte"
 
-function reader() {
+async function reader() {
     const backend = new MemoryStorageBackend()
-    const nodes = { a: { id: "a", type: "file" }, b: { id: "b", type: "file" } }
+    const nodes = {
+        a: { id: "a", name: "A", type: "file", metadata: {} },
+        b: { id: "b", name: "B", type: "file", metadata: {} },
+    }
     const files = {
         nodes,
         allFiles: Object.values(nodes),
         initialized: true,
+        isLockedMap: {},
         getContentGeneration: () => 0,
+        isCurrentContent: () => true,
+        isCurrentFileUrl: () => true,
+        getFileUrl: async (id: string) => `blob:${id}`,
+        releaseFileUrl: () => true,
     } as unknown as ViewerLibraryCapability & ViewerFileCapability
     const storage = new ReadingStorage(createExtensionStorage(backend, "test.viewer"))
     const workspace = new ReadingWorkspace({
@@ -20,13 +28,27 @@ function reader() {
         storage,
         getCurrentBook: () => null,
         publish: () => true,
+        loader: {
+            open: async () => ({
+                kind: "reflowable",
+                contentHash: "a".repeat(64),
+                metadata: { title: "Fixture", author: null },
+                capabilities: new Set(),
+                getSections: async () => [],
+                close: async () => undefined,
+            }),
+        },
     })
+    for (const id of ["b", "a"]) {
+        await workspace.open(id)
+        await workspace.loadDocument()
+    }
     return { backend, workspace, bookmarks: new BookmarksStore(workspace, files) }
 }
 
 describe("BookmarksStore workspace presentation adapter", () => {
     it("loads, renames and deletes independent document bookmarks without legacy records", async () => {
-        const { workspace, bookmarks } = reader()
+        const { workspace, bookmarks } = await reader()
         try {
             const a = await bookmarks.addBookmark("a", 2, "A")
             const b = await bookmarks.addBookmark("b", 3, "B")
@@ -48,7 +70,7 @@ describe("BookmarksStore workspace presentation adapter", () => {
     })
 
     it("retains failed changes in the workspace and never deletes unknown records", async () => {
-        const { backend, workspace, bookmarks } = reader()
+        const { backend, workspace, bookmarks } = await reader()
         try {
             const bookmark = await bookmarks.addBookmark("a", 1, "Original")
             const set = backend.set.bind(backend)
@@ -71,7 +93,7 @@ describe("BookmarksStore workspace presentation adapter", () => {
     })
 
     it("removes deleted documents only from presentation and does not republish after adapter disposal", async () => {
-        const { workspace, bookmarks } = reader()
+        const { workspace, bookmarks } = await reader()
         try {
             await bookmarks.addBookmark("a", 1, "Retained")
             bookmarks.removeByBookIds(["a"])

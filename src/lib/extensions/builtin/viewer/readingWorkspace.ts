@@ -25,6 +25,10 @@ import {
     type ReadingNoteInput,
 } from "./readingAnnotations"
 
+export type ReadingReviewItem =
+    | { readonly kind: "note" | "draft"; readonly record: ReadingNote }
+    | { readonly kind: "bookmark"; readonly record: ReadingBookmark }
+
 export type ReadingMutationResult<T> =
     | { readonly ok: true; readonly value: T }
     | { readonly ok: false; readonly error: ReadingStorageError; readonly value?: T }
@@ -120,7 +124,10 @@ export class ReadingWorkspace {
     private intendedId: string | null = null
     private retryRevision?: number
     private resourceController = new AbortController()
-    private readonly documentViews = new WeakMap<ViewerDocument, ViewerDocument>()
+    private readonly documentViews = new WeakMap<
+        ViewerDocument,
+        { controller: AbortController; view: ViewerDocument }
+    >()
     private readonly providerWatches = new Map<string, () => void>()
     private providerSubscription?: { dispose(): void }
     private synchronization?: Promise<void>
@@ -133,6 +140,10 @@ export class ReadingWorkspace {
     private queue: Promise<void> = Promise.resolve()
     private readonly states = new Map<string, ReadingDocumentState>()
     private current: ReadingSnapshot
+    private readonly contentIdentities = new Map<
+        string,
+        { generation: number; hash: string | null }
+    >()
     private readonly annotationStates = new Map<string, ReadingAnnotationSnapshot>()
     private readonly annotationListeners = new Set<AnnotationListener>()
     private readonly annotationEpochs = new Map<string, number>()
@@ -369,6 +380,84 @@ export class ReadingWorkspace {
         return this.annotationStates.get(documentId) ?? EMPTY_ANNOTATIONS
     }
 
+    private contentHash(documentId: string): string | null {
+        if (this.current.documentId === documentId && this.current.status !== "ready") return null
+        const identity = this.contentIdentities.get(documentId)
+        return identity && this.options.files.isCurrentContent(documentId, identity.generation)
+            ? identity.hash
+            : null
+    }
+
+    /** Only controlled equality evidence permits an anchor to reach document text. */
+    anchoredAnnotations(documentId: string): ReadingRecords {
+        const hash = this.contentHash(documentId)
+        const matches = (record: ReadingNote | ReadingBookmark) =>
+            hash !== null && record.association.contentHash === hash
+        const records = this.annotations(documentId)
+        return freezeAnnotations(
+            records.notes.filter(matches),
+            records.bookmarks.filter(matches),
+            records.drafts.filter(matches),
+        )
+    }
+
+    needsReview(documentId: string): readonly ReadingReviewItem[] {
+        const hash = this.contentHash(documentId)
+        const records = this.annotations(documentId)
+        const items: ReadingReviewItem[] = [
+            ...records.notes.map((record) => ({ kind: "note" as const, record })),
+            ...records.drafts.map((record) => ({ kind: "draft" as const, record })),
+            ...records.bookmarks.map((record) => ({ kind: "bookmark" as const, record })),
+        ]
+        return Object.freeze(
+            items.filter(({ record }) => hash === null || record.association.contentHash !== hash),
+        )
+    }
+
+    async discardReviewItem(
+        documentId: string,
+        kind: ReadingReviewItem["kind"],
+        id: string,
+    ): Promise<ReadingMutationResult<void>> {
+        if (
+            !(await this.loadDraftsForMutation(documentId)) ||
+            !this.needsReview(documentId).some(
+                (item) => item.kind === kind && item.record.id === id,
+            )
+        )
+            return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
+        if (kind === "draft") return this.discardDraft(documentId, id)
+        // Review material remains editable even when its source resources are unavailable.
+        const owns = this.draftOwnership(documentId)
+        if (!owns) return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        const records = this.annotations(documentId)
+        this.publishAnnotations(
+            documentId,
+            freezeAnnotations(
+                records.notes.filter((record) => kind !== "note" || record.id !== id),
+                records.bookmarks.filter((record) => kind !== "bookmark" || record.id !== id),
+                records.drafts,
+            ),
+            true,
+            true,
+        )
+        return this.persistAnnotations(documentId, undefined, owns)
+    }
+
+    private associateNew<T extends ReadingNote | ReadingBookmark>(
+        documentId: string,
+        record: T | null,
+    ): T | null {
+        if (!record) return null
+        return Object.freeze<T>({
+            ...record,
+            association: Object.freeze({
+                contentHash: this.contentHash(documentId),
+                verification: "unverified" as const,
+            }),
+        })
+    }
+
     subscribeAnnotations(listener: AnnotationListener): () => void {
         if (!this.disposed) this.annotationListeners.add(listener)
         return () => this.annotationListeners.delete(listener)
@@ -433,12 +522,29 @@ export class ReadingWorkspace {
         documentId: string,
         input: ReadingNoteInput,
     ): Promise<ReadingMutationResult<ReadingDraft>> {
-        const owns = this.draftOwnership(documentId)
+        const lifetimeOwns = this.draftOwnership(documentId)
+        const epoch = this.annotationEpochs.get(documentId) ?? 0
+        const generation = this.options.files.getContentGeneration(documentId)
+        const owns =
+            lifetimeOwns &&
+            (() =>
+                lifetimeOwns() &&
+                (this.annotationEpochs.get(documentId) ?? 0) === epoch &&
+                this.options.files.getContentGeneration(documentId) === generation)
+
         const draft =
             owns &&
-            readNote(
-                { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+            this.associateNew(
                 documentId,
+                readNote(
+                    {
+                        ...input,
+                        id: crypto.randomUUID(),
+                        bookId: documentId,
+                        createdAt: Date.now(),
+                    },
+                    documentId,
+                ),
             )
         if (!owns || !draft)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
@@ -703,6 +809,14 @@ export class ReadingWorkspace {
         if (this.disposed) return
         this.annotationEpochs.set(documentId, (this.annotationEpochs.get(documentId) ?? 0) + 1)
         this.invalidAnnotations.add(documentId)
+        this.contentIdentities.delete(documentId)
+        if (this.current.documentId === documentId) {
+            this.resourceController.abort()
+            this.resourceController = new AbortController()
+        }
+        const state = this.annotations(documentId)
+        if (state.loaded)
+            this.publishAnnotations(documentId, state, state.loaded, state.dirty, state.error)
     }
 
     /** Only an adapter-confirmed available identity/rollback may resume new annotation writes. */
@@ -749,9 +863,12 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        const note = readNote(
-            { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+        const note = this.associateNew(
             documentId,
+            readNote(
+                { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+                documentId,
+            ),
         )
         if (!note)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
@@ -834,9 +951,12 @@ export class ReadingWorkspace {
         const owns = this.annotationOwnership(documentId)
         if (!owns)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
-        const bookmark = readBookmark(
-            { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+        const bookmark = this.associateNew(
             documentId,
+            readBookmark(
+                { ...input, id: crypto.randomUUID(), bookId: documentId, createdAt: Date.now() },
+                documentId,
+            ),
         )
         if (!bookmark)
             return { ok: false, error: new ReadingStorageError("reading.storage.invalid-input") }
@@ -1123,6 +1243,10 @@ export class ReadingWorkspace {
     }
 
     synchronize(relinked = false): Promise<void> {
+        if (relinked) {
+            this.resourceController.abort()
+            this.resourceController = new AbortController()
+        }
         this.relinkPending ||= relinked
         if (this.synchronization) return this.synchronization
         const synchronize = async () => {
@@ -1314,8 +1438,28 @@ export class ReadingWorkspace {
                 )
             }, operationSignal)
             if (!document || operationSignal.aborted || !owns()) return
+            const hash = "contentHash" in document ? document.contentHash : null
+            this.contentIdentities.set(documentId, {
+                generation: contentGeneration,
+                hash: typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash) ? hash : null,
+            })
+            if (
+                document.kind === "paged" &&
+                Number.isSafeInteger(document.pageCount) &&
+                document.pageCount > 0 &&
+                this.current.state.pageNumber > document.pageCount
+            )
+                this.setPosition(document.pageCount, 0)
+            const records = this.annotations(documentId)
+            this.publishAnnotations(
+                documentId,
+                records,
+                records.loaded,
+                records.dirty,
+                records.error,
+            )
             const existing = this.documentViews.get(document)
-            if (existing) return existing
+            if (existing?.controller === controller) return existing.view
             const view = new Proxy(document, {
                 get: (target, key) => {
                     const value = Reflect.get(target, key, target)
@@ -1324,8 +1468,12 @@ export class ReadingWorkspace {
                     return async (...args: unknown[]) => {
                         try {
                             controller.signal.throwIfAborted()
+                            if (!owns())
+                                throw new DOMException("Document content superseded", "AbortError")
                             const result = await value.apply(target, args)
                             controller.signal.throwIfAborted()
+                            if (!owns())
+                                throw new DOMException("Document content superseded", "AbortError")
                             return result
                         } catch (error) {
                             const cancelledByCaller = args.some((argument) =>
@@ -1343,7 +1491,7 @@ export class ReadingWorkspace {
                     }
                 },
             }) as ViewerDocument
-            this.documentViews.set(document, view)
+            this.documentViews.set(document, { controller, view })
             return view
         } catch {
             if (owns() && !operationSignal.aborted) this.providerUnavailable()

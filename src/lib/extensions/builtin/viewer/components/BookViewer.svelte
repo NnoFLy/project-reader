@@ -15,6 +15,7 @@
     import * as m from "$lib/paraglide/messages"
     import { untrack, onMount, onDestroy } from "svelte"
     import { on } from "svelte/events"
+    import NeedsReviewList from "./NeedsReviewList.svelte"
     import { getViewerRuntimeContext } from "../viewerRuntime"
     const {
         settings,
@@ -1176,16 +1177,8 @@
                     : "Your reading position is retained. Retry access or relink the file in Library."}
             {/if}
         </p>
-        {#if notesStore.drafts.length}
-            <section aria-label={m.note_drafts()}>
-                <h2>{m.note_drafts()}</h2>
-                {#each notesStore.drafts as draft (draft.id)}
-                    <Button onclick={() => notesStore.showDraft(draft.id)}>
-                        {m.page()}
-                        {draft.pageNumber}: {draft.noteContent || draft.text}
-                    </Button>
-                {/each}
-            </section>
+        {#if viewerStore.reading.documentId}
+            <NeedsReviewList documentId={viewerStore.reading.documentId} />
         {/if}
         <div class="reading-access-actions">
             {#if viewerStore.reading.status === "provider-unavailable"}

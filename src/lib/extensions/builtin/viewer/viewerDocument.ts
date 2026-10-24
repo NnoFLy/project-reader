@@ -8,7 +8,11 @@ import type {
     ReaderPage,
     DocumentSource,
 } from "$lib/document-model"
-import { createBlobDocumentSource, DOCUMENT_SOURCE_LIMITS } from "../../../core/files"
+import {
+    createBlobDocumentSource,
+    DOCUMENT_SOURCE_LIMITS,
+    hashDocumentSource,
+} from "../../../core/files"
 
 export type ViewerTextItem = DocumentTextItem
 
@@ -63,7 +67,10 @@ export type ViewerPagedDocument = PagedDocument
 export type ViewerReflowDocument = ReflowableDocument
 
 /** The viewer preserves the document model's discriminated union. */
-export type ViewerDocument = ViewerPagedDocument | ViewerReflowDocument
+export type ViewerDocument = (ViewerPagedDocument | ViewerReflowDocument) & {
+    /** Controlled source-byte evidence, absent when identity could not be established. */
+    readonly contentHash?: string | null
+}
 
 export interface ViewerDocumentLoader {
     /** Host declaration metadata only; core still selects the exact adapter. */
@@ -155,8 +162,15 @@ export function createServiceLoader(service: ViewerDocumentService): ViewerDocum
                 blob,
                 mimeType: blob.type || undefined,
             })
+            let contentHash: string | null = null
+            try {
+                contentHash = await hashDocumentSource(source, signal)
+            } catch {
+                signal?.throwIfAborted()
+                // Missing evidence is not equality; reading can still proceed for review.
+            }
             const document = await service.open(source, signal)
-            return asViewerDocument(service, document)
+            return { ...asViewerDocument(service, document), contentHash }
         },
     }
 }

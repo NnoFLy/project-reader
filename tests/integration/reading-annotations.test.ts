@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 vi.hoisted(() => {
     window.matchMedia = (() => ({
         matches: false,
@@ -8,6 +8,9 @@ vi.hoisted(() => {
     })) as unknown as typeof window.matchMedia
 })
 vi.mock("$app/navigation", () => ({ goto: vi.fn(), pushState: vi.fn(), replaceState: vi.fn() }))
+import { Blob as NodeBlob, File as NodeFile } from "node:buffer"
+import { URL as NodeURL } from "node:url"
+afterEach(() => vi.unstubAllGlobals())
 import { createExtensionStorage, MemoryStorageBackend } from "$lib/core/storage"
 import { libraryStore } from "$lib/extensions/builtin/library/state/libraryStore.svelte"
 import { createBuiltinHost } from "$lib/extensions/builtin"
@@ -16,8 +19,11 @@ import { notesStore } from "$lib/extensions/builtin/viewer/stores/notesStore.sve
 import { bookmarksStore } from "$lib/extensions/builtin/viewer/stores/bookmarksStore.svelte"
 
 async function start(backend = new MemoryStorageBackend()) {
+    vi.stubGlobal("Blob", NodeBlob)
+    vi.stubGlobal("File", NodeFile)
+    vi.stubGlobal("URL", NodeURL)
     const library = createExtensionStorage(backend, "builtin.library").namespace("library")
-    for (const id of ["a", "b"])
+    for (const id of ["a", "b"]) {
         await library.set(`books.${id}`, {
             id,
             name: `${id}.pdf`,
@@ -29,8 +35,28 @@ async function start(backend = new MemoryStorageBackend()) {
             size: 4,
             metadata: {},
         })
+        if (!(await library.get(`fileContents.${id}`)))
+            await library.set(`fileContents.${id}`, { id, file: new Blob(["original"]) })
+    }
     const host = createBuiltinHost({ storage: backend })
+    host.documentService.adapters.register({
+        id: "viewer.review.integration",
+        extensions: ["pdf"],
+        mimeTypes: [],
+        probe: async () => ({ supported: true, confidence: 100 }),
+        open: async () => ({
+            kind: "reflowable",
+            metadata: { title: "Fixture", author: null },
+            capabilities: new Set(),
+            getSections: async () => [],
+            close: async () => undefined,
+        }),
+    })
     await host.start()
+    for (const id of ["b", "a"]) {
+        await viewerStore.workspace.open(id)
+        await viewerStore.workspace.loadDocument()
+    }
     return {
         host,
         backend,
@@ -96,6 +122,81 @@ describe("Reading annotation host integration", () => {
                 noteCount: 0,
                 bookmarkCount: 0,
             })
+        } finally {
+            await reader.host.dispose()
+        }
+    })
+
+    it("classifies an inactive relink through owning host contracts and preserves review on reload", async () => {
+        const reader = await start()
+        try {
+            const result = await reader.store.workspace.createDraft("b", {
+                pageNumber: 2,
+                start: 0,
+                end: 7,
+                text: "Old passage",
+                noteContent: "Unfinished",
+                color: "blue",
+                association: { contentHash: null, verification: "unverified" },
+            })
+            expect(result.ok).toBe(true)
+            await reader.library.relinkFile("b", new File(["replacement"], "b.pdf"))
+            expect(reader.store.workspace.snapshot.documentId).toBe("a")
+            expect(reader.store.workspace.needsReview("b")).toMatchObject([
+                { kind: "draft", record: { noteContent: "Unfinished" } },
+            ])
+            await reader.store.workspace.open("b")
+            await reader.store.workspace.loadDocument()
+            await reader.notes.loadNotesForBook("b")
+            expect(reader.notes.drafts).toEqual([])
+            expect(reader.store.workspace.anchoredAnnotations("b").drafts).toEqual([])
+            await reader.store.workspace.flush()
+        } finally {
+            await reader.host.dispose()
+        }
+        // The persisted original byte evidence still differs after source resources are released.
+        const restored = await start(reader.backend)
+        try {
+            await restored.store.workspace.open("b")
+            await restored.store.workspace.loadDocument()
+            await restored.store.workspace.loadDrafts("b")
+            expect(restored.store.workspace.needsReview("b")).toMatchObject([
+                { kind: "draft", record: { noteContent: "Unfinished" } },
+            ])
+            expect(restored.store.workspace.anchoredAnnotations("b").drafts).toEqual([])
+        } finally {
+            await restored.host.dispose()
+        }
+    })
+
+    it("failed relink retains recoverable review material and resumes the owning reader", async () => {
+        const reader = await start()
+        const result = await reader.store.workspace.createNote("a", {
+            pageNumber: 2,
+            start: 0,
+            end: 7,
+            text: "Old passage",
+            noteContent: "Retained",
+            color: "blue",
+            association: { contentHash: null, verification: "unverified" },
+        })
+        expect(result.ok).toBe(true)
+        const set = reader.backend.set.bind(reader.backend)
+        reader.backend.set = async (key, value) => {
+            if (key.endsWith(":fileContents.a")) throw new Error("Unavailable storage")
+            await set(key, value)
+        }
+        try {
+            await expect(
+                reader.library.relinkFile("a", new File(["replacement"], "a.pdf")),
+            ).rejects.toThrow()
+            expect(reader.store.workspace.annotations("a").notes).toMatchObject([
+                { noteContent: "Retained" },
+            ])
+            reader.backend.set = set
+            await reader.store.workspace.synchronize()
+            await reader.store.workspace.loadDocument()
+            expect(reader.store.workspace.anchoredAnnotations("a").notes).toHaveLength(1)
         } finally {
             await reader.host.dispose()
         }

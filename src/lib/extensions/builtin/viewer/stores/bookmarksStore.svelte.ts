@@ -24,7 +24,7 @@ export class BookmarksStore {
     private refresh(): void {
         if (this.disposed || !this.workspace || !this.files) return
         this.bookmarks = this.files.allFiles
-            .flatMap((file) => [...this.workspace!.annotations(file.id).bookmarks])
+            .flatMap((file) => [...this.workspace!.anchoredAnnotations(file.id).bookmarks])
             .sort((a, b) => b.createdAt - a.createdAt)
         this.failed = this.files.allFiles.some(
             (file) => this.workspace!.annotations(file.id).error !== null,

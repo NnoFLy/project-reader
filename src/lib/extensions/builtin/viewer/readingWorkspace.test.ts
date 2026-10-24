@@ -1078,6 +1078,16 @@ describe("Reading workspace", () => {
         })
         if (!created.ok) throw new Error("Expected draft")
         await seed.dispose()
+        await storage.writeAnnotations("first", {
+            notes: [],
+            bookmarks: [],
+            drafts: [
+                {
+                    ...created.value,
+                    association: { contentHash: "a".repeat(64), verification: "unverified" },
+                },
+            ],
+        })
         const workspace = reader(undefined, undefined, { storage }).workspace
         await workspace.loadDrafts("first")
         const set = namespace.set.bind(namespace)
@@ -1686,7 +1696,8 @@ describe("Reading workspace", () => {
             value: {
                 bookId: "first",
                 noteContent: "My note",
-                association: { contentHash: "a".repeat(64), verification: "unverified" },
+                // A caller-supplied hash is not controlled source evidence.
+                association: { contentHash: null, verification: "unverified" },
             },
         })
         expect(workspace.snapshot.documentId).toBe("second")

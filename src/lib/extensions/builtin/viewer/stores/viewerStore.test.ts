@@ -34,6 +34,7 @@ function reader() {
         isCurrentFileUrl: () => true,
         clearForwardHistory() {},
     }
+    let invalidate: (id: string) => void = () => undefined
     const library: ViewerLibraryCapability = {
         ...files,
         isLockedMap: {},
@@ -44,7 +45,10 @@ function reader() {
         onNodesDeleting: () => () => undefined,
         onNodeRelinked: () => () => undefined,
         onContentRestored: () => () => undefined,
-        onNodeInvalidated: () => () => undefined,
+        onNodeInvalidated: (listener) => {
+            invalidate = listener
+            return () => undefined
+        },
         isNodeDeleting: () => false,
         getIndexedTexts: async () => [],
         getPreviewUrl: async () => "",
@@ -75,10 +79,72 @@ function reader() {
         updatedAt: 1,
         url: "",
     }
-    return { store, storage, savedBook, files, mutations, released, acquisitions }
+    return {
+        store,
+        storage,
+        savedBook,
+        files,
+        library,
+        mutations,
+        released,
+        acquisitions,
+        invalidate: (id: string) => invalidate(id),
+    }
 }
 
 describe("Viewer synchronization through the Reading workspace", () => {
+    it("preview invalidation preserves current-source annotation access but content supersession fences it", async () => {
+        const { store, storage, files, library, invalidate } = reader()
+        await store.configureStorage(storage)
+        await store.workspace.open("book")
+        invalidate("book")
+        const input = {
+            pageNumber: 1,
+            start: 0,
+            end: 4,
+            text: "Text",
+            noteContent: "Note",
+            color: "yellow" as const,
+            association: { contentHash: null, verification: "unverified" as const },
+        }
+        expect((await store.workspace.createNote("book", input)).ok).toBe(true)
+        files.getContentGeneration = () => 1
+        files.isCurrentContent = (_id, generation) => generation === 1
+        library.getContentGeneration = files.getContentGeneration
+        library.isCurrentContent = files.isCurrentContent
+        invalidate("book")
+        expect((await store.workspace.createNote("book", input)).ok).toBe(false)
+        await store.dispose()
+    })
+
+    it.each(["deleted", "stale-url", "inactive"])(
+        "does not exempt %s resources from invalidation",
+        async (condition) => {
+            const { store, storage, files, library, invalidate } = reader()
+            await store.configureStorage(storage)
+            await store.workspace.open("book")
+            if (condition === "deleted") library.isNodeDeleting = () => true
+            if (condition === "stale-url") library.isCurrentFileUrl = () => false
+            if (condition === "inactive") await store.workspace.open("next")
+            invalidate("book")
+            expect(
+                (
+                    await store.workspace.createNote("book", {
+                        pageNumber: 1,
+                        start: 0,
+                        end: 4,
+                        text: "Text",
+                        noteContent: "Note",
+                        color: "yellow",
+                        association: { contentHash: null, verification: "unverified" },
+                    })
+                ).ok,
+            ).toBe(false)
+            expect(files.nodes.book).toBeDefined()
+            await store.dispose()
+        },
+    )
+
     it("preserves restored reading position when acquiring a fresh source", async () => {
         const { store, storage, acquisitions } = reader()
         const reading = new ReadingStorage(storage)

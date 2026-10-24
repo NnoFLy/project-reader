@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getViewerRuntimeContext } from "../viewerRuntime"
-    const { notes: notesStore, settings } = getViewerRuntimeContext()()
+    const { notes: notesStore, store: viewerStore, settings } = getViewerRuntimeContext()()
     import * as m from "$lib/paraglide/messages"
     import MenuIcon from "$lib/shared/icons/MenuIcon.svelte"
     import NoteIcon from "$lib/shared/icons/NoteIcon.svelte"
@@ -16,6 +16,7 @@
     import TabItem from "$lib/shared/ui/TabItem.svelte"
     import OutlineSidebar from "./OutlineSidebar.svelte"
     import NotesSidebar from "./NotesSidebar.svelte"
+    import NeedsReviewList from "./NeedsReviewList.svelte"
     import BookmarksSidebar from "./BookmarksSidebar.svelte"
     import SettingsSidebar from "./SettingsSidebar.svelte"
     import { modalManager } from "$lib/shared/ui/modal/modalManager.svelte"
@@ -206,6 +207,11 @@
     {header}
 >
     {#if side === "left" && activeTab !== "settings"}
+        {#if viewerStore.reading.documentId}
+            <div class="review-list">
+                <NeedsReviewList documentId={viewerStore.reading.documentId} />
+            </div>
+        {/if}
         {#key activeTab}
             <Slider
                 enabled={!modalManager.hasBlockingModal && !notesStore.activePopup}
@@ -240,6 +246,13 @@
     :global(.sidebar-tabs-list) {
         flex: 1;
         min-inline-size: 0;
+    }
+
+    .review-list {
+        overflow-y: auto;
+        flex: 0 1 auto;
+        max-block-size: 50%;
+        min-block-size: 0;
     }
 
     .sidebar-panel {
