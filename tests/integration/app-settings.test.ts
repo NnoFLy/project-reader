@@ -59,6 +59,17 @@ const settle = async () => {
 const button = (name: string) =>
     [...document.querySelectorAll("button")].find((node) => node.textContent?.trim() === name)!
 const search = () => document.querySelector<HTMLInputElement>('[type="search"]')!
+const settingRow = (label: string) =>
+    document.querySelector<HTMLElement>(`article[aria-label="${label}"]`)!
+const settingControl = (label: string) =>
+    settingRow(label).querySelector<HTMLInputElement | HTMLSelectElement>("input, select")!
+function editSetting(label: string, value: string | boolean) {
+    const control = settingControl(label)
+    if (typeof value === "boolean") (control as HTMLInputElement).checked = value
+    else control.value = value
+    control.dispatchEvent(new Event("input", { bubbles: true }))
+    control.dispatchEvent(new Event("change", { bubbles: true }))
+}
 function captureLanguageNavigation() {
     const realWindow = window
     const location = {
@@ -112,6 +123,382 @@ async function setup(
         },
     }
 }
+it("applies generated Theme edits, restores the current choice, and durably resets only Theme", async () => {
+    const storage = new MemoryStorageBackend()
+    let app = await setup(undefined, storage)
+    try {
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect((settingControl("Theme") as HTMLSelectElement).selectedOptions[0]!.text).toBe(
+            "System",
+        )
+        editSetting("Theme", "1")
+        await vi.waitFor(() =>
+            expect(document.documentElement.classList.contains("dark")).toBe(true),
+        )
+        expect(await app.host.settings.getValue("settings.theme")).toBe("dark")
+        expect(settingRow("Theme").textContent).toContain("Modified")
+        document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]')!.click()
+        await settle()
+        await app.stop()
+        app = await setup(undefined, storage)
+        await app.host.commands.execute("settings.open")
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect((settingControl("Theme") as HTMLSelectElement).selectedOptions[0]!.text).toBe("Dark")
+        expect(document.documentElement.classList.contains("dark")).toBe(true)
+        await app.host.commands.execute("settings.theme", { value: "light" })
+        await settle()
+        expect((settingControl("Theme") as HTMLSelectElement).selectedOptions[0]!.text).toBe(
+            "Light",
+        )
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        await app.host.commands.execute("settings.animations.toggle", { value: false })
+        const reset = settingRow("Theme").querySelector<HTMLButtonElement>("button")!
+        reset.click()
+        await vi.waitFor(async () =>
+            expect(await app.host.settings.getValue("settings.theme")).toBe("system"),
+        )
+        await settle()
+        expect(settingRow("Theme").textContent).not.toContain("Modified")
+        expect(await app.host.settings.getValue("settings.animations")).toBe(false)
+        await app.stop()
+        app = await setup(undefined, storage)
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect((settingControl("Theme") as HTMLSelectElement).selectedOptions[0]!.text).toBe(
+            "System",
+        )
+        expect(settingRow("Theme").textContent).not.toContain("Modified")
+        expect((settingControl("Animations") as HTMLInputElement).checked).toBe(false)
+    } finally {
+        await app.stop()
+    }
+})
+
+it("waits for a held Theme rejection before guarding close and retains its failed draft across categories and commands", async () => {
+    const storage = new MemoryStorageBackend()
+    const app = await setup(async (host) => {
+        await host.commands.execute("settings.theme", { value: "light" })
+    }, storage)
+    const set = storage.set.bind(storage)
+    let release: (() => void) | undefined
+    try {
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        storage.set = async (key, value) => {
+            if (key.endsWith(":settings.theme")) {
+                await new Promise<void>((resolve) => {
+                    release = resolve
+                })
+                throw new Error("Theme write rejected")
+            }
+            await set(key, value)
+        }
+        editSetting("Theme", "1")
+        await vi.waitFor(() => expect(release).toBeDefined())
+        expect(settingControl("Theme").value).toBe("1")
+        expect(settingRow("Theme").textContent).toContain("Saving")
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]')!.click()
+        await settle()
+        expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+        release!()
+        await vi.waitFor(() =>
+            expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
+        )
+        button("Stay").click()
+        await settle()
+        expect(settingRow("Theme").textContent).toContain("Not saved")
+        expect(await app.host.settings.getValue("settings.theme")).toBe("light")
+        button("Reading").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect(settingControl("Theme").value).toBe("1")
+        expect(settingRow("Theme").textContent).toContain("Not saved")
+        storage.set = set
+        await app.host.commands.execute("settings.theme", { value: "system" })
+        await settle()
+        expect(settingControl("Theme").value).toBe("1")
+        expect(settingRow("Theme").textContent).toContain("Not saved")
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        button("Retry").click()
+        await vi.waitFor(() =>
+            expect(document.documentElement.classList.contains("dark")).toBe(true),
+        )
+        expect(await app.host.settings.getValue("settings.theme")).toBe("dark")
+        expect(settingRow("Theme").textContent).not.toContain("Not saved")
+        document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]')!.click()
+        await settle()
+        expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+    } finally {
+        release?.()
+        await app.stop()
+    }
+})
+
+it("retains the effective Theme and Modified indicator through a held failed reset, then retries only that preference", async () => {
+    const storage = new MemoryStorageBackend()
+    const app = await setup(async (host) => {
+        await host.commands.execute("settings.theme", { value: "dark" })
+        await host.commands.execute("settings.animations.toggle", { value: false })
+    }, storage)
+    const set = storage.set.bind(storage)
+    let release: (() => void) | undefined
+    try {
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        storage.set = async (key, value) => {
+            if (key.endsWith(":settings.theme")) {
+                await new Promise<void>((resolve) => {
+                    release = resolve
+                })
+                throw new Error("Theme reset rejected")
+            }
+            await set(key, value)
+        }
+        settingRow("Theme").querySelector<HTMLButtonElement>("button")!.click()
+        await vi.waitFor(() => expect(release).toBeDefined())
+        expect(settingControl("Theme").value).toBe("2")
+        expect(settingRow("Theme").textContent).toContain("Saving")
+        expect(settingRow("Theme").textContent).toContain("Modified")
+        expect(document.documentElement.classList.contains("dark")).toBe(true)
+        release!()
+        await vi.waitFor(() => expect(settingRow("Theme").textContent).toContain("Not saved"))
+        expect(settingRow("Theme").textContent).toContain("Modified")
+        expect(await app.host.settings.getValue("settings.theme")).toBe("dark")
+        expect(document.documentElement.classList.contains("dark")).toBe(true)
+        storage.set = set
+        button("Retry").click()
+        await vi.waitFor(() => expect(settingRow("Theme").textContent).not.toContain("Modified"))
+        expect(await app.host.settings.getValue("settings.theme")).toBe("system")
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        expect((settingControl("Animations") as HTMLInputElement).checked).toBe(false)
+        expect(await app.host.settings.getValue("settings.animations")).toBe(false)
+    } finally {
+        release?.()
+        await app.stop()
+    }
+})
+
+it("shows a Theme read failure without overwriting the saved choice and retries the read", async () => {
+    const storage = new MemoryStorageBackend()
+    const app = await setup(async (host) => {
+        await host.commands.execute("settings.theme", { value: "dark" })
+    }, storage)
+    const get = storage.get.bind(storage)
+    const writes: string[] = []
+    const set = storage.set.bind(storage)
+    try {
+        storage.get = async (key) => {
+            if (key.endsWith(":settings.theme")) throw new Error("Theme read unavailable")
+            return get(key)
+        }
+        storage.set = async (key, value) => {
+            writes.push(key)
+            await set(key, value)
+        }
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect(settingRow("Theme").textContent).toContain(m.settings_read_failed())
+        expect(settingRow("Theme").querySelector("select")).toBeNull()
+        expect(document.documentElement.classList.contains("dark")).toBe(true)
+        expect(writes.filter((key) => key.endsWith(":settings.theme"))).toEqual([])
+        storage.get = get
+        button("Retry").click()
+        await settle()
+        expect((settingControl("Theme") as HTMLSelectElement).selectedOptions[0]!.text).toBe("Dark")
+        expect(settingRow("Theme").textContent).not.toContain(m.settings_read_failed())
+        expect(await app.host.settings.getValue("settings.theme")).toBe("dark")
+        expect(writes.filter((key) => key.endsWith(":settings.theme"))).toEqual([])
+    } finally {
+        storage.get = get
+        await app.stop()
+    }
+})
+
+it("keeps the newest generated Theme choice while an earlier write completes", async () => {
+    const storage = new MemoryStorageBackend()
+    const app = await setup(async (host) => {
+        await host.commands.execute("settings.theme", { value: "light" })
+    }, storage)
+    const set = storage.set.bind(storage)
+    let release: (() => void) | undefined
+    try {
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        storage.set = async (key, value) => {
+            if (key.endsWith(":settings.theme") && !release)
+                await new Promise<void>((resolve) => {
+                    release = resolve
+                })
+            await set(key, value)
+        }
+        editSetting("Theme", "1")
+        await vi.waitFor(() => expect(release).toBeDefined())
+        editSetting("Theme", "2")
+        await settle()
+        expect(settingControl("Theme").value).toBe("2")
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        release!()
+        await vi.waitFor(async () =>
+            expect(await app.host.settings.getValue("settings.theme")).toBe("system"),
+        )
+        await settle()
+        expect(settingControl("Theme").value).toBe("2")
+        expect(settingRow("Theme").textContent).not.toContain("Saving")
+        expect(settingRow("Theme").textContent).not.toContain("Not saved")
+        expect(document.documentElement.classList.contains("dark")).toBe(false)
+        document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]')!.click()
+        await settle()
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+    } finally {
+        release?.()
+        await app.stop()
+    }
+})
+
+it("applies generated Animations edits to application motion and restores the acknowledged checkbox", async () => {
+    const storage = new MemoryStorageBackend()
+    let app = await setup(undefined, storage)
+    try {
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        editSetting("Animations", false)
+        await vi.waitFor(() => expect(document.documentElement.dataset.motion).toBe("off"))
+        expect(await app.host.settings.getValue("settings.animations")).toBe(false)
+        await app.stop()
+        app = await setup(undefined, storage)
+        button("Settings").click()
+        await settle()
+        button("Appearance").click()
+        await settle()
+        expect((settingControl("Animations") as HTMLInputElement).checked).toBe(false)
+        expect(document.documentElement.dataset.motion).toBe("off")
+        await app.host.commands.execute("settings.animations.toggle")
+        await settle()
+        expect((settingControl("Animations") as HTMLInputElement).checked).toBe(true)
+        expect(document.documentElement.dataset.motion).toBe("on")
+    } finally {
+        await app.stop()
+    }
+})
+
+it("updates real Library titles from the generated PDF title preference and restores it after recreation", async () => {
+    const storage = new MemoryStorageBackend()
+    const libraryStorage = createExtensionStorage(storage, "builtin.library").namespace("library")
+    await libraryStorage.set("books.title", {
+        id: "title",
+        name: "filename.pdf",
+        type: "file",
+        parentId: null,
+        createdAt: 1,
+        updatedAt: 1,
+        isPinned: false,
+        size: 1,
+        metadata: { pdfTitle: "Embedded title", author: "Author", totalPages: 1 },
+    })
+    let app = await setup(undefined, storage)
+    const mountLibrary = () => {
+        const View = app.host.contributions
+            .listViews("workbench.panel")
+            .find((view) => view.id === "library.page")!.component as Component
+        return mount(View, { target: document.querySelector("main")! })
+    }
+    let library = mountLibrary()
+    try {
+        await vi.waitFor(() =>
+            expect(document.querySelector("main")!.textContent).toContain("Embedded title"),
+        )
+        button("Settings").click()
+        await settle()
+        button("Library").click()
+        await settle()
+        editSetting("Prefer embedded PDF titles", false)
+        await vi.waitFor(() => {
+            expect(document.querySelector("main")!.textContent).toContain("filename.pdf")
+            expect(document.querySelector("main")!.textContent).not.toContain("Embedded title")
+        })
+        expect(await app.host.settings.getValue("settings.prefer-pdf-title")).toBe(false)
+        await unmount(library)
+        await app.stop()
+        app = await setup(undefined, storage)
+        library = mountLibrary()
+        await vi.waitFor(() =>
+            expect(document.querySelector("main")!.textContent).toContain("filename.pdf"),
+        )
+        await app.host.commands.execute("settings.open")
+        await settle()
+        button("Library").click()
+        await settle()
+        expect((settingControl("Prefer embedded PDF titles") as HTMLInputElement).checked).toBe(
+            false,
+        )
+        await app.host.commands.execute("settings.pdf-title.toggle")
+        await vi.waitFor(() =>
+            expect(document.querySelector("main")!.textContent).toContain("Embedded title"),
+        )
+        expect((settingControl("Prefer embedded PDF titles") as HTMLInputElement).checked).toBe(
+            true,
+        )
+    } finally {
+        await unmount(library)
+        await app.stop()
+    }
+})
+
+it.each([
+    ["Default page layout", "settings.layout", "0", "single", "settings.layout", "split", "1"],
+    ["Default zoom", "settings.scale", "2.25", 2.25, "settings.zoom.in", 1.75, "1.75"],
+    ["Render quality", "settings.quality", "4", 4, "settings.quality.out", 2, "2"],
+] as const)(
+    "durably restores the generated %s edit and synchronizes its existing command",
+    async (label, id, input, saved, command, commandValue, expectedInput) => {
+        const storage = new MemoryStorageBackend()
+        let app = await setup(undefined, storage)
+        try {
+            button("Settings").click()
+            await settle()
+            button("Reading").click()
+            await settle()
+            editSetting(label, input)
+            await vi.waitFor(async () => expect(await app.host.settings.getValue(id)).toBe(saved))
+            await app.stop()
+            app = await setup(undefined, storage)
+            await app.host.commands.execute("settings.open")
+            await settle()
+            button("Reading").click()
+            await settle()
+            expect(settingControl(label).value).toBe(input)
+            expect(settingRow(label).textContent).toContain("Modified")
+            await app.host.commands.execute(command, { value: commandValue })
+            await settle()
+            expect(settingControl(label).value).toBe(expectedInput)
+            expect(await app.host.settings.getValue(id)).toBe(commandValue)
+        } finally {
+            await app.stop()
+        }
+    },
+)
+
 it("defers language navigation through pending writes, Stay, and a later accepted dismissal", async () => {
     const storage = new MemoryStorageBackend()
     const app = await setup(undefined, storage)

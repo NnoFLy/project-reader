@@ -24,7 +24,10 @@ import ViewerPage from "$lib/extensions/builtin/viewer/ViewerPage.svelte"
 import { ReadingStorage } from "$lib/extensions/builtin/viewer/readingStorage"
 import { commandsStore, useCommands } from "$lib/core/commands"
 import { createViewerSettingsCommands } from "$lib/extensions/builtin/viewer/commands/viewerSettingsCommands"
-import { mount, unmount, type Component } from "svelte"
+import { createRawSnippet, mount, unmount, type Component } from "svelte"
+import { ApplicationImpl } from "$lib/core/app/application"
+import AppChrome from "$lib/app/AppChrome.svelte"
+import { APP_HOST_CONTEXT } from "$lib/app/hostContext"
 import { goto } from "$app/navigation"
 import type { ViewerPagedDocument } from "$lib/extensions/builtin/viewer/viewerDocument"
 import * as m from "$lib/paraglide/messages"
@@ -45,6 +48,7 @@ const media = vi.hoisted(() => {
 
 vi.mock("$app/state", () => ({
     page: { url: new URL("http://localhost:3000/viewer?display=1#position") },
+    updated: { current: false },
 }))
 
 vi.mock("$app/navigation", async (importOriginal) => ({
@@ -52,7 +56,60 @@ vi.mock("$app/navigation", async (importOriginal) => ({
     pushState: vi.fn(),
     goto: vi.fn(async () => undefined),
     replaceState: vi.fn(),
+    afterNavigate: vi.fn(),
 }))
+
+async function mountAppSettings(host: ReturnType<typeof createBuiltinHost>) {
+    const animate = Object.getOwnPropertyDescriptor(Element.prototype, "animate")
+    Element.prototype.animate = vi.fn(() => ({
+        cancel() {},
+        pause() {},
+        play() {},
+        finished: Promise.resolve(),
+        set onfinish(callback: (() => void) | null) {
+            if (callback) queueMicrotask(callback)
+        },
+        effect: { getComputedTiming: () => ({ progress: 1 }) },
+    })) as unknown as typeof Element.prototype.animate
+    const application = new ApplicationImpl(host)
+    await application.start()
+    const target = document.createElement("div")
+    document.body.append(target)
+    const component = mount(AppChrome, {
+        target,
+        context: new Map([
+            [
+                APP_HOST_CONTEXT,
+                {
+                    application,
+                    ready: true,
+                    services: { executeCommand: host.commands.execute },
+                },
+            ],
+        ]),
+        props: { children: createRawSnippet(() => ({ render: () => "<main>Reader</main>" })) },
+    })
+    return async () => {
+        await unmount(component)
+        target.remove()
+        if (animate) Object.defineProperty(Element.prototype, "animate", animate)
+        else Reflect.deleteProperty(Element.prototype, "animate")
+    }
+}
+const settingsButton = (name: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+        (node) => node.textContent?.trim() === name,
+    )!
+const settingsRow = (name: string) =>
+    document.querySelector<HTMLElement>(`article[aria-label="${name}"]`)!
+const settingsControl = (name: string) =>
+    settingsRow(name).querySelector<HTMLInputElement | HTMLSelectElement>("input, select")!
+function editReadingSetting(name: string, value: string) {
+    const control = settingsControl(name)
+    control.value = value
+    control.dispatchEvent(new Event("input", { bubbles: true }))
+    control.dispatchEvent(new Event("change", { bubbles: true }))
+}
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -142,7 +199,7 @@ describe("Reading workspace host lifetime", () => {
         }
     })
 
-    it("presents and renders the owning application's quality while another host is installed", async () => {
+    it("keeps rendering quality owned and applies generated quality edits across new and existing sessions", async () => {
         vi.stubGlobal("Blob", NodeBlob)
         vi.stubGlobal("URL", NodeURL)
         const firstStorage = new MemoryStorageBackend()
@@ -157,27 +214,30 @@ describe("Reading workspace host lifetime", () => {
             await defaults.set("settings.animations", false)
         }
         const library = createExtensionStorage(firstStorage, "builtin.library").namespace("library")
-        await library.set("books.book", {
-            id: "book",
-            name: "book.fake",
-            type: "file",
-            parentId: null,
-            createdAt: 1,
-            updatedAt: 1,
-            isPinned: false,
-            metadata: { author: null, totalPages: 1 },
-            size: 1,
-        })
-        await library.set("fileContents.book", { id: "book", file: new Blob(["a"]) })
+        for (const id of ["book", "other"]) {
+            await library.set(`books.${id}`, {
+                id,
+                name: `${id}.fake`,
+                type: "file",
+                parentId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                isPinned: false,
+                metadata: { author: null, totalPages: 1 },
+                size: 1,
+            })
+            await library.set(`fileContents.${id}`, { id, file: new Blob([id]) })
+        }
         const first = createBuiltinHost({ storage: firstStorage })
         const second = createBuiltinHost({ storage: secondStorage })
         const renderedQualities: number[] = []
+        const renderedDocuments: { name: string; quality: number }[] = []
         first.documentService.adapters.register({
             id: "integration.quality",
             extensions: ["fake"],
             mimeTypes: [],
             probe: async () => ({ supported: true }),
-            open: async () => ({
+            open: async (source) => ({
                 kind: "paged",
                 metadata: { title: "Quality", author: null },
                 capabilities: new Set(),
@@ -185,6 +245,7 @@ describe("Reading workspace host lifetime", () => {
                 getPage: async (pageNumber) => ({ pageNumber, width: 600, height: 800 }),
                 renderPage: async (pageNumber, options) => {
                     renderedQualities.push(options?.quality ?? -1)
+                    renderedDocuments.push({ name: source.name, quality: options?.quality ?? -1 })
                     return {
                         pageNumber,
                         width: 600,
@@ -203,8 +264,9 @@ describe("Reading workspace host lifetime", () => {
             await first.start()
             const store = viewerStore
             await store.workspace.open("book")
-            const pdf = await store.workspace.loadDocument()
-            if (pdf?.kind !== "paged") throw new Error("Expected a paged reader")
+            const loaded = await store.workspace.loadDocument()
+            if (loaded?.kind !== "paged") throw new Error("Expected a paged reader")
+            let pdf: ViewerPagedDocument = loaded
             await second.start()
             const view = first.contributions
                 .forExtension("builtin.viewer")
@@ -263,6 +325,36 @@ describe("Reading workspace host lifetime", () => {
                     "settings.quality",
                 ),
             ).toBe(3)
+            const stopChrome = await mountAppSettings(first)
+            try {
+                await first.commands.execute("settings.open")
+                await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
+                settingsButton(m.settings_reading()).click()
+                await vi.waitFor(() => expect(settingsControl(m.quality()).value).toBe("2"))
+                editReadingSetting(m.quality(), "4")
+                await vi.waitFor(() =>
+                    expect(renderedDocuments.at(-1)).toEqual({ name: "book.fake", quality: 4 }),
+                )
+                for (const id of ["other", "book"]) {
+                    await unmount(reader)
+                    reader = undefined
+                    await store.workspace.open(id)
+                    const next = await store.workspace.loadDocument()
+                    if (next?.kind !== "paged") throw new Error("Expected a paged reader")
+                    pdf = next
+                    reader = mount(ReaderSettings, { target })
+                    await vi.waitFor(() =>
+                        expect(renderedDocuments.at(-1)).toEqual({
+                            name: `${id}.fake`,
+                            quality: 4,
+                        }),
+                    )
+                    expect(settingsControl(m.quality()).value).toBe("4")
+                    expect(await first.settings.getValue("settings.quality")).toBe(4)
+                }
+            } finally {
+                await stopChrome()
+            }
             await store.workspace.flush()
             const reading = new ReadingStorage(
                 createExtensionStorage(firstStorage, "builtin.viewer").namespace("viewer"),
@@ -277,12 +369,12 @@ describe("Reading workspace host lifetime", () => {
         }
     })
 
-    it("routes SettingsSidebar controls to their owner while another reader has global command scope and reconstructs preferences", async () => {
+    it("keeps reader controls owned and isolates generated default edits and resets from existing and restored sessions", async () => {
         vi.stubGlobal("Blob", NodeBlob)
         vi.stubGlobal("URL", NodeURL)
         const storage = new MemoryStorageBackend()
         const library = createExtensionStorage(storage, "builtin.library").namespace("library")
-        for (const id of ["a", "b"]) {
+        for (const id of ["a", "b", "c"]) {
             await library.set(`books.${id}`, {
                 id,
                 name: `${id}.fake`,
@@ -299,9 +391,11 @@ describe("Reading workspace host lifetime", () => {
         const defaults = createExtensionStorage(storage, "builtin.settings")
         await defaults.set("settings.scale", 1.25)
         await defaults.set("settings.layout", "scroll")
+        await defaults.set("settings.language", "en")
         const first = createBuiltinHost({ storage })
         await first.start()
         const store = viewerStore
+        let stopChrome: (() => Promise<void>) | undefined
         try {
             await store.workspace.open("a")
             expect(store.currentPage).toBe(1)
@@ -437,23 +531,64 @@ describe("Reading workspace host lifetime", () => {
                 target.remove()
             }
             store.goToPage(7, { scrollPosition: 0.3 })
-            await first.settings.setValue("settings.scale", 2.25)
-            await first.settings.setValue("settings.layout", "single")
-            expect(store.scale).toBe(2)
-            expect(store.layout).toBe("split")
+            stopChrome = await mountAppSettings(first)
+            await first.commands.execute("settings.open")
+            await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
+            settingsButton(m.settings_reading()).click()
+            await vi.waitFor(() =>
+                expect(settingsControl(m.settings_scale_label()).value).toBe("1.25"),
+            )
+            editReadingSetting(m.settings_scale_label(), "2.25")
+            editReadingSetting(m.settings_layout_label(), "0")
+            editReadingSetting(m.quality(), "4")
+            await vi.waitFor(async () => {
+                expect(await first.settings.getValue("settings.scale")).toBe(2.25)
+                expect(await first.settings.getValue("settings.layout")).toBe("single")
+                expect(await first.settings.getValue("settings.quality")).toBe(4)
+            })
+            expect(store.workspace.snapshot.state).toMatchObject({
+                scale: 2,
+                layout: "split",
+                pageNumber: 7,
+                scrollPosition: 0.3,
+            })
             await store.workspace.open("b")
             expect(store.scale).toBe(2.25)
             expect(store.layout).toBe("single")
-            expect(await first.settings.getValue("settings.scale")).toBe(2.25)
-            expect(await first.settings.getValue("settings.layout")).toBe("single")
             await first.commands.execute("settings.zoom.out", { value: 0.75 })
             await first.commands.execute("settings.layout", { value: "single" })
+            settingsRow(m.settings_scale_label())
+                .querySelector<HTMLButtonElement>("button")!
+                .click()
+            settingsRow(m.settings_layout_label())
+                .querySelector<HTMLButtonElement>("button")!
+                .click()
+            await vi.waitFor(async () => {
+                expect(await first.settings.getValue("settings.scale")).toBe(1.5)
+                expect(await first.settings.getValue("settings.layout")).toBe("scroll")
+            })
+            expect(store.scale).toBe(0.75)
+            expect(store.layout).toBe("single")
+            expect(await first.settings.getValue("settings.quality")).toBe(4)
+            await store.workspace.open("c")
+            expect(store.scale).toBe(1.5)
+            expect(store.layout).toBe("scroll")
+            await store.workspace.open("a")
+            expect(store.workspace.snapshot.state).toMatchObject({
+                scale: 2,
+                layout: "split",
+                pageNumber: 7,
+                scrollPosition: 0.3,
+            })
+            await store.workspace.open("b")
             await store.workspace.flush()
         } finally {
+            await stopChrome?.()
             await first.dispose()
         }
         const second = createBuiltinHost({ storage })
         await second.start()
+        stopChrome = undefined
         try {
             const restored = viewerStore
             expect(restored.workspace.snapshot).toMatchObject({
@@ -465,7 +600,31 @@ describe("Reading workspace host lifetime", () => {
                 documentId: "a",
                 state: { scale: 2, layout: "split", pageNumber: 7, scrollPosition: 0.3 },
             })
+            await restored.workspace.open("c")
+            expect(restored.workspace.snapshot.state).toMatchObject({
+                scale: 1.5,
+                layout: "scroll",
+            })
+            stopChrome = await mountAppSettings(second)
+            await second.commands.execute("settings.open")
+            await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
+            settingsButton(m.settings_reading()).click()
+            await vi.waitFor(() =>
+                expect(settingsControl(m.settings_scale_label()).value).toBe("1.5"),
+            )
+            expect(
+                (settingsControl(m.settings_layout_label()) as HTMLSelectElement)
+                    .selectedOptions[0]!.text,
+            ).toBe(m.scroll_pages())
+            expect(settingsControl(m.quality()).value).toBe("4")
+            expect(settingsRow(m.settings_scale_label()).textContent).not.toContain(
+                m.settings_modified(),
+            )
+            expect(settingsRow(m.settings_layout_label()).textContent).not.toContain(
+                m.settings_modified(),
+            )
         } finally {
+            await stopChrome?.()
             await second.dispose()
         }
     })
