@@ -302,58 +302,201 @@ describe("Reading provider recovery through the real host", () => {
         },
     )
 
-    it("retains a newer edit conflicting with a terminal promotion without automatic overwrite", async () => {
-        const { host, backend } = await application()
-        let release!: () => void
-        const pending = new Promise<void>((resolve) => {
-            release = resolve
-        })
-        let entered!: () => void
-        const writing = new Promise<void>((resolve) => {
-            entered = resolve
-        })
-        try {
-            const old = viewerStore.workspace
-            await old.open("a")
-            const draft = await old.createDraft("a", input)
-            if (!draft.ok) throw new Error("Expected draft")
-            const set = backend.set.bind(backend)
-            backend.set = async (key, value) => {
-                if (key.includes("reading-v1-annotations")) {
-                    entered()
-                    await pending
+    it.each([false, true])(
+        "retains discard intent across a pending promotion (newer edit=%s)",
+        async (newerEdit) => {
+            for (const succeeds of [false, true]) {
+                const { host, backend } = await application()
+                let release!: () => void
+                const pending = new Promise<void>((resolve) => {
+                    release = resolve
+                })
+                let entered!: () => void
+                const writing = new Promise<void>((resolve) => {
+                    entered = resolve
+                })
+                try {
+                    const old = viewerStore.workspace
+                    await old.open("a")
+                    const draft = await old.createDraft("a", input)
+                    const kept = await old.createNote("a", { ...input, noteContent: "keep saved" })
+                    if (!draft.ok || !kept.ok) throw new Error("Expected annotations")
+                    const set = backend.set.bind(backend)
+                    backend.set = async (key, value) => {
+                        if (key.includes("reading-v1-annotations")) {
+                            entered()
+                            await pending
+                            if (!succeeds) throw new Error("private promotion error")
+                        }
+                        await set(key, value)
+                    }
+                    const saving = old.saveDraft("a", draft.value.id)
+                    await writing
+                    const editing = newerEdit
+                        ? old.updateDraft("a", draft.value.id, {
+                              noteContent: "newer abandoned edit",
+                              color: "pink",
+                          })
+                        : Promise.resolve()
+                    const discarding = old.discardDraft("a", draft.value.id)
+                    expect(old.annotations("a").drafts).toHaveLength(0)
+                    await host.disable("builtin.viewer")
+                    const obsolete = old.annotations("a")
+                    release()
+                    expect((await saving).ok).toBe(false)
+                    await Promise.all([editing, discarding])
+                    expect(old.annotations("a")).toBe(obsolete)
+                    backend.set = set
+                    await host.enable("builtin.viewer")
+                    await host.activate("builtin.viewer")
+                    const recovered = viewerStore.workspace
+                    expect(recovered).not.toBe(old)
+                    expect(await recovered.retry()).toBe(true)
+                    await recovered.flush()
+                    expect(recovered.annotations("a").drafts).toHaveLength(0)
+                    expect(recovered.annotations("a").notes).toEqual([kept.value])
+                    const durable = new ReadingStorage(
+                        createExtensionStorage(backend, "builtin.viewer").namespace("viewer"),
+                    )
+                    expect((await durable.readAnnotations("a")).notes).toEqual([kept.value])
+                    expect((await durable.readAnnotations("a")).drafts).toHaveLength(0)
+                    expect((await old.discardDraft("a", draft.value.id)).ok).toBe(false)
+                    expect(recovered.annotations("a").notes).toEqual([kept.value])
+                } finally {
+                    release()
+                    await host.dispose()
                 }
-                await set(key, value)
             }
-            const saving = old.saveDraft("a", draft.value.id)
-            await writing
-            const editing = old.updateDraft("a", draft.value.id, {
-                noteContent: "newer retained edit",
-                color: "pink",
+        },
+    )
+
+    it.each(["save", "discard", "discard-read-failure", "discard-replaced"])(
+        "resolves a recovered promotion conflict by explicit %s",
+        async (resolution) => {
+            const { host, backend } = await application()
+            let release!: () => void
+            const pending = new Promise<void>((resolve) => {
+                release = resolve
             })
-            await host.disable("builtin.viewer")
-            release()
-            await Promise.all([saving, editing])
-            backend.set = set
-            await host.enable("builtin.viewer")
-            await host.activate("builtin.viewer")
-            const recovered = viewerStore.workspace
-            expect(recovered.annotations("a").drafts[0]?.noteContent).toBe("newer retained edit")
-            expect(await recovered.retry()).toBe(false)
-            expect((await recovered.persistDrafts("a")).ok).toBe(false)
-            const durable = new ReadingStorage(
-                createExtensionStorage(backend, "builtin.viewer").namespace("viewer"),
-            )
-            expect((await durable.readAnnotations("a")).notes[0]?.noteContent).toBe("unfinished")
-            expect((await recovered.saveDraft("a", draft.value.id)).ok).toBe(true)
-            expect(await recovered.retry()).toBe(true)
-            expect(recovered.annotations("a").drafts).toHaveLength(0)
-            expect(recovered.annotations("a").notes[0]?.noteContent).toBe("newer retained edit")
-        } finally {
-            release()
-            await host.dispose()
-        }
-    })
+            let entered!: () => void
+            const writing = new Promise<void>((resolve) => {
+                entered = resolve
+            })
+            try {
+                const old = viewerStore.workspace
+                await old.open("a")
+                const draft = await old.createDraft("a", input)
+                if (!draft.ok) throw new Error("Expected draft")
+                const set = backend.set.bind(backend)
+                backend.set = async (key, value) => {
+                    if (key.includes("reading-v1-annotations")) {
+                        entered()
+                        await pending
+                    }
+                    await set(key, value)
+                }
+                const saving = old.saveDraft("a", draft.value.id)
+                await writing
+                const editing = old.updateDraft("a", draft.value.id, {
+                    noteContent: "newer retained edit",
+                    color: "pink",
+                })
+                await host.disable("builtin.viewer")
+                release()
+                await Promise.all([saving, editing])
+                backend.set = set
+                await host.enable("builtin.viewer")
+                await host.activate("builtin.viewer")
+                let recovered = viewerStore.workspace
+                expect(recovered.annotations("a").drafts[0]?.noteContent).toBe(
+                    "newer retained edit",
+                )
+                expect(await recovered.retry()).toBe(false)
+                expect((await recovered.persistDrafts("a")).ok).toBe(false)
+                const durable = new ReadingStorage(
+                    createExtensionStorage(backend, "builtin.viewer").namespace("viewer"),
+                )
+                expect((await durable.readAnnotations("a")).notes[0]?.noteContent).toBe(
+                    "unfinished",
+                )
+                if (resolution === "discard-read-failure") {
+                    const get = backend.get.bind(backend)
+                    backend.get = async (key) => {
+                        if (key.includes("reading-v1-annotations"))
+                            throw new Error("private resolution read error")
+                        return get(key)
+                    }
+                    expect((await recovered.discardDraft("a", draft.value.id)).ok).toBe(false)
+                    expect(recovered.annotations("a").drafts).toHaveLength(0)
+                    expect(recovered.annotations("a").dirty).toBe(true)
+                    expect(await recovered.retry()).toBe(false)
+                    expect((await recovered.persistDrafts("a")).ok).toBe(false)
+                    backend.get = get
+                } else if (resolution === "discard-replaced") {
+                    const get = backend.get.bind(backend)
+                    let inspected!: () => void
+                    const inspecting = new Promise<void>((resolve) => {
+                        inspected = resolve
+                    })
+                    let finish!: () => void
+                    const inspection = new Promise<void>((resolve) => {
+                        finish = resolve
+                    })
+                    backend.get = async (key) => {
+                        if (key.includes("reading-v1-annotations")) {
+                            inspected()
+                            await inspection
+                        }
+                        return get(key)
+                    }
+                    const discarding = recovered.discardDraft("a", draft.value.id)
+                    try {
+                        await inspecting
+                        await host.disable("builtin.viewer")
+                        const obsolete = recovered
+                        const snapshot = obsolete.annotations("a")
+                        await expect(host.enable("builtin.viewer")).rejects.toMatchObject({
+                            code: "extension.recovery-blocked",
+                        })
+                        backend.get = get
+                        finish()
+                        expect((await discarding).ok).toBe(false)
+                        expect(obsolete.annotations("a")).toBe(snapshot)
+                        await host.enable("builtin.viewer")
+                        await host.activate("builtin.viewer")
+                        recovered = viewerStore.workspace
+                        expect(recovered).not.toBe(obsolete)
+                        expect(await recovered.open("b")).toBe(true)
+                        expect((await obsolete.discardDraft("a", draft.value.id)).ok).toBe(false)
+                        expect(recovered.snapshot.documentId).toBe("b")
+                        expect(recovered.annotations("a").notes[0]?.noteContent).toBe("unfinished")
+                        expect(await recovered.open("a")).toBe(true)
+                    } finally {
+                        finish()
+                        backend.get = get
+                    }
+                } else {
+                    const resolved =
+                        resolution === "save"
+                            ? await recovered.saveDraft("a", draft.value.id)
+                            : await recovered.discardDraft("a", draft.value.id)
+                    expect(resolved.ok).toBe(true)
+                }
+                expect(await recovered.retry()).toBe(true)
+                await recovered.flush()
+                expect(recovered.annotations("a").drafts).toHaveLength(0)
+                const savedContent = resolution === "save" ? "newer retained edit" : "unfinished"
+                expect(recovered.annotations("a").notes[0]?.noteContent).toBe(savedContent)
+                expect((await durable.readAnnotations("a")).notes[0]?.noteContent).toBe(
+                    savedContent,
+                )
+                expect((await durable.readAnnotations("a")).drafts).toHaveLength(0)
+            } finally {
+                release()
+                await host.dispose()
+            }
+        },
+    )
 
     it("retains pending A to B intent across Viewer restart, not the last published A", async () => {
         const { host, backend } = await application()

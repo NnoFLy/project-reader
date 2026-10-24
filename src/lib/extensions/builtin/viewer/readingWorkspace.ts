@@ -79,6 +79,8 @@ export interface ReadingRecoveryRecord {
     readonly promotions: readonly {
         readonly documentId: string
         readonly drafts: readonly ReadingDraft[]
+        /** Discards accepted while the originating physical promotion was pending. */
+        readonly discardedDraftIds: readonly string[]
     }[]
     readonly states: readonly {
         readonly documentId: string
@@ -104,6 +106,12 @@ export interface ReadingWorkspaceOptions {
     readonly getCurrentBook: () => Book | null
     /** Synchronous, atomic publication: false or a throw rejects ownership transfer. */
     readonly publish: (book: Book | null) => boolean | void
+}
+
+interface PendingDraftPromotion {
+    readonly drafts: readonly ReadingDraft[]
+    readonly discardedDraftIds: Set<string>
+    readonly recovering: boolean
 }
 
 /** Viewer-owned single-reader behavior; core owns acquisition and resource correctness. */
@@ -136,7 +144,7 @@ export class ReadingWorkspace {
     private readonly closeTokens = new WeakSet<ReadingCloseToken>()
     private readonly draftLoads = new Map<string, Promise<boolean>>()
     private readonly invalidAnnotations = new Set<string>()
-    private readonly pendingPromotions = new Map<string, readonly ReadingDraft[]>()
+    private readonly pendingPromotions = new Map<string, PendingDraftPromotion>()
     private readonly recoveryConflicts = new Set<string>()
     private recoveryReconciliation?: Promise<boolean>
 
@@ -171,9 +179,24 @@ export class ReadingWorkspace {
                 ? [Object.freeze({ documentId, records, dirty: snapshot.dirty })]
                 : []
         })
-        const promotions = [...this.pendingPromotions].flatMap(([documentId, drafts]) => {
-            const records = readAnnotations({ notes: [], bookmarks: [], drafts }, documentId)
-            return records ? [Object.freeze({ documentId, drafts: records.drafts })] : []
+        const promotions = [...this.pendingPromotions].flatMap(([documentId, promotion]) => {
+            const records = readAnnotations(
+                { notes: [], bookmarks: [], drafts: promotion.drafts },
+                documentId,
+            )
+            return records
+                ? [
+                      Object.freeze({
+                          documentId,
+                          drafts: records.drafts,
+                          discardedDraftIds: Object.freeze(
+                              records.drafts
+                                  .filter((draft) => promotion.discardedDraftIds.has(draft.id))
+                                  .map((draft) => draft.id),
+                          ),
+                      }),
+                  ]
+                : []
         })
         return Object.freeze({
             documentId: this.intendedId,
@@ -200,7 +223,19 @@ export class ReadingWorkspace {
                 item.documentId,
             )
             if (isDocumentId(item.documentId) && records)
-                this.pendingPromotions.set(item.documentId, records.drafts)
+                this.pendingPromotions.set(item.documentId, {
+                    drafts: records.drafts,
+                    discardedDraftIds: new Set(
+                        Array.isArray(item.discardedDraftIds)
+                            ? item.discardedDraftIds.filter(
+                                  (id) =>
+                                      isAnnotationId(id) &&
+                                      records.drafts.some((draft) => draft.id === id),
+                              )
+                            : [],
+                    ),
+                    recovering: true,
+                })
         }
         this.revision++
         this.intendedId = isDocumentId(record.documentId) ? record.documentId : null
@@ -215,23 +250,29 @@ export class ReadingWorkspace {
 
     private async reconcileRecovery(): Promise<boolean> {
         if (!this.storage) return false
-        for (const [documentId, drafts] of this.pendingPromotions) {
+        for (const [documentId, promotion] of this.pendingPromotions) {
+            if (!promotion.recovering) continue
             const snapshot = this.annotations(documentId)
             if (!snapshot.dirty) {
                 this.pendingPromotions.delete(documentId)
+                this.recoveryConflicts.delete(documentId)
                 continue
             }
             try {
                 const durable = await this.storage.readAnnotations(documentId)
                 if (this.disposed) return false
+                if (this.pendingPromotions.get(documentId) !== promotion) continue
                 let records: ReadingRecords = this.annotations(documentId)
-                for (const draft of drafts) {
+                let conflict = false
+                for (const draft of promotion.drafts) {
+                    // A discard accepted during the physical Save supersedes that promotion.
+                    if (promotion.discardedDraftIds.has(draft.id)) continue
                     const saved = durable.notes.find((note) => note.id === draft.id)
                     if (!saved || JSON.stringify(saved) !== JSON.stringify(draft)) continue
                     const latest = records.drafts.find((item) => item.id === draft.id)
                     // Never silently overwrite a terminal promotion with edits accepted later.
                     if (latest && JSON.stringify(latest) !== JSON.stringify(draft)) {
-                        this.recoveryConflicts.add(documentId)
+                        conflict = true
                         continue
                     }
                     records = freezeAnnotations(
@@ -240,15 +281,16 @@ export class ReadingWorkspace {
                         records.drafts.filter((item) => item.id !== draft.id),
                     )
                 }
+                if (conflict) this.recoveryConflicts.add(documentId)
+                else this.recoveryConflicts.delete(documentId)
                 this.publishAnnotations(
                     documentId,
                     records,
                     true,
                     true,
-                    this.recoveryConflicts.has(documentId) ? "reading.storage.write" : null,
+                    conflict ? "reading.storage.write" : null,
                 )
-                if (!this.recoveryConflicts.has(documentId))
-                    this.pendingPromotions.delete(documentId)
+                if (!conflict) this.pendingPromotions.delete(documentId)
             } catch {
                 // Retain the handoff until a later explicit retry can inspect terminal storage.
                 return false
@@ -453,12 +495,28 @@ export class ReadingWorkspace {
         if (this.disposed || !owns())
             return { ok: false, error: new ReadingStorageError("reading.storage.write") }
         const current = this.annotations(documentId)
+        const promotion = this.pendingPromotions.get(documentId)
+        if (!promotion?.recovering && promotion?.drafts.some((draft) => draft.id === draftId))
+            promotion.discardedDraftIds.add(draftId)
         const state = freezeAnnotations(
             current.notes,
             current.bookmarks,
             current.drafts.filter((draft) => draft.id !== draftId),
         )
         this.publishAnnotations(documentId, state, true, true)
+        if (promotion?.recovering) {
+            // Discard only the recovered unsaved edit, not the terminally saved note.
+            // Wait for any earlier inspection before resolving against terminal storage.
+            const previous = this.recoveryReconciliation
+            this.recoveryReconciliation = (async () => {
+                await previous
+                if (this.disposed || !owns()) return false
+                return this.reconcileRecovery()
+            })()
+            await this.recoveryReconciliation
+            if (this.disposed || !owns() || this.pendingPromotions.has(documentId))
+                return { ok: false, error: new ReadingStorageError("reading.storage.write") }
+        }
         return this.persistAnnotations(documentId, undefined, owns)
     }
 
@@ -516,7 +574,11 @@ export class ReadingWorkspace {
             try {
                 if (!this.storage) throw new ReadingStorageError("reading.storage.write")
                 // Atomic replacement: no separate cleanup write can duplicate a saved note.
-                this.pendingPromotions.set(documentId, drafts)
+                this.pendingPromotions.set(documentId, {
+                    drafts,
+                    discardedDraftIds: new Set(),
+                    recovering: false,
+                })
                 await this.storage.writeAnnotations(documentId, state)
                 if (!owns()) return
                 this.pendingPromotions.delete(documentId)
