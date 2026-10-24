@@ -305,6 +305,78 @@ describe("Reading workspace browser persistence", () => {
         90000,
     )
 
+    it("retains newer Reading recovery position over current history and still restores back and forward jumps", async () => {
+        const page = await browser!.page()
+        try {
+            await page.call("Page.navigate", { url: `${origin}/en` })
+            await bind(page)
+            const id = await page.evaluate(`(async () => {
+                const [result] = await window.library.importFiles([{name:'history-recovery.pdf', source:new File([${JSON.stringify(pdf)}], 'history-recovery.pdf', {type:'application/pdf'})}], null);
+                return result.id;
+            })()`)
+            await mountProviderRoute(page)
+            await page.evaluate(`window.reader.workspace.open(${JSON.stringify(id)})`)
+            await page.waitFor("window.reader.activeTotalPages === 8")
+            await page.evaluate(`(async () => {
+                await window.command('settings.layout', {value:'single'});
+                window.reader.goToPage(3, {scrollPosition:0.2});
+                window.historyPage = (await import('/node_modules/@sveltejs/kit/src/runtime/app/state/index.js')).page;
+            })()`)
+            // Wait for the real debounced history write, then retire Viewer before the
+            // newer position can replace that entry. No synthetic store/history mocks.
+            await page.waitFor("window.historyPage.state.scrollPosition === 0.2")
+            await page.evaluate(`(async () => {
+                const {pushState} = await import('/node_modules/@sveltejs/kit/src/runtime/app/navigation.js');
+                pushState('', {...window.historyPage.state});
+                window.reader.workspace.setPosition(3, 0.25);
+                await window.host.disable('builtin.viewer');
+                await window.host.enable('builtin.viewer');
+                await window.host.activate('builtin.viewer');
+            })()`)
+            await page.evaluate(bindings)
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                documentId: id,
+                status: "provider-unavailable",
+                state: { pageNumber: 3, scrollPosition: 0.25 },
+            })
+            expect(await page.evaluate("window.historyPage.state.scrollPosition")).toBe(0.2)
+            await nativeRetry(
+                page,
+                '[data-reading-state="provider-unavailable"] .reading-access-actions button',
+            )
+            await page.waitFor(
+                "window.reader.activeTotalPages === 8 && !!document.querySelector('.fullscreen-viewer')",
+            )
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                documentId: id,
+                status: "ready",
+                state: { pageNumber: 3, scrollPosition: 0.25 },
+            })
+            // This distinct entry has the same values as the ignored recovery entry:
+            // it is now an intentional traversal, not a replay caused by replacement.
+            await page.evaluate("history.back()")
+            await page.waitFor("window.reader.scrollPosition === 0.2")
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                state: { pageNumber: 3, scrollPosition: 0.2 },
+            })
+            await page.evaluate("window.reader.goToPage(4, {scrollPosition:0.4, isJump:true})")
+            await page.evaluate("window.reader.goToPage(5, {scrollPosition:0.6, isJump:true})")
+            await page.evaluate("history.back()")
+            await page.waitFor("window.reader.currentPage === 4")
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                state: { pageNumber: 4, scrollPosition: 0.4 },
+            })
+            await page.evaluate("history.forward()")
+            await page.waitFor("window.reader.currentPage === 5")
+            expect(await page.evaluate(snapshot)).toMatchObject({
+                state: { pageNumber: 5, scrollPosition: 0.6 },
+            })
+            await page.evaluate("window.writer.stop()")
+        } finally {
+            await browser!.closeTarget(page.targetId)
+        }
+    }, 90000)
+
     it.each([1280, 390])(
         "recovers PDF, Library and Viewer loss with keyboard retry, safe drafts and native writer exclusion at %ipx",
         async (width) => {

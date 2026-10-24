@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity"
 import { browser } from "$app/environment"
 import { pushState } from "$app/navigation"
+import { page } from "$app/state"
 import type { DocumentOutlineEntry } from "$lib/document-model"
 import {
     isViewerLibraryCapabilityInstalled,
@@ -94,6 +95,7 @@ export class ViewerStore {
     private totalPages = $state<number>(0)
     isOutlineLoading = $state(false)
 
+    private readonly recoveryHistoryState: App.PageState | undefined
     private _isRestoringHistory = false
     lastSetPageState = $state<any>(null)
     private listening = false
@@ -111,6 +113,9 @@ export class ViewerStore {
     }
 
     constructor(private readonly options: ViewerStoreOptions = {}) {
+        // Recovery owns the retained position, not the entry already present at
+        // replacement. Actual back/forward traversal supplies a new state object.
+        this.recoveryHistoryState = browser && options.recovery ? page.state : undefined
         this.files = options.library ?? this.files
         this.mutations = options.mutations ?? this.mutations
         this.workspace = this.createWorkspace()
@@ -349,7 +354,7 @@ export class ViewerStore {
         scrollPosition: number
         bookId: string
     }) {
-        if (state.bookId !== this.book?.id) return
+        if (state === this.recoveryHistoryState || state.bookId !== this.book?.id) return
         this.lastSetPageState = state
         if (state.page === this.currentPage && state.scrollPosition === this.scrollPosition) return
         this._isRestoringHistory = true
