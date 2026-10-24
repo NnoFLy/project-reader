@@ -140,11 +140,7 @@ describe("Reading workspace browser persistence", () => {
         await page.evaluate(`(async () => {
             const {createBrowserApplication} = await import('/src/lib/app/bootstrap.ts');
             const {IndexedDBStorageBackend} = await import('/src/lib/core/storage/index.ts');
-            // Use the route's Vite-resolved runtime, not a second unoptimized Svelte copy.
-            const routeModule = await (await fetch('/src/lib/app/routes/ViewerRoute.svelte')).text();
-            const runtimeUrl = routeModule.match(/import \\{ getContext, onDestroy \\} from "([^"]+)"/)[1];
-            const {mount} = await import(runtimeUrl);
-            const {default: ViewerRoute} = await import('/src/lib/app/routes/ViewerRoute.svelte');
+            const {mountReadingProviderRoute} = await import('/tests/helpers/reading-provider-route.ts');
             const {APP_HOST_CONTEXT} = await import('/src/lib/app/hostContext.ts');
             window.writer = createBrowserApplication({storage: lifetime => window.backend = new IndexedDBStorageBackend({lifetime})});
             await window.writer.start();
@@ -157,7 +153,7 @@ describe("Reading workspace browser persistence", () => {
             };
             const target = document.createElement('div');
             target.id = 'provider-test-route'; document.body.append(target);
-            window.providerRoute = mount(ViewerRoute, {target, context: new Map([[APP_HOST_CONTEXT, context], ['app-host-services', context.services]])});
+            window.providerRoute = mountReadingProviderRoute(target, new Map([[APP_HOST_CONTEXT, context], ['app-host-services', context.services]]));
         })()`)
         await page.evaluate(bindings)
     }
