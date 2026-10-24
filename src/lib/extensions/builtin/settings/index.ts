@@ -1,5 +1,5 @@
 import type { ExtensionContext, SettingContribution, SettingsCapability } from "$lib/extension-api"
-import SettingsView from "./SettingsView.svelte"
+import * as m from "$lib/paraglide/messages"
 import {
     configureSettingsCommandHost,
     createSettingsCommands,
@@ -24,21 +24,44 @@ export const SETTINGS_VIEW_ID = "settings.panel"
 const settingDefinitions = [
     {
         id: "settings.theme",
-        label: "Theme",
+        label: () => m.theme(),
+        description: () => m.settings_theme_description(),
+        category: "appearance",
+        editor: {
+            kind: "choice",
+            choices: [
+                { value: "light", label: () => m.light() },
+                { value: "dark", label: () => m.dark() },
+                { value: "system", label: () => m.system() },
+            ],
+        },
         defaultValue: "system" as const,
         validate: (value: unknown): value is "light" | "dark" | "system" =>
             value === "light" || value === "dark" || value === "system",
     },
     {
         id: "settings.layout",
-        label: "Layout",
+        label: () => m.settings_layout_label(),
+        description: () => m.settings_layout_description(),
+        category: "reading",
+        editor: {
+            kind: "choice",
+            choices: [
+                { value: "single", label: () => m.single_page() },
+                { value: "split", label: () => m.split_pages() },
+                { value: "scroll", label: () => m.scroll_pages() },
+            ],
+        },
         defaultValue: "scroll" as const,
         validate: (value: unknown): value is "single" | "split" | "scroll" =>
             value === "single" || value === "split" || value === "scroll",
     },
     {
         id: "settings.scale",
-        label: "Scale",
+        label: () => m.settings_scale_label(),
+        description: () => m.settings_scale_description(),
+        category: "reading",
+        editor: { kind: "number", min: CONSTANTS.minScale, max: CONSTANTS.maxScale },
         defaultValue: 1.5,
         validate: (value: unknown): value is number =>
             typeof value === "number" &&
@@ -48,7 +71,10 @@ const settingDefinitions = [
     },
     {
         id: "settings.quality",
-        label: "Quality",
+        label: () => m.quality(),
+        description: () => m.settings_quality_description(),
+        category: "reading",
+        editor: { kind: "number", min: CONSTANTS.minQuality, max: CONSTANTS.maxQuality, step: 1 },
         defaultValue: CONSTANTS.defaultQuality,
         validate: (value: unknown): value is number =>
             typeof value === "number" &&
@@ -58,33 +84,92 @@ const settingDefinitions = [
     },
     {
         id: "settings.language",
-        label: "Language",
+        label: () => m.settings_language_label(),
+        description: () => m.settings_language_description(),
+        category: "general",
+        editor: {
+            kind: "choice",
+            choices: [
+                { value: "ru", label: () => getLanguageName("ru") },
+                { value: "en", label: () => getLanguageName("en") },
+            ],
+        },
         defaultValue: "ru" as const,
         validate: (value: unknown): value is "en" | "ru" => value === "en" || value === "ru",
     },
     {
         id: "settings.animations",
-        label: "Animations",
+        label: () => m.animations(),
+        description: () => m.settings_animations_description(),
+        category: "appearance",
+        editor: { kind: "boolean" },
         defaultValue: DEFAULT_SETTINGS.animations,
         validate: (value: unknown): value is boolean => typeof value === "boolean",
     },
     {
         id: "settings.prefer-pdf-title",
-        label: "Prefer PDF title",
+        label: () => m.prefer_pdf_title(),
+        description: () => m.settings_pdf_title_description(),
+        category: "library",
+        editor: { kind: "boolean" },
         defaultValue: true,
         validate: (value: unknown): value is boolean => typeof value === "boolean",
     },
 ] as const
 
 export async function activateSettings(context: ExtensionContext): Promise<void> {
-    const store = new SettingsStore()
+    let navigationPresenter: ((navigate: (() => void) | undefined) => void) | undefined
+    const store = new SettingsStore((navigate) => {
+        if (navigationPresenter) navigationPresenter(navigate)
+        else navigate?.()
+    })
     installSettingsStore(store)
     const commands = createSettingsCommands(() => store)
     context.lifecycle.onDispose(() => store.dispose())
     configureSettingsCommandHost(context.host)
     context.lifecycle.onDispose(() => configureSettingsCommandHost(undefined, context.host))
+    let presenter: (() => void) | undefined
+    let pendingOpen = false
+    let disposed = false
+    const openSettings = () => {
+        if (disposed) return
+        if (presenter) presenter()
+        else pendingOpen = true
+    }
+    context.lifecycle.onDispose(() => {
+        disposed = true
+        pendingOpen = false
+        presenter = undefined
+        navigationPresenter = undefined
+    })
     if (context.host) {
         const capability: SettingsCapability = {
+            openSettings,
+            onDidRequestOpen(listener) {
+                if (disposed) return { dispose() {} }
+                const currentPresenter = () => listener()
+                presenter = currentPresenter
+                if (pendingOpen) {
+                    pendingOpen = false
+                    listener()
+                }
+                return {
+                    dispose() {
+                        if (presenter === currentPresenter) presenter = undefined
+                    },
+                }
+            },
+            onDidRequestNavigation(listener) {
+                if (disposed) return { dispose() {} }
+                const currentPresenter = (navigate: (() => void) | undefined) => listener(navigate)
+                navigationPresenter = currentPresenter
+                return {
+                    dispose() {
+                        if (navigationPresenter === currentPresenter)
+                            navigationPresenter = undefined
+                    },
+                }
+            },
             settingsStore: store,
             CONSTANTS,
             DEFAULT_SETTINGS,
@@ -100,13 +185,6 @@ export async function activateSettings(context: ExtensionContext): Promise<void>
             uninstallCapability()
         })
     }
-    context.views.registerNative({
-        id: SETTINGS_VIEW_ID,
-        slot: "workbench.sidebar",
-        title: "Settings",
-        kind: "native",
-        component: SettingsView,
-    })
     for (const setting of settingDefinitions)
         context.settings.register(setting as SettingContribution)
     for (const command of Object.values(commands)) {
@@ -125,6 +203,12 @@ export async function activateSettings(context: ExtensionContext): Promise<void>
                 ),
         })
     }
+    context.commands.register({
+        id: "settings.open",
+        label: () => m.settings_open(),
+        englishLabel: () => m.settings_open({}, { locale: "en" }),
+        execute: openSettings,
+    })
     // Readiness must not hold activation (and therefore host disposal) behind a stuck backend.
     // The settings store handles late completion; Viewer captures defaults only when opening.
     let readinessTimeout: ReturnType<typeof setTimeout> | undefined

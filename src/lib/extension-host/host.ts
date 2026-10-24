@@ -14,6 +14,7 @@ import {
     type ExtensionStorage,
     type LegacyMigrationCapability,
     type HostContext,
+    type HostSettingsCatalog,
     type PermissionSet,
     type ProviderAvailability,
     type ProviderSnapshot,
@@ -57,9 +58,15 @@ export class ExtensionHost {
     readonly contributions: ContributionRegistry
     /** Shared host-owned command discovery and execution facade. */
     readonly commands: HostCommandFacade
+    /** Trusted active-only settings surface; not published to extension contexts. */
+    readonly settings: HostSettingsCatalog
     /** Shared prompt capability for host-owned chrome that conditionally mounts prompt views. */
     get prompt(): HostContext["prompt"] {
         return this.hostContext.prompt
+    }
+    /** Presentation-only capability for the activated built-in Settings lifetime. */
+    get settingsCapability(): HostContext["settings"] {
+        return this.hostContext.settings
     }
     get readingRecovery(): HostContext["readingRecovery"] {
         return this.hostContext.readingRecovery
@@ -98,6 +105,7 @@ export class ExtensionHost {
         this.documentService = options.documentService ?? new DocumentService()
         this.contributions = new ContributionRegistry(this.documentService.adapters)
         this.commands = this.contributions.globalCommands
+        this.settings = this.contributions.globalSettings
         this.hostContext = {
             ...options.hostContext,
             commands: this.commands,
@@ -276,6 +284,7 @@ export class ExtensionHost {
     private setState(runtime: ExtensionRuntime, state: LifecycleRecord["state"]): void {
         runtime.state = state
         runtime.lifecycle.setState(state)
+        this.contributions.setSettingsActive(runtime.extension.manifest.id, state === "active")
         runtime.snapshot = Object.freeze({
             extensionId: runtime.extension.manifest.id,
             generation: runtime.generation,
@@ -298,6 +307,7 @@ export class ExtensionHost {
         runtime.intentRevision++
         const lifecycle = runtime.lifecycle
         runtime.state = state
+        this.contributions.setSettingsActive(runtime.extension.manifest.id, false)
         const cleanup = lifecycle.dispose()
         const id = runtime.extension.manifest.id
         this.contextualStatus.forExtension(id).clear()
@@ -350,6 +360,7 @@ export class ExtensionHost {
                 manifest.id,
                 runtime.permissions,
                 runtime.storage,
+                manifest.name,
             )
             const hostContext = this.hostContext
             const publish = <K extends keyof HostContext>(key: K, value: HostContext[K]) => {

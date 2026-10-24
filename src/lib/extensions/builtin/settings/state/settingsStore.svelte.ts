@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity"
+import { applyLanguage } from "../language/language"
 import { browser } from "$app/environment"
-import type { SettingsRegistry, StorageNamespace } from "$lib/extension-api"
+import type { Disposable, SettingsRegistry, StorageNamespace } from "$lib/extension-api"
 import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 import { DEFAULT_ANIMATIONS, motionPreferences } from "$lib/shared/state/motion.svelte"
 
@@ -139,13 +140,21 @@ export class SettingsStore {
     private disposed = false
     private configuration = new AbortController()
     private registry: SettingsRegistry | undefined
-    private storage: StorageNamespace | undefined
+    private subscription: Disposable | undefined
+    private readonly revisions: Partial<Record<SettingId, number>> = {}
+    private languageRevision = 0
+    private readonly writes: Partial<Record<keyof Settings, Promise<void>>> = {}
+    readonly loadErrors = $state<Partial<Record<keyof Settings, string>>>({})
+    readonly writeErrors = $state<Partial<Record<keyof Settings, string>>>({})
     private colorSchemeQuery: MediaQueryList | null = null
     private readonly handleColorSchemeChange = () => {
         if (this.theme === "system") this.updateDOM()
     }
 
-    constructor() {
+    private readonly requestNavigation: ((navigate: (() => void) | undefined) => void) | undefined
+
+    constructor(requestNavigation?: (navigate: (() => void) | undefined) => void) {
+        this.requestNavigation = requestNavigation
         motionPreferences.enabled = this.settings.animations
         if (browser) {
             document.documentElement.dataset.motion = this.settings.animations ? "on" : "off"
@@ -160,11 +169,23 @@ export class SettingsStore {
         this.configuration.abort()
         this.configuration = new AbortController()
         this.registry = registry
-        this.storage = storage
+        this.subscription?.dispose()
         this.registeredIds = new SvelteSet(registry.list().map(({ id }) => id))
-        return this.loadRegisteredValues(registry, storage, this.configuration.signal).catch(
-            () => undefined,
-        )
+        const { signal } = this.configuration
+        const bootstrapImport = Symbol("settings bootstrap import")
+        this.subscription = registry.onDidChange((change) => {
+            if (signal.aborted || change.kind !== "value") return
+            const key = (Object.keys(SETTING_IDS) as (keyof Settings)[]).find(
+                (key) => SETTING_IDS[key] === change.settingId,
+            )
+            if (!key) return
+            this.revisions[SETTING_IDS[key]] = (this.revisions[SETTING_IDS[key]] ?? 0) + 1
+            delete this.loadErrors[key]
+            delete this.writeErrors[key]
+            // Import ACKs remain authoritative, but only interactive successes request navigation.
+            this.applySetting(key, change.value as never, change.provenance !== bootstrapImport)
+        })
+        return this.loadRegisteredValues(registry, storage, signal, bootstrapImport)
     }
 
     isRegistered(id: SettingId): boolean {
@@ -174,6 +195,7 @@ export class SettingsStore {
     dispose() {
         this.disposed = true
         this.configuration.abort()
+        this.subscription?.dispose()
         this.colorSchemeQuery?.removeEventListener("change", this.handleColorSchemeChange)
         this.colorSchemeQuery = null
     }
@@ -182,18 +204,101 @@ export class SettingsStore {
         return this.settings
     }
 
-    updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
-        if (this.disposed) return
-        this.settings[key] = value
-        if (key === "theme") persistBootstrapSetting("theme", value as Theme)
-        if (key === "animations") {
-            motionPreferences.enabled = value as boolean
-            persistBootstrapSetting("animations", value as boolean)
-            if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
+    updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
+        return this.queueSetting(key, value)
+    }
+
+    transformSetting<K extends keyof Settings>(
+        key: K,
+        transform: (value: Settings[K]) => Settings[K],
+    ): Promise<void> {
+        return this.queueSetting(key, transform)
+    }
+
+    private queueSetting<K extends keyof Settings>(
+        key: K,
+        value: Settings[K] | ((value: Settings[K]) => Settings[K]),
+    ): Promise<void> {
+        if (this.disposed) return Promise.reject(new Error("Settings are disposed"))
+        const registry = this.registry
+        if (!registry) {
+            // Legacy standalone consumers have no host or durable registry.
+            this.applySetting(key, typeof value === "function" ? value(this.settings[key]) : value)
+            return Promise.resolve()
         }
         const id = SETTING_IDS[key]
-        if (this.registry && this.storage && this.isRegistered(id)) {
-            void this.persist(id, value).catch(() => undefined)
+        this.revisions[id] = (this.revisions[id] ?? 0) + 1
+        const { signal } = this.configuration
+        const result = (this.writes[key] ?? Promise.resolve())
+            .then(async () => {
+                signal.throwIfAborted()
+                // Read through the registry so previously admitted catalog writes also settle.
+                const next =
+                    typeof value === "function"
+                        ? value(await registry.getValue<Settings[K]>(id))
+                        : value
+                signal.throwIfAborted()
+                await registry.setValue(id, next)
+            })
+            .catch((error) => {
+                if (!signal.aborted) this.writeErrors[key] = "Unable to save preference"
+                throw error
+            })
+        // A rejected operation must not poison subsequent relative commands.
+        const settled = result.then(
+            () => undefined,
+            () => undefined,
+        )
+        this.writes[key] = settled
+        void settled.then(() => {
+            if (this.writes[key] === settled) delete this.writes[key]
+        })
+        return result
+    }
+
+    async whenSettled(): Promise<void> {
+        while (Object.values(this.writes).length) await Promise.all(Object.values(this.writes))
+    }
+
+    private setFromProperty<K extends keyof Settings>(key: K, value: Settings[K]): void {
+        // Property bindings cannot await; the acknowledged API exposes failures to callers,
+        // and writeErrors keeps compatibility bindings from silently losing the failure.
+        void this.updateSetting(key, value).catch(() => undefined)
+    }
+
+    private applySetting<K extends keyof Settings>(
+        key: K,
+        value: Settings[K],
+        committed = false,
+        cacheBootstrap = true,
+    ): void {
+        this.settings[key] = value
+        if (key === "language") {
+            const navigate = applyLanguage(
+                value as Language,
+                committed && browser ? new URL(window.location.href) : undefined,
+            )
+            if (committed) {
+                const { signal } = this.configuration
+                const revision = ++this.languageRevision
+                const currentNavigation = navigate
+                    ? () => {
+                          if (!signal.aborted && revision === this.languageRevision) navigate()
+                      }
+                    : undefined
+                // Never await presentation from a value notification: its own write must settle first.
+                if (this.requestNavigation) this.requestNavigation(currentNavigation)
+                else currentNavigation?.()
+            }
+        }
+        if (key === "theme") {
+            persistBootstrapSetting("theme", value as Theme)
+            this.updateDOM()
+        }
+        if (key === "animations") {
+            motionPreferences.enabled = value as boolean
+            if (cacheBootstrap) persistBootstrapSetting("animations", value as boolean)
+            if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
         }
     }
 
@@ -209,7 +314,7 @@ export class SettingsStore {
     }
 
     set layout(value: Settings["layout"]) {
-        this.updateSetting("layout", value)
+        this.setFromProperty("layout", value)
     }
 
     get scale(): Settings["scale"] {
@@ -217,7 +322,7 @@ export class SettingsStore {
     }
 
     set scale(value: Settings["scale"]) {
-        this.updateSetting("scale", value)
+        this.setFromProperty("scale", value)
     }
 
     get theme(): Settings["theme"] {
@@ -225,8 +330,7 @@ export class SettingsStore {
     }
 
     set theme(value: Settings["theme"]) {
-        this.updateSetting("theme", value)
-        this.updateDOM()
+        this.setFromProperty("theme", value)
     }
 
     get language(): Settings["language"] {
@@ -234,13 +338,7 @@ export class SettingsStore {
     }
 
     set language(value: Settings["language"]) {
-        if (this.disposed) return
-        this.updateSetting("language", value)
-        if (browser) {
-            document.cookie = `PARAGLIDE_LOCALE=${value}; path=/; max-age=31536000; SameSite=Lax`
-            document.documentElement.lang = value
-            document.documentElement.dir = "ltr"
-        }
+        this.setFromProperty("language", value)
     }
 
     get animations(): Settings["animations"] {
@@ -248,7 +346,7 @@ export class SettingsStore {
     }
 
     set animations(value: Settings["animations"]) {
-        this.updateSetting("animations", value)
+        this.setFromProperty("animations", value)
     }
 
     get quality(): Settings["quality"] {
@@ -256,7 +354,7 @@ export class SettingsStore {
     }
 
     set quality(value: Settings["quality"]) {
-        this.updateSetting("quality", value)
+        this.setFromProperty("quality", value)
     }
 
     get preferPdfTitle(): Settings["preferPdfTitle"] {
@@ -264,7 +362,7 @@ export class SettingsStore {
     }
 
     set preferPdfTitle(value: Settings["preferPdfTitle"]) {
-        this.updateSetting("preferPdfTitle", value)
+        this.setFromProperty("preferPdfTitle", value)
     }
 
     updateDOM() {
@@ -318,59 +416,58 @@ export class SettingsStore {
         registry: SettingsRegistry,
         storage: StorageNamespace,
         signal: AbortSignal,
+        bootstrapImport: symbol,
     ): Promise<void> {
         const legacySettings = readLegacySettings()
-        for (const [key, id] of Object.entries(SETTING_IDS) as [keyof Settings, SettingId][]) {
-            const setting = registry.get(id)
-            if (!setting) continue
-            const stored = await storage.get<unknown>(id)
-            if (signal.aborted || !registry.get(id)) return
-
-            let value: unknown
-            if (stored === undefined && legacySettings[key] !== undefined) {
-                const migrated = legacySettings[key]
-                if (!setting.validate || setting.validate(migrated)) {
-                    value = migrated
-                    await registry.setValue(id, migrated)
-                    if (signal.aborted) return
-                    await storage.set(id, migrated)
-                } else {
-                    value = await registry.getValue(id)
-                }
-            } else {
-                value = stored === undefined ? await registry.getValue(id) : stored
-            }
-
-            if (signal.aborted) return
-            if (setting.validate && !setting.validate(value)) continue
-            this.settings[key] = value as never
-            if (key === "animations") {
-                motionPreferences.enabled = value as boolean
-                // Cache explicit choices, but do not turn the system default into a saved choice.
-                if (stored !== undefined || legacySettings.animations !== undefined) {
-                    persistBootstrapSetting("animations", value as boolean)
-                }
-                if (browser) document.documentElement.dataset.motion = value ? "on" : "off"
-            } else if (key === "language") {
-                if (browser) {
-                    document.cookie = `PARAGLIDE_LOCALE=${value}; path=/; max-age=31536000; SameSite=Lax`
-                    document.documentElement.lang = value as Settings["language"]
-                    document.documentElement.dir = "ltr"
-                }
-            } else if (key === "theme") {
-                persistBootstrapSetting("theme", value as Theme)
-                this.updateDOM()
-            }
-        }
-        this.updateDOM()
-    }
-
-    private async persist(id: SettingId, value: unknown): Promise<void> {
-        const { registry, storage } = this
-        const { signal } = this.configuration
-        if (this.disposed || signal.aborted) return
-        await registry?.setValue(id, value)
-        if (!signal.aborted) await storage?.set(id, value)
+        await Promise.all(
+            (Object.entries(SETTING_IDS) as [keyof Settings, SettingId][]).map(
+                async ([key, id]) => {
+                    const setting = registry.get(id)
+                    if (!setting) return
+                    const revision = this.revisions[id] ?? 0
+                    const current = () =>
+                        !signal.aborted &&
+                        registry.get(id) === setting &&
+                        (this.revisions[id] ?? 0) === revision
+                    try {
+                        // Only the existing legacy import needs to distinguish missing from default.
+                        const stored =
+                            legacySettings[key] === undefined && key !== "animations"
+                                ? undefined
+                                : await storage.get(id)
+                        const value = await registry.getValue(id)
+                        if (!current()) return
+                        if (legacySettings[key] !== undefined && stored === undefined) {
+                            const imported = await registry.initializeValue(
+                                id,
+                                legacySettings[key],
+                                bootstrapImport,
+                            )
+                            if (
+                                !imported.initialized &&
+                                current() &&
+                                (!setting.validate || setting.validate(imported.value))
+                            ) {
+                                this.applySetting(key, imported.value as never)
+                                delete this.loadErrors[key]
+                            }
+                        } else if (!setting.validate || setting.validate(value)) {
+                            this.applySetting(
+                                key,
+                                value as never,
+                                false,
+                                key !== "animations" ||
+                                    stored !== undefined ||
+                                    legacySettings.animations !== undefined,
+                            )
+                            delete this.loadErrors[key]
+                        }
+                    } catch {
+                        if (current()) this.loadErrors[key] = "Unable to load preference"
+                    }
+                },
+            ),
+        )
     }
 }
 

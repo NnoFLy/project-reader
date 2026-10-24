@@ -63,7 +63,7 @@
             : activeTab === "bookmarks"
               ? m.bookmarks()
               : activeTab === "settings"
-                ? m.settings()
+                ? m.reading_controls()
                 : m.outline(),
     )
     const shortcutScope = commandsStore.activeScope ?? commandsStore.root
@@ -165,7 +165,7 @@
                 />
             </Tabs>
         {:else}
-            <h3>{m.settings()}</h3>
+            <h3>{m.reading_controls()}</h3>
         {/if}
     </SidebarHeader>
 {/snippet}

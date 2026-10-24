@@ -306,7 +306,6 @@ export const BUILTIN_MANIFESTS = [
         { "builtin.library": "*", "builtin.settings": "*" },
     ),
     manifest("builtin.settings", "Settings", [{ type: "startup" }], {
-        views: [{ id: "settings.panel", slot: "workbench.sidebar", title: "Settings" }],
         settings: [
             { id: "settings.theme", label: "Theme", defaultValue: "system" },
             { id: "settings.layout", label: "Layout", defaultValue: "scroll" },

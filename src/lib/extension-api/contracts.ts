@@ -163,10 +163,36 @@ export interface ViewContribution {
 
 export type DocumentAdapterContribution = import("$lib/document-model").DocumentAdapter
 
+/** Localized display text. Consumers render the result as text, never markup. */
+export type SettingText = string | (() => string)
+export type SettingChoiceValue = string | number | boolean
+export type SettingCategory = "general" | "appearance" | "reading" | "library" | "plugins"
+export type SettingEditor =
+    | { readonly kind: "boolean" }
+    | {
+          readonly kind: "choice"
+          readonly choices: readonly {
+              readonly value: SettingChoiceValue
+              readonly label: SettingText
+          }[]
+      }
+    | { readonly kind: "text"; readonly minLength?: number; readonly maxLength?: number }
+    | {
+          readonly kind: "number"
+          readonly min?: number
+          readonly max?: number
+          readonly step?: number
+      }
+
 export interface SettingContribution<T = unknown> {
     readonly id: string
-    readonly label: string | (() => string)
+    readonly label: SettingText
     readonly defaultValue: T
+    readonly description?: SettingText
+    readonly editor?: SettingEditor
+    /** Only host-allowlisted common built-in preferences can leave Plugins. */
+    readonly category?: SettingCategory
+    readonly group?: SettingText
     readonly validate?: (value: unknown) => value is T
 }
 

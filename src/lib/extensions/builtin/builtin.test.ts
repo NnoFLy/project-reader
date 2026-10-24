@@ -33,11 +33,6 @@ describe("built-in contributions", () => {
                 component: expect.anything(),
             }),
             expect.objectContaining({
-                id: "settings.panel",
-                kind: "native",
-                component: expect.anything(),
-            }),
-            expect.objectContaining({
                 id: "viewer.reader",
                 kind: "native",
                 component: expect.anything(),
@@ -80,6 +75,7 @@ describe("built-in contributions", () => {
             "settings.quality.out",
             "settings.animations.toggle",
             "settings.pdf-title.toggle",
+            "settings.open",
             "viewer.open",
             "viewer.scroll.step",
             "viewer.scroll.half-page",

@@ -230,9 +230,7 @@ describe("Reading workspace host lifetime", () => {
                 return result
             }
             reader = mount(ReaderSettings, { target })
-            await vi.waitFor(() =>
-                expect(target.querySelector(".quality-value")?.textContent?.trim()).toBe("1"),
-            )
+            expect(target.textContent).not.toContain(m.quality())
             await vi.waitFor(() => expect(renderedQualities).toContain(1))
             const createOwnedCommands = () =>
                 createViewerSettingsCommands(
@@ -245,23 +243,19 @@ describe("Reading workspace host lifetime", () => {
             expect(commands.qualityOut.subtitle?.()).toBe(`${m.quality()}: 1`)
             await commands.qualityIn.run()
             await vi.waitFor(() => {
-                expect(target.querySelector(".quality-value")?.textContent?.trim()).toBe("2")
                 expect(renderedQualities.at(-1)).toBe(2)
             })
             const secondSettings = second.contributions.forExtension("builtin.settings").settings
             expect(await secondSettings.getValue("settings.quality")).toBe(3)
             await second.dispose()
-            const increase = target.querySelector<HTMLButtonElement>(".quality-value + button")!
-            increase.click()
+            await commands.qualityIn.run()
             await vi.waitFor(() => {
-                expect(target.querySelector(".quality-value")?.textContent?.trim()).toBe("3")
                 expect(renderedQualities.at(-1)).toBe(3)
             })
             const recreatedCommands = createOwnedCommands()
             expect(recreatedCommands.qualityOut.subtitle?.()).toBe(`${m.quality()}: 3`)
             await recreatedCommands.qualityOut.run()
             await vi.waitFor(() => {
-                expect(target.querySelector(".quality-value")?.textContent?.trim()).toBe("2")
                 expect(renderedQualities.at(-1)).toBe(2)
             })
             expect(
@@ -349,16 +343,9 @@ describe("Reading workspace host lifetime", () => {
                     expect(options[0]?.getAttribute("aria-pressed")).toBe("false")
                     expect(options[1]?.getAttribute("aria-pressed")).toBe("true")
                 })
-                const languageLinks = [
-                    ...target.querySelectorAll<HTMLAnchorElement>(".language-options a"),
-                ].map((link) => new URL(link.href))
-                expect(languageLinks).toHaveLength(2)
-                for (const link of languageLinks) {
-                    expect(link.origin).toBe("http://localhost:3000")
-                    expect(link.pathname).toMatch(/\/(?:en\/|ru\/)?viewer$/)
-                    expect(link.search).toBe("?display=1")
-                    expect(link.hash).toBe("#position")
-                }
+                expect(target.textContent).not.toContain(m.theme())
+                expect(target.textContent).not.toContain(m.quality())
+                expect(target.querySelector('input[type="checkbox"], select')).toBeNull()
                 const otherStorage = new MemoryStorageBackend()
                 const otherLibrary = createExtensionStorage(
                     otherStorage,
@@ -450,13 +437,15 @@ describe("Reading workspace host lifetime", () => {
                 target.remove()
             }
             store.goToPage(7, { scrollPosition: 0.3 })
+            await first.settings.setValue("settings.scale", 2.25)
+            await first.settings.setValue("settings.layout", "single")
             expect(store.scale).toBe(2)
             expect(store.layout).toBe("split")
             await store.workspace.open("b")
-            expect(store.scale).toBe(1.25)
-            expect(store.layout).toBe("scroll")
-            expect(await defaults.get("settings.scale")).toBe(1.25)
-            expect(await defaults.get("settings.layout")).toBe("scroll")
+            expect(store.scale).toBe(2.25)
+            expect(store.layout).toBe("single")
+            expect(await first.settings.getValue("settings.scale")).toBe(2.25)
+            expect(await first.settings.getValue("settings.layout")).toBe("single")
             await first.commands.execute("settings.zoom.out", { value: 0.75 })
             await first.commands.execute("settings.layout", { value: "single" })
             await store.workspace.flush()

@@ -8,36 +8,9 @@
     import SinglePageIcon from "$lib/shared/icons/SinglePageIcon.svelte"
     import SplitPagesIcon from "$lib/shared/icons/SplitPagesIcon.svelte"
     import ScrollPagesIcon from "$lib/shared/icons/ScrollPagesIcon.svelte"
-    import SunIcon from "$lib/shared/icons/SunIcon.svelte"
-    import MoonIcon from "$lib/shared/icons/MoonIcon.svelte"
-    import SystemIcon from "$lib/shared/icons/SystemIcon.svelte"
-    import Toggle from "$lib/shared/ui/Toggle.svelte"
-    import {
-        CONSTANTS as legacyConstants,
-        settingsStore as legacySettingsStore,
-        getLanguageName as legacyGetLanguageName,
-        getLocalizedCurrentHref as legacyGetLocalizedCurrentHref,
-        type Theme,
-        type AppLocale,
-    } from "$lib/core/settings"
-    import { locales } from "$lib/paraglide/runtime"
-    import { page } from "$app/state"
-    import GlobeIcon from "$lib/shared/icons/GlobeIcon.svelte"
-
     import { getViewerRuntimeContext } from "../viewerRuntime"
-    const { store: viewerStore, executeCommand, settings } = getViewerRuntimeContext()()
-    const settingsStore = settings?.settingsStore ?? legacySettingsStore
-    const CONSTANTS = settings?.CONSTANTS ?? legacyConstants
-    const getLanguageName = settings?.getLanguageName ?? legacyGetLanguageName
-    const getLocalizedCurrentHref =
-        settings?.getLocalizedCurrentHref ?? legacyGetLocalizedCurrentHref
-
+    const { store: viewerStore, executeCommand } = getViewerRuntimeContext()()
     let isShortHeight = $derived(viewport.isShortHeight)
-
-    function languageHref(locale: AppLocale): string {
-        const url = new URL(getLocalizedCurrentHref(page.url, locale), page.url)
-        return url.pathname + url.search + url.hash
-    }
 
     function handleScaleChange(e: Event) {
         const input = e.target as HTMLInputElement
@@ -56,12 +29,6 @@
             ;(e.target as HTMLInputElement).blur()
         }
     }
-
-    const THEMES: { value: Theme; label: () => string; Icon: typeof SunIcon }[] = [
-        { value: "light", label: () => m.light(), Icon: SunIcon },
-        { value: "dark", label: () => m.dark(), Icon: MoonIcon },
-        { value: "system", label: () => m.system(), Icon: SystemIcon },
-    ] as const
 </script>
 
 <div class="sidebar-content">
@@ -162,120 +129,6 @@
             </div>
         </section>
     {/if}
-
-    <section class="settings-section">
-        <h4 class="section-title">{m.quality()}</h4>
-        <p class="setting-description">{m.render_quality_description()}</p>
-        <div class="range-control">
-            <div class="zoom-controls" role="group" aria-label={m.quality()}>
-                <Button
-                    variant="action"
-                    size="default"
-                    square={true}
-                    onclick={() => executeCommand("settings.quality.out")}
-                    aria-label={m.quality_down()}
-                    class="zoom-btn"
-                >
-                    <MinusIcon />
-                </Button>
-                <div class="scale-input-container quality-value">
-                    <span>{settingsStore.quality}</span>
-                </div>
-                <Button
-                    variant="action"
-                    size="default"
-                    square={true}
-                    onclick={() => executeCommand("settings.quality.in")}
-                    aria-label={m.quality_up()}
-                    class="zoom-btn"
-                >
-                    <PlusIcon />
-                </Button>
-            </div>
-            <div class="slider-container">
-                <Input
-                    unstyled
-                    type="range"
-                    min={CONSTANTS.minQuality}
-                    max={CONSTANTS.maxQuality}
-                    step="1"
-                    value={settingsStore.quality}
-                    oninput={(e) => {
-                        const val = parseInt((e.target as HTMLInputElement).value, 10)
-                        if (!isNaN(val)) {
-                            executeCommand("settings.quality.in", { value: val })
-                        }
-                    }}
-                    class="sidebar-slider"
-                    aria-label={m.quality_slider_aria()}
-                />
-            </div>
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h4 class="section-title">{m.theme()}</h4>
-        <div class="theme-options" role="group" aria-label={m.theme()}>
-            {#each THEMES as { value, label, Icon } (value)}
-                <Button
-                    class={"option-btn" + (settingsStore.theme === value ? " active" : "")}
-                    variant="action"
-                    size="default"
-                    onclick={() => executeCommand("settings.theme", { value })}
-                    aria-pressed={settingsStore.theme === value}
-                >
-                    <Icon class="theme-icon" />
-                    <span>{label()}</span>
-                </Button>
-            {/each}
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h4 class="section-title">{m.animations()}</h4>
-        <div class="animation-options">
-            <Toggle
-                checked={settingsStore.animations}
-                onchange={() => executeCommand("settings.animations.toggle")}
-                label={settingsStore.animations ? m.animations_enabled() : m.animations_disabled()}
-            />
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h4 class="section-title">{m.prefer_pdf_title()}</h4>
-        <div class="animation-options">
-            <Toggle
-                checked={settingsStore.preferPdfTitle}
-                onchange={() => executeCommand("settings.pdf-title.toggle")}
-                label={settingsStore.preferPdfTitle ? m.use_pdf_title() : m.use_filename()}
-            />
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h4 class="section-title">{m.language_switcher()}</h4>
-        <div class="language-options" role="group" aria-label={m.language_switcher()}>
-            {#each locales as locale (locale)}
-                <Button
-                    data-sveltekit-reload
-                    href={languageHref(locale as AppLocale)}
-                    class={"option-btn" + (settingsStore.language === locale ? " active" : "")}
-                    variant="action"
-                    size="default"
-                    onclick={(event: MouseEvent) => {
-                        event.preventDefault()
-                        void executeCommand("settings.language", {
-                            value: locale as AppLocale,
-                        })
-                    }}
-                >
-                    <GlobeIcon />
-                    <span>{getLanguageName(locale)}</span>
-                </Button>
-            {/each}
-        </div>
-    </section>
 </div>
 
 <style>
@@ -305,18 +158,7 @@
         line-height: 1.4;
     }
 
-    .setting-description {
-        margin: -4px 0 0;
-        color: var(--faded-text-color);
-        font-family: var(--ui-font);
-        font-size: var(--font-size-sm);
-        line-height: 1.45;
-    }
-
-    .layout-options,
-    .theme-options,
-    .language-options,
-    .animation-options {
+    .layout-options {
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -490,10 +332,7 @@
             line-height: 1.3;
         }
 
-        .layout-options,
-        .theme-options,
-        .language-options,
-        .animation-options {
+        .layout-options {
             gap: 6px;
         }
 
@@ -541,10 +380,6 @@
             font-variant-numeric: tabular-nums;
         }
 
-        .quality-value {
-            min-width: 0;
-        }
-
         .slider-container {
             margin: 0;
             min-height: 28px;
@@ -570,12 +405,6 @@
             border-width: 1px;
             border-radius: var(--radius-full);
             box-shadow: none;
-        }
-
-        :global(.toggle-label-wrapper) {
-            min-height: 44px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 0.95rem;
         }
     }
 </style>

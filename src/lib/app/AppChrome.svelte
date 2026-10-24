@@ -1,8 +1,10 @@
 <script lang="ts">
-    import { getContext, onMount } from "svelte"
+    import { getContext, onMount, tick } from "svelte"
     import { SvelteMap } from "svelte/reactivity"
     import type { Component } from "svelte"
-    import type { ContextualStatus, Notification } from "$lib/extension-api"
+    import type { ContextualStatus, Notification, SettingsCapability } from "$lib/extension-api"
+    import GlobalSettings from "./settings/GlobalSettings.svelte"
+    import * as m from "$lib/paraglide/messages"
     import { version } from "$app/environment"
     import { updated } from "$app/state"
     import { afterNavigate } from "$app/navigation"
@@ -149,19 +151,99 @@
     )
     let contextualStatus = $state<ContextualStatus | null>(null)
     // Publisher lookup happens during prop evaluation; this cache must not be reactive.
-    const contextualStatusPublishers = new Map<
+    const contextualStatusPublishers: Record<
         string,
-        ReturnType<typeof hostContext.application.host.contextualStatus.forExtension>
-    >()
+        ReturnType<typeof hostContext.application.host.contextualStatus.forExtension> | undefined
+    > = Object.create(null)
     const statusPublisherFor = (extensionId: string) => {
-        let publisher = contextualStatusPublishers.get(extensionId)
+        let publisher = contextualStatusPublishers[extensionId]
         if (!publisher) {
             publisher = hostContext.application.host.contextualStatus.forExtension(extensionId)
-            contextualStatusPublishers.set(extensionId, publisher)
+            contextualStatusPublishers[extensionId] = publisher
         }
         return publisher
     }
     let notifications = $state<Notification[]>([])
+    let settingsCapability = $state.raw<SettingsCapability>()
+    let presentedSettings = $state.raw<{ capability: SettingsCapability }>()
+    let settingsModal: ReturnType<typeof GlobalSettings> | undefined = $state()
+    let settingsButton: HTMLButtonElement | undefined
+    function captureSettingsButton(node: HTMLButtonElement) {
+        settingsButton = node
+        return () => {
+            if (settingsButton === node) settingsButton = undefined
+        }
+    }
+
+    onMount(() => {
+        const host = hostContext.application.host
+        let subscription: { dispose(): void } | undefined
+        let navigationSubscription: { dispose(): void } | undefined
+        let active = true
+        let openTimer: ReturnType<typeof setTimeout> | undefined
+        const bindSettingsPresenter = () => {
+            subscription?.dispose()
+            navigationSubscription?.dispose()
+            clearTimeout(openTimer)
+            openTimer = undefined
+            presentedSettings = undefined
+            const capability =
+                host.providers.get("builtin.settings")?.state === "active"
+                    ? host.settingsCapability
+                    : undefined
+            settingsCapability = capability
+            subscription = capability?.onDidRequestOpen(() => {
+                if (presentedSettings?.capability === capability) {
+                    settingsModal?.focus()
+                    return
+                }
+                if (openTimer !== undefined) return
+                const opener = document.activeElement
+                // Let command selection dismiss its own Prompt before mounting the modal.
+                // A replacement Prompt is never closed by the presenter.
+                openTimer = setTimeout(() => {
+                    openTimer = undefined
+                    if (settingsCapability !== capability) return
+                    if (
+                        document.activeElement === document.body ||
+                        !document.activeElement?.isConnected
+                    ) {
+                        const target =
+                            opener instanceof HTMLElement && opener.isConnected
+                                ? opener
+                                : settingsButton
+                        target?.focus()
+                    }
+                    presentedSettings = { capability }
+                }, 0)
+            })
+            navigationSubscription = capability?.onDidRequestNavigation((navigate) => {
+                if (!active || settingsCapability !== capability) return
+                const presentation = presentedSettings
+                if (presentation?.capability === capability) {
+                    void tick().then(() => {
+                        if (
+                            active &&
+                            settingsCapability === capability &&
+                            presentedSettings === presentation
+                        )
+                            settingsModal?.requestNavigation(navigate)
+                    })
+                } else navigate?.()
+            })
+        }
+        const providers = host.providers.onDidChange((provider) => {
+            if (provider.extensionId === "builtin.settings") bindSettingsPresenter()
+        })
+        bindSettingsPresenter()
+        return () => {
+            active = false
+            providers.dispose()
+            subscription?.dispose()
+            navigationSubscription?.dispose()
+            clearTimeout(openTimer)
+        }
+    })
 
     afterNavigate(({ to }) => {
         if (!to) return
@@ -215,7 +297,8 @@
         })
         return () => {
             statusSubscription.dispose()
-            contextualStatusPublishers.clear()
+            for (const id of Object.keys(contextualStatusPublishers))
+                delete contextualStatusPublishers[id]
             subscription.dispose()
             for (const timer of notificationTimers.values()) window.clearTimeout(timer)
             notificationTimers.clear()
@@ -224,8 +307,34 @@
 </script>
 
 <div id="app-root">
+    {#if settingsCapability}
+        <nav class="app-settings-access" aria-label={m.settings()}>
+            <button
+                {@attach captureSettingsButton}
+                onclick={() => settingsCapability?.openSettings()}
+            >
+                {m.settings()}
+            </button>
+        </nav>
+    {/if}
     <div class="app">
         {@render children()}
+
+        {#if presentedSettings}
+            {@const presentation = presentedSettings}
+            <GlobalSettings
+                host={hostContext.application.host}
+                bind:this={settingsModal}
+                whenCommandsSettled={() => presentation.capability.settingsStore.whenSettled()}
+                canDismiss={() =>
+                    presentedSettings === presentation &&
+                    settingsCapability === presentation.capability &&
+                    !hostContext.application.host.prompt?.promptStore.isOpen}
+                onClose={() => {
+                    if (presentedSettings === presentation) presentedSettings = undefined
+                }}
+            />
+        {/if}
 
         {#each statusViews as view (view.id)}
             {@const View = view.component as Component}
@@ -273,6 +382,32 @@
     @import "$lib/shared/styles/variables.css";
     @import "$lib/shared/styles/typography.css";
     @import "$lib/shared/styles/global.css";
+
+    .app-settings-access {
+        display: flex;
+        box-sizing: border-box;
+        justify-content: flex-end;
+        padding: calc(0.25rem + env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+            0.25rem max(0.75rem, env(safe-area-inset-left));
+        background: var(--surface-color);
+        border-block-end: var(--border-inline) solid var(--border-color);
+    }
+
+    .app-settings-access button {
+        min-block-size: var(--control-height-compact);
+        padding: 0.35rem 0.85rem;
+        border: var(--border-inline) solid var(--border-color);
+        border-radius: var(--radius-md);
+        background: var(--color-surface-raised);
+        color: var(--text-color);
+        font: inherit;
+        cursor: pointer;
+    }
+
+    .app-settings-access button:focus-visible {
+        outline: 2px solid var(--accent-color);
+        outline-offset: 2px;
+    }
 
     .host-contextual-status {
         position: fixed;

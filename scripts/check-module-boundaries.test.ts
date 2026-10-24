@@ -252,6 +252,38 @@ describe("target architecture boundaries", () => {
         expect(result.status, result.stderr).toBe(0)
     })
 
+    it("accepts only the existing host-owned Modal from app host shared UI", () => {
+        const root = fixture({
+            "src/lib/app/settings/Settings.svelte":
+                '<script>import Modal from "$lib/shared/ui/modal/Modal.svelte"</script>',
+        })
+        expect(analyzeProject(root).violations).toEqual([])
+    })
+
+    it.each([
+        "ui/Button.svelte",
+        "ui/modal/modalManager.svelte",
+        "state/viewport.svelte",
+        "private/feature",
+    ])("rejects app host importing other shared internals: %s", (target) => {
+        const root = fixture({
+            "src/lib/app/main.ts": `import "$lib/shared/${target}"`,
+        })
+        expect(analyzeProject(root).violations).toEqual([
+            expect.stringContaining("app host may only import"),
+        ])
+    })
+
+    it("keeps adapter restrictions for the host-owned Modal", () => {
+        const root = fixture({
+            "src/lib/extensions/builtin/pdf/adapter/main.ts":
+                'import "$lib/shared/ui/modal/Modal.svelte"',
+        })
+        expect(analyzeProject(root).violations).toEqual([
+            expect.stringContaining("adapter may not import shared"),
+        ])
+    })
+
     it("accepts builtin plugins importing core-safe shared code", () => {
         const root = fixture({
             "src/lib/extensions/builtin/viewer/main.ts": [

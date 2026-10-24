@@ -1,8 +1,6 @@
-import { page } from "$app/state"
 import type { CommandContribution, HostContext, PromptRequest } from "$lib/extension-api"
 import * as m from "$lib/paraglide/messages"
 import { getLocale } from "$lib/paraglide/runtime"
-import { switchLanguage } from "../language/language"
 import { getLanguageName } from "../language/locale"
 import {
     CONSTANTS,
@@ -51,11 +49,11 @@ function nextValue<T>(current: T, values: readonly T[]): T {
     return values[(index + 1) % values.length]
 }
 
-function updateQuality(store: SettingsStore, value: number): void {
+function updateQuality(store: SettingsStore, value: number): void | Promise<void> {
     if (!Number.isFinite(value)) return
-    store.quality = Math.min(
-        Math.max(Math.round(value), CONSTANTS.minQuality),
-        CONSTANTS.maxQuality,
+    return store.updateSetting(
+        "quality",
+        Math.min(Math.max(Math.round(value), CONSTANTS.minQuality), CONSTANTS.maxQuality),
     )
 }
 
@@ -66,7 +64,7 @@ export function runSettingsCommand(
     payload?: SettingsCommandPayload,
 ): void | Promise<void> {
     const display = host?.readingDisplay
-    const target = display?.active ? display : host?.settings?.settingsStore
+    const target = display?.active ? display : undefined
     if (!target) return command.run(payload)
     const value = payload?.value
     if (command.id === "settings.layout") {
@@ -105,7 +103,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                 const store = getStore()
                 const value = payload?.value
                 if (value === "light" || value === "dark" || value === "system") {
-                    store.theme = value
+                    await store.updateSetting("theme", value)
                     return
                 }
                 if (value !== undefined) return
@@ -123,7 +121,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                     initialSelection: (items) =>
                         items.findIndex(({ value }) => value === store.theme),
                 })
-                if (theme !== undefined) store.theme = theme
+                if (theme !== undefined) await store.updateSetting("theme", theme)
             },
         },
         "settings.layout": {
@@ -135,10 +133,11 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
             run: (payload) => {
                 const store = getStore()
                 const value = payload?.value
-                store.layout =
-                    value === "single" || value === "split" || value === "scroll"
-                        ? value
-                        : nextValue(store.layout, layoutValues)
+                return value === "single" || value === "split" || value === "scroll"
+                    ? store.updateSetting("layout", value)
+                    : store.transformSetting("layout", (current) =>
+                          nextValue(current, layoutValues),
+                      )
             },
         },
         "settings.language": {
@@ -151,7 +150,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                 const store = getStore()
                 const value = payload?.value
                 if (value === "en" || value === "ru") {
-                    switchLanguage(value, page.url, store)
+                    await store.updateSetting("language", value)
                     return
                 }
                 if (value !== undefined) return
@@ -169,7 +168,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                     initialSelection: (items) =>
                         items.findIndex(({ value }) => value === store.language),
                 })
-                if (language !== undefined) switchLanguage(language, page.url, store)
+                if (language !== undefined) await store.updateSetting("language", language)
             },
         },
         "settings.zoom.in": {
@@ -182,10 +181,14 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
             run: (payload) => {
                 const store = getStore()
                 const value = payload?.value
-                store.scale =
-                    typeof value === "number"
-                        ? Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale)
-                        : stepAndClampScale(store.scale, 1, CONSTANTS.minScale, CONSTANTS.maxScale)
+                return typeof value === "number"
+                    ? store.updateSetting(
+                          "scale",
+                          Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale),
+                      )
+                    : store.transformSetting("scale", (current) =>
+                          stepAndClampScale(current, 1, CONSTANTS.minScale, CONSTANTS.maxScale),
+                      )
             },
         },
         "settings.zoom.out": {
@@ -198,10 +201,14 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
             run: (payload) => {
                 const store = getStore()
                 const value = payload?.value
-                store.scale =
-                    typeof value === "number"
-                        ? Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale)
-                        : stepAndClampScale(store.scale, -1, CONSTANTS.minScale, CONSTANTS.maxScale)
+                return typeof value === "number"
+                    ? store.updateSetting(
+                          "scale",
+                          Math.min(Math.max(value, CONSTANTS.minScale), CONSTANTS.maxScale),
+                      )
+                    : store.transformSetting("scale", (current) =>
+                          stepAndClampScale(current, -1, CONSTANTS.minScale, CONSTANTS.maxScale),
+                      )
             },
         },
         "settings.quality.in": {
@@ -212,10 +219,11 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
             subtitle: () => `${m.quality()}: ${getStore().quality}`,
             run: (payload) => {
                 const store = getStore()
-                updateQuality(
-                    store,
-                    typeof payload?.value === "number" ? payload.value : store.quality + 1,
-                )
+                return typeof payload?.value === "number"
+                    ? updateQuality(store, payload.value)
+                    : store.transformSetting("quality", (current) =>
+                          Math.min(current + 1, CONSTANTS.maxQuality),
+                      )
             },
         },
         "settings.quality.out": {
@@ -226,10 +234,11 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
             subtitle: () => `${m.quality()}: ${getStore().quality}`,
             run: (payload) => {
                 const store = getStore()
-                updateQuality(
-                    store,
-                    typeof payload?.value === "number" ? payload.value : store.quality - 1,
-                )
+                return typeof payload?.value === "number"
+                    ? updateQuality(store, payload.value)
+                    : store.transformSetting("quality", (current) =>
+                          Math.max(current - 1, CONSTANTS.minQuality),
+                      )
             },
         },
         "settings.animations.toggle": {
@@ -241,7 +250,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                 `${m.animations()}: ${getStore().animations ? m.animations_enabled() : m.animations_disabled()}`,
             run: () => {
                 const store = getStore()
-                store.animations = !store.animations
+                return store.transformSetting("animations", (current) => !current)
             },
         },
         "settings.pdf-title.toggle": {
@@ -253,7 +262,7 @@ export function createSettingsCommands(getStore: () => SettingsStore) {
                 getStore().preferPdfTitle ? m.animations_enabled() : m.animations_disabled(),
             run: () => {
                 const store = getStore()
-                store.preferPdfTitle = !store.preferPdfTitle
+                return store.transformSetting("preferPdfTitle", (current) => !current)
             },
         },
     } satisfies Record<string, SettingsCommand>

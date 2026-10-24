@@ -341,7 +341,13 @@ class PromptStore implements PromptService {
 
         if (closeBeforeSelect) {
             if (this.session === session) return
-            if (this.suspendedFrames.some((frame) => frame.session === session)) this.cancelFlow()
+            // Completing this selection owns its suspended Parent Prompt, not a replacement
+            // opened while the command was awaiting. Keep that replacement independently live.
+            const frameIndex = this.suspendedFrames.findIndex((frame) => frame.session === session)
+            if (frameIndex !== -1) {
+                this.suspendedFrames.splice(frameIndex, 1)
+                session.resolve(undefined)
+            }
         } else if (behavior === "close") {
             this.close()
         }

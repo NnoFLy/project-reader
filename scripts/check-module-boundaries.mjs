@@ -217,6 +217,9 @@ function isCoreSafeSharedTarget(target) {
 }
 
 function targetBoundaryViolation(from, to) {
+    // App presentation reuses the existing host-owned modal, not the wider shared UI surface.
+    if (from.kind === "app-host" && to.kind === "shared" && to.path === "ui/modal/Modal.svelte")
+        return null
     if (["app-host", "routes"].includes(from.kind) && to.kind === "module") {
         return `${from.kind === "app-host" ? "app host" : "routes"} may not import legacy feature internals`
     }

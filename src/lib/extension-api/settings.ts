@@ -1,9 +1,33 @@
 import type { CommandRegistry } from "./commands"
 import type { ContextualStatusPublisher } from "./contextual-status"
-import type { Disposable, SettingContribution } from "./contracts"
+import type { Disposable, SettingCategory, SettingContribution } from "./contracts"
 
 export interface RegisteredSetting<T = unknown> extends SettingContribution<T> {
     readonly extensionId: string
+    readonly extensionName: string
+    readonly category: SettingCategory
+    readonly editorUnavailableReason?: string
+}
+
+export type SettingsChange =
+    | { readonly kind: "catalog" }
+    | {
+          readonly kind: "value"
+          readonly settingId: string
+          readonly value: unknown
+          /** Opaque operation observation provenance only; never an authorization token. */
+          readonly provenance?: symbol
+      }
+
+/** Trusted host-owned discovery only; never supplied to an extension context. */
+export interface HostSettingsCatalog {
+    get<T = unknown>(settingId: string): RegisteredSetting<T> | undefined
+    list(): readonly RegisteredSetting[]
+    /** Pass the captured entry for every asynchronous UI operation, including retries. */
+    getValue<T>(settingId: string, expectedSetting?: RegisteredSetting): Promise<T>
+    setValue<T>(settingId: string, value: T, expectedSetting?: RegisteredSetting): Promise<void>
+    resetValue(settingId: string, expectedSetting?: RegisteredSetting): Promise<void>
+    onDidChange(listener: (change: SettingsChange) => void): Disposable
 }
 
 export interface SettingsRegistry {
@@ -11,7 +35,16 @@ export interface SettingsRegistry {
     get<T = unknown>(settingId: string): RegisteredSetting<T> | undefined
     list(): readonly RegisteredSetting[]
     getValue<T>(settingId: string): Promise<T>
-    setValue<T>(settingId: string, value: T): Promise<void>
+    /** Optional provenance is echoed on this operation's successful value notification. */
+    setValue<T>(settingId: string, value: T, provenance?: symbol): Promise<void>
+    /** Atomically import only when no durable value exists; skipped imports emit no change. */
+    initializeValue<T>(
+        settingId: string,
+        value: T,
+        provenance?: symbol,
+    ): Promise<{ readonly initialized: boolean; readonly value: T }>
+    resetValue(settingId: string): Promise<void>
+    onDidChange(listener: (change: SettingsChange) => void): Disposable
 }
 import type { PromptRequest, PromptService } from "./prompt"
 
@@ -31,7 +64,14 @@ export interface SettingsState {
 
 export interface SettingsStore extends SettingsState {
     getSettings(): SettingsState
-    updateSetting<K extends keyof SettingsState>(key: K, value: SettingsState[K]): void
+    readonly loadErrors: Readonly<Partial<Record<keyof SettingsState, string>>>
+    readonly writeErrors: Readonly<Partial<Record<keyof SettingsState, string>>>
+    updateSetting<K extends keyof SettingsState>(key: K, value: SettingsState[K]): Promise<void>
+    transformSetting<K extends keyof SettingsState>(
+        key: K,
+        transform: (value: SettingsState[K]) => SettingsState[K],
+    ): Promise<void>
+    whenSettled(): Promise<void>
 }
 
 export interface SettingsConstants {
@@ -55,6 +95,14 @@ export interface SettingsCommand {
 export type AppLocale = SettingsLanguage
 
 export interface SettingsCapability {
+    /** Request presentation only; repeated requests focus the app-owned singleton. */
+    readonly openSettings: () => void
+    /** One app presenter per lifetime; retains one request until a presenter subscribes. */
+    readonly onDidRequestOpen: (listener: () => void) => Disposable
+    /** Post-ACK language intent; undefined cancels an older intent. Never await the presenter. */
+    readonly onDidRequestNavigation: (
+        listener: (navigate: (() => void) | undefined) => void,
+    ) => Disposable
     readonly settingsStore: SettingsStore
     readonly CONSTANTS: SettingsConstants
     readonly DEFAULT_SETTINGS: SettingsState

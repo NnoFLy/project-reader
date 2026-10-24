@@ -13,6 +13,8 @@ import {
     type RegisteredDocumentAdapter,
     type RegisteredView,
     type SettingsRegistry,
+    type SettingsChange,
+    type HostSettingsCatalog,
     type ViewContribution,
     type ViewRegistry,
     type ViewSlot,
@@ -21,8 +23,13 @@ import {
 } from "../extension-api"
 import { DocumentAdapterRegistry as CoreDocumentAdapterRegistry } from "../core/documents"
 import { CommandRegistryImpl, type HostCommandFacade, type HostKeybinding } from "../core/commands"
-import { SettingsRegistryImpl, type SettingsStore } from "../core/settings"
+import {
+    SettingsRegistryImpl,
+    SettingsOperationCoordinator,
+    type SettingsStore,
+} from "../core/settings"
 import type { DocumentAdapter as CoreDocumentAdapter } from "../document-model"
+import { settingsPlacement } from "./settingsPlacement"
 
 class ViewRegistryImpl implements ViewRegistry {
     private readonly views = new Map<string, RegisteredView>()
@@ -292,9 +299,28 @@ class PermissionedSettingsRegistry implements SettingsRegistry {
         return this.delegate.getValue(settingId)
     }
 
-    setValue<T>(settingId: string, value: T): Promise<void> {
+    setValue<T>(settingId: string, value: T, provenance?: symbol): Promise<void> {
         this.permissions.require("settings")
-        return this.delegate.setValue(settingId, value)
+        return this.delegate.setValue(settingId, value, provenance)
+    }
+
+    initializeValue<T>(
+        settingId: string,
+        value: T,
+        provenance?: symbol,
+    ): Promise<{ readonly initialized: boolean; readonly value: T }> {
+        this.permissions.require("settings")
+        return this.delegate.initializeValue(settingId, value, provenance)
+    }
+
+    resetValue(settingId: string): Promise<void> {
+        this.permissions.require("settings")
+        return this.delegate.resetValue(settingId)
+    }
+
+    onDidChange(listener: (change: SettingsChange) => void): Disposable {
+        this.permissions.require("settings")
+        return this.delegate.onDidChange(listener)
     }
 
     dispose(): void {
@@ -312,6 +338,7 @@ export interface ExtensionRegistries {
 
 interface InternalExtensionRegistries extends ExtensionRegistries {
     readonly hostCommands: CommandRegistryImpl
+    readonly hostSettings: SettingsRegistryImpl
     readonly hostViews: ViewRegistryImpl
     readonly hostDocuments: DocumentAdapterRegistryImpl
 }
@@ -322,6 +349,80 @@ const defaultPermissions = createPermissionSet([])
 
 export class ContributionRegistry {
     private readonly registries = new Map<string, InternalExtensionRegistries>()
+    private readonly settingsActivity = new Map<string, boolean>()
+    private readonly settingsOperations = new SettingsOperationCoordinator()
+    private readonly settingsListeners = new Set<(change: SettingsChange) => void>()
+    readonly globalSettings: HostSettingsCatalog = {
+        get: <T = unknown>(id: string) => this.findSettingsRegistry(id)?.get<T>(id),
+        list: () =>
+            [...this.registries.entries()].flatMap(([id, value]) =>
+                this.settingsActivity.get(id) !== false ? value.hostSettings.list() : [],
+            ),
+        getValue: async <T>(id: string, expected?: RegisteredSetting) =>
+            this.requireSettingsRegistry(id, expected).getValue<T>(id),
+        setValue: async (id, value, expected) => {
+            const registry = this.requireEditableSettingsRegistry(id, expected)
+            await registry.setValue(id, value)
+        },
+        resetValue: async (id, expected) => {
+            const registry = this.requireEditableSettingsRegistry(id, expected)
+            await registry.resetValue(id)
+        },
+        onDidChange: (listener) => {
+            this.settingsListeners.add(listener)
+            return {
+                dispose: () => {
+                    this.settingsListeners.delete(listener)
+                },
+            }
+        },
+    }
+
+    /** Host lifecycle gate; direct registry construction remains immediately usable. */
+    setSettingsActive(extensionId: string, active: boolean): void {
+        const previous = this.settingsActivity.get(extensionId) !== false
+        this.settingsActivity.set(extensionId, active)
+        if (previous !== active) this.emitSettings({ kind: "catalog" })
+    }
+
+    private emitSettings(change: SettingsChange): void {
+        for (const listener of this.settingsListeners) {
+            try {
+                listener(change)
+            } catch {
+                /* Observers cannot prevent invalidation. */
+            }
+        }
+    }
+
+    private findSettingsRegistry(id: string): SettingsRegistryImpl | undefined {
+        return [...this.registries.entries()].find(
+            ([extensionId, value]) =>
+                this.settingsActivity.get(extensionId) !== false && value.hostSettings.get(id),
+        )?.[1].hostSettings
+    }
+
+    private requireEditableSettingsRegistry(
+        id: string,
+        expected?: RegisteredSetting,
+    ): SettingsRegistryImpl {
+        const registry = this.requireSettingsRegistry(id, expected)
+        const reason = registry.get(id)?.editorUnavailableReason
+        if (reason) throw new Error(`Setting editor unavailable: ${reason}`)
+        return registry
+    }
+
+    private requireSettingsRegistry(
+        id: string,
+        expected?: RegisteredSetting,
+    ): SettingsRegistryImpl {
+        const registry = this.findSettingsRegistry(id)
+        if (expected && registry?.get(id) !== expected)
+            throw new Error(`Setting is no longer registered: ${id}`)
+        if (!registry) throw new Error(`Setting is not registered: ${id}`)
+        return registry
+    }
+
     /** Read-only command access used by host-owned UI such as the command palette. */
     readonly globalCommands: HostCommandRegistry = {
         get: (commandId) => this.findCommand(commandId),
@@ -338,6 +439,7 @@ export class ContributionRegistry {
         extensionId: string,
         permissions: PermissionSet = defaultPermissions,
         settingsStore?: SettingsStore,
+        extensionName = extensionId,
     ): ExtensionRegistries {
         const existing = this.registries.get(extensionId)
         if (existing) return existing
@@ -346,7 +448,16 @@ export class ContributionRegistry {
         )
         const hostViews = new ViewRegistryImpl(extensionId, permissions)
         const views = new PermissionedViewRegistry(hostViews, permissions)
-        const hostSettings = new SettingsRegistryImpl(extensionId, settingsStore)
+        const hostSettings = new SettingsRegistryImpl(
+            extensionId,
+            settingsStore,
+            this.settingsOperations,
+            extensionName,
+            (settingId) => settingsPlacement(extensionId, settingId),
+        )
+        hostSettings.onDidChange((change) => {
+            if (this.settingsActivity.get(extensionId) !== false) this.emitSettings(change)
+        })
         const hostDocuments = new DocumentAdapterRegistryImpl(
             extensionId,
             this.coreDocumentAdapters,
@@ -366,9 +477,11 @@ export class ContributionRegistry {
             settings,
             documents,
             hostCommands,
+            hostSettings,
             hostViews,
             hostDocuments,
             dispose: () => {
+                if (this.registries.get(extensionId) !== registries) return
                 hostCommands.dispose()
                 hostViews.dispose()
                 hostSettings.dispose()

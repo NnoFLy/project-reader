@@ -9,7 +9,7 @@ import { vfsStore } from "$lib/extensions/builtin/library/state/libraryStore.sve
 import AppChrome from "$lib/app/AppChrome.svelte"
 import { APP_HOST_CONTEXT, type AppHostContext } from "$lib/app/hostContext"
 
-vi.mock("$app/environment", () => ({ version: "test" }))
+vi.mock("$app/environment", () => ({ version: "test", browser: false }))
 vi.mock("$app/navigation", () => ({ afterNavigate: vi.fn() }))
 vi.mock("$app/state", () => ({
     updated: { current: false },

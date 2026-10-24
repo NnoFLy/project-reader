@@ -32,6 +32,9 @@
         isBookmarked?: boolean
     }>()
 
+    import { getViewerRuntimeContext } from "../viewerRuntime"
+    const { executeCommand } = getViewerRuntimeContext()()
+
     const commandsNode = getContext<CommandScope>(COMMANDS_CONTEXT_KEY)
 </script>
 
@@ -58,6 +61,16 @@
 
     <div class="header-actions">
         <AppUpdateButton />
+
+        <Button
+            variant="action"
+            square={true}
+            onclick={() => void executeCommand("settings.open")}
+            aria-label={m.settings()}
+            tooltip={m.settings()}
+        >
+            <SettingsIcon />
+        </Button>
 
         {#if isLoaded}
             {#if isBookmarked}
@@ -110,12 +123,12 @@
                 square={viewport.isCompact}
                 open={isSettingsOpen}
                 onclick={() => void commandsStore.execute("viewer.sidebar.settings.toggle")}
-                aria-label={m.settings()}
-                tooltip={m.settings() +
+                aria-label={m.reading_controls()}
+                tooltip={m.reading_controls() +
                     getShortcutHint(commandsNode, "viewer.sidebar.settings.toggle")}
             >
                 <SettingsIcon />
-                <span class="settings-text">{m.settings()}</span>
+                <span class="settings-text">{m.reading_controls()}</span>
             </Button>
         {/if}
 

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryStorageBackend, createExtensionStorage } from "$lib/core/storage"
 import * as safeStorage from "$lib/shared/state/safeStorage"
 import { createBuiltinHost } from ".."
-import { settingsStore } from "./state/settingsStore.svelte"
+import { DEFAULT_SETTINGS, settingsStore } from "./state/settingsStore.svelte"
+import * as localeRuntime from "$lib/paraglide/runtime"
 
 let host: ReturnType<typeof createBuiltinHost> | undefined
 const legacyStorage = new Map<string, string>()
@@ -29,6 +30,63 @@ afterEach(async () => {
 })
 
 describe("builtin settings", () => {
+    it("describes all seven preferences as localized editable application preferences and new-session defaults", async () => {
+        host = createBuiltinHost({ storage: new MemoryStorageBackend() })
+        await host.start()
+        const locale = vi.spyOn(localeRuntime, "getLocale").mockReturnValue("en")
+        const entries = host.settings.list()
+        expect(
+            entries.map(({ id, defaultValue, category, editorUnavailableReason }) => [
+                id,
+                defaultValue,
+                category,
+                editorUnavailableReason,
+            ]),
+        ).toEqual([
+            ["settings.theme", "system", "appearance", undefined],
+            ["settings.layout", "scroll", "reading", undefined],
+            ["settings.scale", 1.5, "reading", undefined],
+            ["settings.quality", 3, "reading", undefined],
+            ["settings.language", "ru", "general", undefined],
+            ["settings.animations", DEFAULT_SETTINGS.animations, "appearance", undefined],
+            ["settings.prefer-pdf-title", true, "library", undefined],
+        ])
+        const text = (value: string | (() => string) | undefined) =>
+            typeof value === "function" ? value() : value
+        expect(text(host.settings.get("settings.layout")?.label)).toBe("Default page layout")
+        expect(text(host.settings.get("settings.scale")?.label)).toBe("Default zoom")
+        for (const entry of entries) {
+            expect(text(entry.description)).toBeTruthy()
+            const english = text(entry.label)
+            locale.mockReturnValue("ru")
+            expect(text(entry.label)).not.toBe(english)
+            locale.mockReturnValue("en")
+        }
+        expect(text(host.settings.get("settings.layout")?.description)).toContain(
+            "new Reading sessions",
+        )
+        expect(text(host.settings.get("settings.scale")?.description)).toContain(
+            "new Reading sessions",
+        )
+        expect(text(host.settings.get("settings.quality")?.description)).toContain(
+            "all Reading sessions",
+        )
+        await expect(host.settings.setValue("settings.scale", 1.2345)).resolves.toBeUndefined()
+        for (const [id, value] of [
+            ["settings.theme", "sepia"],
+            ["settings.layout", "book"],
+            ["settings.scale", 0.1],
+            ["settings.scale", Infinity],
+            ["settings.quality", 2.5],
+            ["settings.quality", 6],
+            ["settings.language", "de"],
+            ["settings.animations", "false"],
+            ["settings.prefer-pdf-title", 0],
+        ] as const) {
+            await expect(host.settings.setValue(id, value)).rejects.toThrow()
+        }
+    })
+
     it("migrates sanitized legacy values without replacing namespaced values", async () => {
         legacyStorage.set(
             "settings",
@@ -87,6 +145,7 @@ describe("builtin settings", () => {
             "settings.quality.out",
             "settings.animations.toggle",
             "settings.pdf-title.toggle",
+            "settings.open",
         ])
 
         await commands.execute("settings.theme", { value: "dark" })

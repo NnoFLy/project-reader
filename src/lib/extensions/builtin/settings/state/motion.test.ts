@@ -82,7 +82,7 @@ describe("animation preference", () => {
         const { settingsStore, configureSettings, motionPreferences } = await loadSettings()
         const storage = createExtensionStorage(new MemoryStorageBackend(), "builtin.settings")
         await storage.set("settings.animations", true)
-        const registry = new SettingsRegistryImpl("builtin.settings")
+        const registry = new SettingsRegistryImpl("builtin.settings", storage)
         registry.register({ id: "settings.animations", label: "Animations", defaultValue: false })
 
         configureSettings(registry, storage)
