@@ -66,8 +66,10 @@
             variant="action"
             square={true}
             onclick={() => void executeCommand("settings.open")}
+            data-settings-trigger
             aria-label={m.settings()}
-            tooltip={m.settings()}
+            aria-keyshortcuts="Control+,"
+            tooltip={`${m.settings()} (Ctrl+,)`}
         >
             <SettingsIcon />
         </Button>

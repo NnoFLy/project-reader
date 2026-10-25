@@ -333,6 +333,8 @@ it("keeps a failed search edit and its error through query clearing and a catego
         expect(document.body.textContent).not.toContain("Not saved")
         button("Clear search").click()
         await settle()
+        button("Plugins").click()
+        await settle()
         button("Reading").click()
         await settle()
         button("Plugins").click()
@@ -1102,12 +1104,36 @@ it("browses real built-in categories and searches the complete catalog", async (
     try {
         await settle()
         expect(field("Language").value).toBe("1")
+        expect(document.querySelector("nav > ul")?.children).toHaveLength(4)
+        expect(
+            [...document.querySelectorAll("nav > ul > li > button")].map((node) =>
+                node.textContent?.trim(),
+            ),
+        ).toEqual(["General", "Appearance", "Library", "Plugins"])
+        expect(button("Reading")).toBeUndefined()
+        button("Plugins").click()
+        await settle()
         button("Reading").click()
         await settle()
         expect(document.body.textContent).toContain("Default zoom")
+        expect(document.querySelector(".plugin-navigation button[aria-current]")?.textContent).toBe(
+            "Reading",
+        )
+        expect(document.querySelectorAll("article")).toHaveLength(3)
+        expect(field("Default zoom").value).toBe("1.5")
+        searchFor("Default zoom")
+        await settle()
+        expect(document.querySelector(".setting-context")?.textContent).toContain(
+            "Plugins › Reading",
+        )
+        searchFor("Reading")
+        await settle()
+        expect(document.querySelectorAll("article")).toHaveLength(3)
+        button("Clear search").click()
+        await settle()
         button("Plugins").click()
         await settle()
-        expect(document.body.textContent).toContain("No plugin settings")
+        expect(document.querySelector(".plugin-list")?.textContent).toContain("Reading")
         const search = document.querySelector('[type="search"]') as HTMLInputElement
         search.value = "theme"
         search.dispatchEvent(new Event("input", { bubbles: true }))

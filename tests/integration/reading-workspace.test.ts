@@ -292,8 +292,12 @@ describe("Reading workspace host lifetime", () => {
                 return result
             }
             reader = mount(ReaderSettings, { target })
-            expect(target.textContent).not.toContain(m.quality())
-            await vi.waitFor(() => expect(renderedQualities).toContain(1))
+            const readerQuality = () => target.querySelector<HTMLSelectElement>("select")!
+            await vi.waitFor(() => {
+                expect(target.textContent).toContain(m.quality())
+                expect(readerQuality().value).toBe("1")
+                expect(renderedQualities).toContain(1)
+            })
             const createOwnedCommands = () =>
                 createViewerSettingsCommands(
                     runtime.store,
@@ -306,6 +310,7 @@ describe("Reading workspace host lifetime", () => {
             await commands.qualityIn.run()
             await vi.waitFor(() => {
                 expect(renderedQualities.at(-1)).toBe(2)
+                expect(readerQuality().value).toBe("2")
             })
             const secondSettings = second.contributions.forExtension("builtin.settings").settings
             expect(await secondSettings.getValue("settings.quality")).toBe(3)
@@ -313,12 +318,14 @@ describe("Reading workspace host lifetime", () => {
             await commands.qualityIn.run()
             await vi.waitFor(() => {
                 expect(renderedQualities.at(-1)).toBe(3)
+                expect(readerQuality().value).toBe("3")
             })
             const recreatedCommands = createOwnedCommands()
             expect(recreatedCommands.qualityOut.subtitle?.()).toBe(`${m.quality()}: 3`)
             await recreatedCommands.qualityOut.run()
             await vi.waitFor(() => {
                 expect(renderedQualities.at(-1)).toBe(2)
+                expect(readerQuality().value).toBe("2")
             })
             expect(
                 await createExtensionStorage(secondStorage, "builtin.settings").get(
@@ -328,13 +335,23 @@ describe("Reading workspace host lifetime", () => {
             const stopChrome = await mountAppSettings(first)
             try {
                 await first.commands.execute("settings.open")
+                await vi.waitFor(() => expect(settingsButton(m.settings_plugins())).toBeDefined())
+                settingsButton(m.settings_plugins()).click()
                 await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
                 settingsButton(m.settings_reading()).click()
                 await vi.waitFor(() => expect(settingsControl(m.quality()).value).toBe("2"))
+                readerQuality().value = "3"
+                readerQuality().dispatchEvent(new Event("change", { bubbles: true }))
+                await vi.waitFor(async () => {
+                    expect(renderedQualities.at(-1)).toBe(3)
+                    expect(settingsControl(m.quality()).value).toBe("3")
+                    expect(await first.settings.getValue("settings.quality")).toBe(3)
+                })
                 editReadingSetting(m.quality(), "4")
-                await vi.waitFor(() =>
-                    expect(renderedDocuments.at(-1)).toEqual({ name: "book.fake", quality: 4 }),
-                )
+                await vi.waitFor(() => {
+                    expect(renderedDocuments.at(-1)).toEqual({ name: "book.fake", quality: 4 })
+                    expect(readerQuality().value).toBe("4")
+                })
                 for (const id of ["other", "book"]) {
                     await unmount(reader)
                     reader = undefined
@@ -350,6 +367,7 @@ describe("Reading workspace host lifetime", () => {
                         }),
                     )
                     expect(settingsControl(m.quality()).value).toBe("4")
+                    expect(readerQuality().value).toBe("4")
                     expect(await first.settings.getValue("settings.quality")).toBe(4)
                 }
             } finally {
@@ -533,6 +551,8 @@ describe("Reading workspace host lifetime", () => {
             store.goToPage(7, { scrollPosition: 0.3 })
             stopChrome = await mountAppSettings(first)
             await first.commands.execute("settings.open")
+            await vi.waitFor(() => expect(settingsButton(m.settings_plugins())).toBeDefined())
+            settingsButton(m.settings_plugins()).click()
             await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
             settingsButton(m.settings_reading()).click()
             await vi.waitFor(() =>
@@ -603,6 +623,8 @@ describe("Reading workspace host lifetime", () => {
             })
             stopChrome = await mountAppSettings(second)
             await second.commands.execute("settings.open")
+            await vi.waitFor(() => expect(settingsButton(m.settings_plugins())).toBeDefined())
+            settingsButton(m.settings_plugins()).click()
             await vi.waitFor(() => expect(settingsButton(m.settings_reading())).toBeDefined())
             settingsButton(m.settings_reading()).click()
             await vi.waitFor(() =>

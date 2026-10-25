@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryStorageBackend, createExtensionStorage } from "$lib/core/storage"
 import * as safeStorage from "$lib/shared/state/safeStorage"
 import { createBuiltinHost } from ".."
+import { KeyboardHandler, normalizeKeybinding, resolveHostKeybindings } from "$lib/core/commands"
 import { DEFAULT_SETTINGS, settingsStore } from "./state/settingsStore.svelte"
 import * as localeRuntime from "$lib/paraglide/runtime"
 
@@ -30,6 +31,44 @@ afterEach(async () => {
 })
 
 describe("builtin settings", () => {
+    it.each([
+        { tagName: "BUTTON" },
+        { tagName: "INPUT" },
+        { tagName: "TEXTAREA" },
+        { tagName: "SELECT" },
+        { tagName: "DIV", isContentEditable: true },
+    ])("dispatches Ctrl+, to settings.open from $tagName", async (target) => {
+        host = createBuiltinHost({ storage: new MemoryStorageBackend() })
+        await host.start()
+        const open = vi.fn()
+        const subscription = host.settingsCapability!.onDidRequestOpen(open)
+        try {
+            const event = {
+                key: ",",
+                code: "Comma",
+                ctrlKey: true,
+                altKey: false,
+                shiftKey: false,
+                metaKey: false,
+                target,
+            } as unknown as KeyboardEvent
+            const candidates = KeyboardHandler.candidates(event)
+            const bindings = host.commands
+                .listKeybindings()
+                .filter(({ keybinding }) => candidates.has(normalizeKeybinding(keybinding)))
+            const eligible = await resolveHostKeybindings(bindings, event)
+            expect(eligible).toHaveLength(1)
+            expect(eligible[0]).toMatchObject({
+                commandId: "settings.open",
+                allowInInputs: true,
+            })
+            await host.commands.execute(eligible[0].commandId, undefined, event)
+            expect(open).toHaveBeenCalledOnce()
+        } finally {
+            subscription.dispose()
+        }
+    })
+
     it("describes all seven preferences as localized editable application preferences and new-session defaults", async () => {
         host = createBuiltinHost({ storage: new MemoryStorageBackend() })
         await host.start()

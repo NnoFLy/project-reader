@@ -89,7 +89,7 @@
     function fitToWidth() {
         if (!pdf || containerWidth <= 0) return
         if (viewport.isCompact) {
-            if (!isCompactPortrait) viewerStore.scale = DEFAULT_SETTINGS.scale
+            viewerStore.scale = DEFAULT_SETTINGS.scale
             return
         }
 

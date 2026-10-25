@@ -88,7 +88,25 @@ export async function mountSettingsBrowserRoute(
         props: {
             children: createRawSnippet(() => ({
                 render: () =>
-                    '<main aria-label="Settings browser fixture">Settings browser fixture</main>',
+                    '<main aria-label="Settings browser fixture"><header></header>Settings browser fixture</main>',
+                setup(main) {
+                    const header = main.querySelector("header")!
+                    const updateTrigger = () => {
+                        header.replaceChildren()
+                        if (host.providers.get("builtin.settings")?.state !== "active") return
+                        const trigger = document.createElement("button")
+                        trigger.dataset.settingsTrigger = ""
+                        trigger.textContent = "Settings"
+                        trigger.setAttribute("aria-keyshortcuts", "Control+,")
+                        trigger.onclick = () => host.settingsCapability?.openSettings()
+                        header.append(trigger)
+                    }
+                    const subscription = host.providers.onDidChange((provider) => {
+                        if (provider.extensionId === "builtin.settings") updateTrigger()
+                    })
+                    updateTrigger()
+                    return () => subscription.dispose()
+                },
             })),
         },
     })

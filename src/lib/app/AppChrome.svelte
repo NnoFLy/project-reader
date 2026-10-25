@@ -4,7 +4,6 @@
     import type { Component } from "svelte"
     import type { ContextualStatus, Notification, SettingsCapability } from "$lib/extension-api"
     import GlobalSettings from "./settings/GlobalSettings.svelte"
-    import * as m from "$lib/paraglide/messages"
     import { version } from "$app/environment"
     import { updated } from "$app/state"
     import { afterNavigate } from "$app/navigation"
@@ -167,13 +166,6 @@
     let settingsCapability = $state.raw<SettingsCapability>()
     let presentedSettings = $state.raw<{ capability: SettingsCapability }>()
     let settingsModal: ReturnType<typeof GlobalSettings> | undefined = $state()
-    let settingsButton: HTMLButtonElement | undefined
-    function captureSettingsButton(node: HTMLButtonElement) {
-        settingsButton = node
-        return () => {
-            if (settingsButton === node) settingsButton = undefined
-        }
-    }
 
     onMount(() => {
         const host = hostContext.application.host
@@ -211,7 +203,9 @@
                         const target =
                             opener instanceof HTMLElement && opener.isConnected
                                 ? opener
-                                : settingsButton
+                                : document.querySelector<HTMLElement>(
+                                      "header [data-settings-trigger]",
+                                  )
                         target?.focus()
                     }
                     presentedSettings = { capability }
@@ -307,16 +301,6 @@
 </script>
 
 <div id="app-root">
-    {#if settingsCapability}
-        <nav class="app-settings-access" aria-label={m.settings()}>
-            <button
-                {@attach captureSettingsButton}
-                onclick={() => settingsCapability?.openSettings()}
-            >
-                {m.settings()}
-            </button>
-        </nav>
-    {/if}
     <div class="app">
         {@render children()}
 
@@ -382,32 +366,6 @@
     @import "$lib/shared/styles/variables.css";
     @import "$lib/shared/styles/typography.css";
     @import "$lib/shared/styles/global.css";
-
-    .app-settings-access {
-        display: flex;
-        box-sizing: border-box;
-        justify-content: flex-end;
-        padding: calc(0.25rem + env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
-            0.25rem max(0.75rem, env(safe-area-inset-left));
-        background: var(--surface-color);
-        border-block-end: var(--border-inline) solid var(--border-color);
-    }
-
-    .app-settings-access button {
-        min-block-size: var(--control-height-compact);
-        padding: 0.35rem 0.85rem;
-        border: var(--border-inline) solid var(--border-color);
-        border-radius: var(--radius-md);
-        background: var(--color-surface-raised);
-        color: var(--text-color);
-        font: inherit;
-        cursor: pointer;
-    }
-
-    .app-settings-access button:focus-visible {
-        outline: 2px solid var(--accent-color);
-        outline-offset: 2px;
-    }
 
     .host-contextual-status {
         position: fixed;

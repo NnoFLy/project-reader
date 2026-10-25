@@ -58,6 +58,9 @@ export class ViewerStore {
     })
     private pageNumber = $state(1)
     private pageScroll = $state(0)
+    // Position-only snapshots must not invalidate rendering settings.
+    private readingScale = $derived(this.reading.state.scale)
+    private readingLayout = $derived(this.reading.state.layout)
 
     get currentPage() {
         return this.pageNumber
@@ -74,13 +77,13 @@ export class ViewerStore {
         this.workspace.setPosition(this.pageNumber, value)
     }
     get scale() {
-        return this.reading.state.scale
+        return this.readingScale
     }
     set scale(value: number) {
         this.workspace.setScale(value)
     }
     get layout(): ReadingLayout {
-        return this.reading.state.layout
+        return this.readingLayout
     }
     set layout(value: ReadingLayout) {
         this.workspace.setLayout(value)

@@ -58,6 +58,11 @@ const settle = async () => {
 }
 const button = (name: string, scope: ParentNode = document) =>
     [...scope.querySelectorAll("button")].find((node) => node.textContent?.trim() === name)!
+async function openReading() {
+    button(m.settings_plugins()).click()
+    await settle()
+    button(m.settings_reading()).click()
+}
 const search = () => document.querySelector<HTMLInputElement>('[type="search"]')!
 const settingRow = (label: string) =>
     document.querySelector<HTMLElement>(`article[aria-label="${label}"]`)!
@@ -110,7 +115,25 @@ async function setup(
         ]),
         props: {
             children: createRawSnippet(() => ({
-                render: () => '<main aria-label="Library">Library</main>',
+                render: () => '<main aria-label="Library"><header></header>Library</main>',
+                setup(main) {
+                    const header = main.querySelector("header")!
+                    const updateTrigger = () => {
+                        header.replaceChildren()
+                        if (host.providers.get("builtin.settings")?.state !== "active") return
+                        const trigger = document.createElement("button")
+                        trigger.dataset.settingsTrigger = ""
+                        trigger.textContent = "Settings"
+                        trigger.setAttribute("aria-keyshortcuts", "Control+,")
+                        trigger.onclick = () => host.settingsCapability?.openSettings()
+                        header.append(trigger)
+                    }
+                    const subscription = host.providers.onDidChange((provider) => {
+                        if (provider.extensionId === "builtin.settings") updateTrigger()
+                    })
+                    updateTrigger()
+                    return () => subscription.dispose()
+                },
             })),
         },
     })
@@ -123,6 +146,26 @@ async function setup(
         },
     }
 }
+it("restores focus to the header trigger when a command opener disconnects", async () => {
+    const app = await setup()
+    try {
+        expect(document.querySelector(".app-settings-access")).toBeNull()
+        const temporary = document.createElement("button")
+        document.body.append(temporary)
+        temporary.focus()
+        await app.host.commands.execute("settings.open")
+        temporary.remove()
+        await settle()
+        document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]')!.click()
+        await settle()
+        expect(document.activeElement).toBe(
+            document.querySelector("header [data-settings-trigger]"),
+        )
+    } finally {
+        await app.stop()
+    }
+})
+
 it("applies generated Theme edits, restores the current choice, and durably resets only Theme", async () => {
     const storage = new MemoryStorageBackend()
     let app = await setup(undefined, storage)
@@ -219,7 +262,7 @@ it("waits for a held Theme rejection before guarding close and retains its faile
         await settle()
         expect(settingRow("Theme").textContent).toContain("Not saved")
         expect(await app.host.settings.getValue("settings.theme")).toBe("light")
-        button("Reading").click()
+        await openReading()
         await settle()
         button("Appearance").click()
         await settle()
@@ -428,7 +471,14 @@ it("updates real Library titles from the generated PDF title preference and rest
         await vi.waitFor(() =>
             expect(document.querySelector("main")!.textContent).toContain("Embedded title"),
         )
-        button("Settings").click()
+        const libraryTrigger = document.querySelector<HTMLButtonElement>(
+            "main .global-settings-trigger",
+        )!
+        expect(libraryTrigger.getAttribute("aria-keyshortcuts")).toBe("Control+,")
+        expect(libraryTrigger.getAttribute("aria-label")).toBe(m.settings())
+        expect(libraryTrigger.textContent?.trim()).toBe(m.settings())
+        expect(libraryTrigger.querySelector("svg")).not.toBeNull()
+        libraryTrigger.click()
         await settle()
         button("Library").click()
         await settle()
@@ -477,7 +527,7 @@ it.each([
         try {
             button("Settings").click()
             await settle()
-            button("Reading").click()
+            await openReading()
             await settle()
             editSetting(label, input)
             await vi.waitFor(async () => expect(await app.host.settings.getValue(id)).toBe(saved))
@@ -485,7 +535,7 @@ it.each([
             app = await setup(undefined, storage)
             await app.host.commands.execute("settings.open")
             await settle()
-            button("Reading").click()
+            await openReading()
             await settle()
             expect(settingControl(label).value).toBe(input)
             expect(settingRow(label).textContent).toContain("Modified")
@@ -526,7 +576,7 @@ it("defers language navigation through pending writes, Stay, and a later accepte
     try {
         button("Settings").click()
         await settle()
-        button("Reading").click()
+        await openReading()
         await settle()
         const zoom = document.querySelector<HTMLInputElement>('input[type="number"]')!
         zoom.value = "99"
@@ -571,7 +621,7 @@ it("defers language navigation through pending writes, Stay, and a later accepte
         promptStore.close()
         await replacement
         await settle()
-        button(m.settings_reading()).click()
+        await openReading()
         await settle()
         expect(document.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe("99")
         document.querySelector<HTMLButtonElement>(`[aria-label="${m.settings_close()}"]`)!.click()
@@ -598,7 +648,7 @@ it.each([false, true])(
         try {
             button("Settings").click()
             await settle()
-            button("Reading").click()
+            await openReading()
             await settle()
             const zoom = document.querySelector<HTMLInputElement>('input[type="number"]')!
             zoom.value = "99"
@@ -653,7 +703,7 @@ it("cancels a deferred destination when the current URL language is successfully
     try {
         button("Settings").click()
         await settle()
-        button("Reading").click()
+        await openReading()
         await settle()
         const zoom = document.querySelector<HTMLInputElement>('input[type="number"]')!
         zoom.value = "99"
@@ -722,7 +772,7 @@ it("preserves both held relative quality commands in the mounted acknowledged co
     try {
         button("Settings").click()
         await settle()
-        button("Reading").click()
+        await openReading()
         await settle()
         const quality = () => {
             const label = [...document.querySelectorAll("label")].find(
@@ -824,7 +874,7 @@ it("recovers the relative queue after a held rejection without publishing the fa
     try {
         button("Settings").click()
         await settle()
-        button("Reading").click()
+        await openReading()
         await settle()
         storage.set = async (key, value) => {
             if (key.endsWith(":settings.quality") && !release) {
@@ -937,7 +987,7 @@ it("delivers queued opens and fences disabled presenters and mounted stale draft
     })
     try {
         expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-        button("Reading").click()
+        await openReading()
         await settle()
         const zoom = document.querySelector<HTMLInputElement>('input[type="number"]')!
         zoom.value = "99"
@@ -960,7 +1010,7 @@ it("delivers queued opens and fences disabled presenters and mounted stale draft
         expect(document.querySelector('[role="dialog"]')).toBeNull()
         button("Settings").click()
         await settle()
-        button("Reading").click()
+        await openReading()
         await settle()
         expect(document.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe("1.5")
         expect(document.body.textContent).not.toContain("Discard unsaved edits")
@@ -1012,7 +1062,7 @@ it("opens app Settings without a document and refocuses the singleton retaining 
         opener.click()
         await settle()
         expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-        button("Reading").click()
+        await openReading()
         await settle()
         const label = [...document.querySelectorAll("label")].find(
             (node) => node.textContent === "Default zoom",

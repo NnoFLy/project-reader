@@ -219,7 +219,7 @@ describe("Global Settings browser", () => {
             mobile: width === 390,
         })
         await page.call("Page.navigate", { url: `${origin}/en` })
-        await page.waitFor("!!document.querySelector('#app-root nav[aria-label=Settings] button')")
+        await page.waitFor("!!document.querySelector('[data-settings-trigger]')")
     }
 
     async function synthetic(page: BrowserPage, databaseName?: string) {
@@ -232,11 +232,11 @@ describe("Global Settings browser", () => {
             const target = document.createElement('div'); document.body.append(target);
             window.settingsFixture = await mountSettingsBrowserRoute(target, ${JSON.stringify(databaseName)});
         })()`)
-        await page.waitFor("!!document.querySelector('#app-root nav button')")
+        await page.waitFor("!!document.querySelector('[data-settings-trigger]')")
     }
 
     async function open(page: BrowserPage) {
-        await click(page, "document.querySelector('#app-root nav[aria-label=Settings] button')")
+        await click(page, "document.querySelector('[data-settings-trigger]')")
         await page.waitFor(
             `document.activeElement === document.querySelector(${JSON.stringify(search)})`,
         )
@@ -247,6 +247,9 @@ describe("Global Settings browser", () => {
         // Start from native keyboard focus instead of sending two Escapes from body,
         // which can open then immediately cancel a newly mounted confirmation.
         await key(page, "Tab")
+        // A draggable desktop header adds a focusable toolbar before the controls.
+        if (await page.evaluate("document.activeElement.matches('[role=toolbar]')"))
+            await key(page, "Tab")
         expect(
             await page.evaluate(
                 "!!document.activeElement.closest('[role=dialog]') && document.activeElement.matches('button,input,select')",
@@ -285,6 +288,11 @@ describe("Global Settings browser", () => {
         expect(visited.size).toBeGreaterThanOrEqual(count)
     }
 
+    async function openReading(page: BrowserPage) {
+        await click(page, buttonExpression("Plugins"))
+        await click(page, buttonExpression("Reading", `${dialog} section`))
+    }
+
     async function finish(page: BrowserPage) {
         try {
             await page.evaluate(
@@ -294,6 +302,146 @@ describe("Global Settings browser", () => {
             await browser!.closeTarget(page.targetId)
         }
     }
+
+    it.each([1280, 390])(
+        "opens singleton Settings with native Ctrl+, from the header and an input at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            const shortcut = async () => {
+                for (const type of ["keyDown", "keyUp"]) {
+                    await page.call("Input.dispatchKeyEvent", {
+                        type,
+                        key: ",",
+                        code: "Comma",
+                        windowsVirtualKeyCode: 188,
+                        modifiers: 2,
+                    })
+                }
+            }
+            try {
+                await setup(page, width)
+                expect(
+                    await page.evaluate(`(() => {
+                    const trigger = document.querySelector('header [data-settings-trigger]');
+                    const rect = trigger.getBoundingClientRect();
+                    const actions = trigger.closest('.header-btn-wrapper');
+                    return !document.querySelector('.app-settings-access') &&
+                        trigger.getAttribute('aria-label') === 'Settings' &&
+                        trigger.getAttribute('aria-keyshortcuts') === 'Control+,' &&
+                        rect.width >= 44 && rect.height >= 44 &&
+                        getComputedStyle(trigger).borderRadius === '6px' &&
+                        trigger.textContent.trim() === '' &&
+                        actions.lastElementChild === trigger;
+                })()`),
+                ).toBe(true)
+                await page.evaluate("document.querySelector('[data-settings-trigger]').focus()")
+                await shortcut()
+                await page.waitFor(
+                    `document.activeElement === document.querySelector(${JSON.stringify(search)})`,
+                )
+                await type(page, `document.querySelector(${JSON.stringify(search)})`, "Theme")
+                await page.evaluate("window.shortcutSearch = document.activeElement")
+                await shortcut()
+                expect(
+                    await page.evaluate(`document.querySelectorAll('[role=dialog]').length === 1 &&
+                    document.activeElement === window.shortcutSearch && window.shortcutSearch.value === 'Theme'`),
+                ).toBe(true)
+                await click(page, `document.querySelector(${JSON.stringify(close)})`)
+                await page.waitFor("!document.querySelector('[role=dialog]')")
+                expect(
+                    await page.evaluate(
+                        "document.activeElement === document.querySelector('[data-settings-trigger]')",
+                    ),
+                ).toBe(true)
+                // Test an input outside the modal without depending on unrelated library tools.
+                await page.evaluate(`(() => {
+                    const input = document.createElement('input');
+                    input.id = 'shortcut-input'; input.value = 'keep';
+                    document.querySelector('main').append(input); input.focus();
+                })()`)
+                await shortcut()
+                await page.waitFor(
+                    `document.activeElement === document.querySelector(${JSON.stringify(search)})`,
+                )
+                expect(await page.evaluate("document.querySelector('#shortcut-input').value")).toBe(
+                    "keep",
+                )
+                await click(page, `document.querySelector(${JSON.stringify(close)})`)
+                await page.waitFor("!document.querySelector('[role=dialog]')")
+                expect(await page.evaluate("document.activeElement.id")).toBe("shortcut-input")
+                expect(page.errors).toEqual([])
+            } finally {
+                await finish(page)
+            }
+        },
+        90000,
+    )
+
+    it.each([1280, 390])(
+        "allows header dragging only for desktop Settings at %ipx",
+        async (width) => {
+            const page = await browser!.page()
+            try {
+                await setup(page, width)
+                await open(page)
+                await page.waitFor(
+                    "document.getAnimations().every(animation => animation.playState !== 'running')",
+                )
+                const before = (await page.evaluate(`(() => {
+                    const surface = document.querySelector('[role=dialog]');
+                    const rect = surface.getBoundingClientRect();
+                    const header = surface.querySelector('.modal-header').getBoundingClientRect();
+                    return {left:rect.left, top:rect.top, x:header.left+header.width/2, y:header.top+header.height/2};
+                })()`)) as { left: number; top: number; x: number; y: number }
+                await page.call("Input.dispatchMouseEvent", {
+                    type: "mouseMoved",
+                    x: before.x,
+                    y: before.y,
+                })
+                await page.call("Input.dispatchMouseEvent", {
+                    type: "mousePressed",
+                    x: before.x,
+                    y: before.y,
+                    button: "left",
+                    clickCount: 1,
+                })
+                await page.call("Input.dispatchMouseEvent", {
+                    type: "mouseMoved",
+                    x: before.x + 64,
+                    y: before.y + 40,
+                    button: "left",
+                    buttons: 1,
+                })
+                await page.call("Input.dispatchMouseEvent", {
+                    type: "mouseReleased",
+                    x: before.x + 64,
+                    y: before.y + 40,
+                    button: "left",
+                    clickCount: 1,
+                })
+                expect(
+                    await page.evaluate(`(() => {
+                        const rect = document.querySelector('[role=dialog]').getBoundingClientRect();
+                        return Math.abs(rect.left - ${before.left + (width === 1280 ? 64 : 0)}) < 1 &&
+                            Math.abs(rect.top - ${before.top + (width === 1280 ? 40 : 0)}) < 1;
+                    })()`),
+                ).toBe(true)
+                expect(
+                    await page.evaluate(
+                        "!!document.querySelector('[role=dialog] .modal-header.drag-handle')",
+                    ),
+                ).toBe(width === 1280)
+                await type(page, `document.querySelector(${JSON.stringify(search)})`, "Theme")
+                await page.waitFor(`!!${fieldExpression("Theme")}`)
+                await click(page, `document.querySelector(${JSON.stringify(close)})`)
+                await page.waitFor("!document.querySelector('[role=dialog]')")
+                expect(page.errors).toEqual([])
+            } finally {
+                await finish(page)
+            }
+        },
+        90000,
+    )
 
     it.each([1280, 390])(
         "keeps Library and synthetic plugin Settings usable with native search, scrolling and Back at %ipx",
@@ -308,14 +456,25 @@ describe("Global Settings browser", () => {
                     ),
                 ).toBe(1)
                 await click(page, buttonExpression("Plugins"))
-                await page.waitFor(
-                    "document.querySelector('[role=dialog]').textContent.includes('No plugin settings are available.')",
-                )
+                await page.waitFor(`!!${buttonExpression("Reading", `${dialog} section`)}`)
+                expect(
+                    await page.evaluate(
+                        "Array.from(document.querySelectorAll('[role=dialog] nav > ul > li > button')).map(node => node.textContent.trim())",
+                    ),
+                ).toEqual(["General", "Appearance", "Library", "Plugins"])
+                await click(page, buttonExpression("Reading", `${dialog} section`))
+                await assertFocusedHeading(page, "Reading")
+                expect(
+                    await page.evaluate(
+                        "document.querySelectorAll('[role=dialog] article').length",
+                    ),
+                ).toBe(3)
+                expect(await page.evaluate(`${fieldExpression("Default zoom")}.value`)).toBe("1.5")
                 await click(page, "document.querySelector(" + JSON.stringify(close) + ")")
                 await page.waitFor(`!document.querySelector(${JSON.stringify(dialog)})`)
                 expect(
                     await page.evaluate(
-                        "document.activeElement === document.querySelector('#app-root nav[aria-label=Settings] button')",
+                        "document.activeElement === document.querySelector('[data-settings-trigger]')",
                     ),
                 ).toBe(true)
                 await synthetic(page)
@@ -495,7 +654,10 @@ describe("Global Settings browser", () => {
             await setup(page, 390)
             await synthetic(page)
             await open(page)
-            await page.evaluate(`${buttonExpression("Reading")}.focus()`)
+            await page.evaluate(`${buttonExpression("Plugins")}.focus()`)
+            await key(page, "Enter")
+            await assertFocusedHeading(page, "Plugins")
+            await page.evaluate(`${buttonExpression("Reading", `${dialog} section`)}.focus()`)
             await key(page, "Enter")
             await assertFocusedHeading(page, "Reading")
             await type(page, fieldExpression("Default zoom"), "99")
@@ -536,7 +698,7 @@ describe("Global Settings browser", () => {
                 await synthetic(page)
                 await open(page)
                 if (region === "navigation") {
-                    await click(page, buttonExpression("Reading"))
+                    await openReading(page)
                     await type(page, fieldExpression("Default zoom"), "99")
                     await key(page, "Tab")
                     await page.waitFor(
@@ -601,7 +763,7 @@ describe("Global Settings browser", () => {
             await setup(page, 1280)
             await synthetic(page)
             await open(page)
-            await click(page, buttonExpression("Reading"))
+            await openReading(page)
             await type(page, fieldExpression("Default zoom"), "99")
             await key(page, "Tab")
             await click(page, `document.querySelector(${JSON.stringify(close)})`)
@@ -687,7 +849,7 @@ describe("Global Settings browser", () => {
                 await page.waitFor("!document.querySelector('[role=dialog], [role=alertdialog]')")
                 expect(
                     await page.evaluate(
-                        "document.activeElement === document.querySelector('#app-root nav[aria-label=Settings] button')",
+                        "document.activeElement === document.querySelector('[data-settings-trigger]')",
                     ),
                 ).toBe(true)
                 expect(
@@ -785,9 +947,9 @@ describe("Global Settings browser", () => {
                     noOverflow: true,
                 })
                 expect(contrast).toMatchObject({
-                    paddingLeft: 16,
-                    paddingRight: 16,
-                    paddingBottom: 16,
+                    paddingLeft: width === 390 ? 16 : 32,
+                    paddingRight: width === 390 ? 16 : 32,
+                    paddingBottom: 24,
                 })
                 for (const expression of [
                     `document.querySelector(${JSON.stringify(close)})`,
@@ -832,13 +994,10 @@ describe("Global Settings browser", () => {
                 const beforeRussian = await page.evaluate("performance.timeOrigin")
                 await choose(page, "Language", 0)
                 await page.waitFor(
-                    `performance.timeOrigin !== ${beforeRussian} && location.pathname === '/' && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
+                    `performance.timeOrigin !== ${beforeRussian} && location.pathname === '/' && !!document.querySelector('[data-settings-trigger]')`,
                 )
                 expect(await page.evaluate("document.documentElement.lang")).toBe("ru")
-                await click(
-                    page,
-                    "document.querySelector('#app-root nav[aria-label=Настройки] button')",
-                )
+                await click(page, "document.querySelector('[data-settings-trigger]')")
                 await page.waitFor("!!document.querySelector('[role=dialog]')")
                 await click(page, buttonExpression("Основные"))
                 await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
@@ -849,12 +1008,9 @@ describe("Global Settings browser", () => {
                 const beforeReload = await page.evaluate("performance.timeOrigin")
                 await page.call("Page.reload")
                 await page.waitFor(
-                    `performance.timeOrigin !== ${beforeReload} && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
+                    `performance.timeOrigin !== ${beforeReload} && !!document.querySelector('[data-settings-trigger]')`,
                 )
-                await click(
-                    page,
-                    "document.querySelector('#app-root nav[aria-label=Настройки] button')",
-                )
+                await click(page, "document.querySelector('[data-settings-trigger]')")
                 await page.waitFor("!!document.querySelector('[role=dialog]')")
                 await click(page, buttonExpression("Основные"))
                 await page.waitFor("document.querySelector('[role=dialog] select')?.value === '0'")
@@ -862,7 +1018,7 @@ describe("Global Settings browser", () => {
                 const beforeEnglish = await page.evaluate("performance.timeOrigin")
                 await choose(page, "Язык", 1)
                 await page.waitFor(
-                    `performance.timeOrigin !== ${beforeEnglish} && location.pathname === '/en' && !!document.querySelector('#app-root nav[aria-label=Settings] button')`,
+                    `performance.timeOrigin !== ${beforeEnglish} && location.pathname === '/en' && !!document.querySelector('[data-settings-trigger]')`,
                 )
                 expect(await page.evaluate("document.documentElement.lang")).toBe("en")
                 expect(page.errors).toEqual([])
@@ -886,7 +1042,7 @@ describe("Global Settings browser", () => {
             const databaseName = (await page.evaluate(
                 "window.settingsFixture.databaseName",
             )) as string
-            await click(page, buttonExpression("Reading"))
+            await openReading(page)
             await page.waitFor(`${fieldExpression("Default zoom")}.value === '1.5'`)
             await type(page, fieldExpression("Default zoom"), "99")
             await key(page, "Tab")
@@ -925,7 +1081,7 @@ describe("Global Settings browser", () => {
             await click(page, buttonExpression("Stay", '[role="alertdialog"]'))
             await page.waitFor("!document.querySelector('[role=alertdialog]')")
             expect(await page.evaluate("performance.timeOrigin")).toBe(before)
-            await click(page, buttonExpression("Reading"))
+            await openReading(page)
             await page.waitFor(
                 "document.querySelector('[role=dialog] input[type=number]')?.value === '99'",
             )
@@ -940,7 +1096,7 @@ describe("Global Settings browser", () => {
             )
             await click(page, buttonExpression("Discard unsaved edits", '[role="alertdialog"]'))
             await page.waitFor(
-                `performance.timeOrigin !== ${before} && location.pathname === '/' && !!document.querySelector('#app-root nav[aria-label="Настройки"] button')`,
+                `performance.timeOrigin !== ${before} && location.pathname === '/' && !!document.querySelector('[data-settings-trigger]')`,
             )
             // Recreate the same real-host fixture/database after document navigation;
             // the normal Library host uses a different database and may have its own locale.
@@ -995,11 +1151,7 @@ describe("Global Settings browser", () => {
                     await page.evaluate(
                         "document.querySelector('[role=dialog] section').textContent",
                     ),
-                ).toContain(
-                    surface === "search result"
-                        ? "No matching settings"
-                        : "No plugin settings are available",
-                )
+                ).toContain(surface === "search result" ? "No matching settings" : "Reading")
                 await page.evaluate(`${buttonExpression("Back")}.focus()`)
                 await key(page, "Enter")
                 await page.waitFor(`document.activeElement === ${buttonExpression("Plugins")}`)
@@ -1009,7 +1161,7 @@ describe("Global Settings browser", () => {
                     await page.evaluate(
                         "document.querySelector('[role=dialog] section').textContent",
                     ),
-                ).toContain("No plugin settings are available")
+                ).toContain("Reading")
                 await page.evaluate("window.settingsFixture.host.enable('test.browser-options')")
                 expect(
                     await page.evaluate("document.querySelector('[role=dialog] article') === null"),

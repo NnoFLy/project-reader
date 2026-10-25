@@ -207,6 +207,8 @@ export async function activateSettings(context: ExtensionContext): Promise<void>
         id: "settings.open",
         label: () => m.settings_open(),
         englishLabel: () => m.settings_open({}, { locale: "en" }),
+        keybinding: ["ctrl+,"],
+        allowInInputs: true,
         execute: openSettings,
     })
     // Readiness must not hold activation (and therefore host disposal) behind a stuck backend.

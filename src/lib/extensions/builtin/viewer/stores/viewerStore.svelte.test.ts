@@ -1,4 +1,7 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest"
+import { flushSync } from "svelte"
 import { createExtensionStorage, MemoryStorageBackend } from "$lib/core/storage"
 import type {
     ViewerFileCapability,
@@ -6,7 +9,7 @@ import type {
     ViewerLibraryMutationCapability,
 } from "../viewerHost"
 import { ViewerStore } from "./viewerStore.svelte"
-import { ReadingStorage } from "../readingStorage"
+import { ReadingStorage, type ReadingLayout } from "../readingStorage"
 
 function reader() {
     const released: string[] = []
@@ -93,6 +96,105 @@ function reader() {
 }
 
 describe("Viewer synchronization through the Reading workspace", () => {
+    function observeRenderingSettings(store: ViewerStore) {
+        const scales: number[] = []
+        const layouts: ReadingLayout[] = []
+        const cleanup = $effect.root(() => {
+            $effect(() => {
+                scales.push(store.scale)
+            })
+            $effect(() => {
+                layouts.push(store.layout)
+            })
+        })
+        flushSync()
+        return { scales, layouts, cleanup }
+    }
+
+    it("isolates scale and layout effects from position snapshots and each other", async () => {
+        const { store, storage } = reader()
+        await store.configureStorage(storage)
+        await store.workspace.open("book")
+        const { scales, layouts, cleanup } = observeRenderingSettings(store)
+        try {
+            expect(scales).toEqual([1.5])
+            expect(layouts).toEqual(["scroll"])
+
+            const initialSnapshot = store.reading
+            store.currentPage = 2
+            flushSync()
+            expect(store.reading).not.toBe(initialSnapshot)
+            expect(store.reading.state.pageNumber).toBe(2)
+            expect(store.currentPage).toBe(2)
+            expect(scales).toEqual([1.5])
+            expect(layouts).toEqual(["scroll"])
+
+            const pageSnapshot = store.reading
+            store.scrollPosition = 0.4
+            flushSync()
+            expect(store.reading).not.toBe(pageSnapshot)
+            expect(store.reading.state.scrollPosition).toBe(0.4)
+            expect(store.scrollPosition).toBe(0.4)
+            expect(scales).toEqual([1.5])
+            expect(layouts).toEqual(["scroll"])
+
+            store.scale = 2
+            flushSync()
+            expect(scales).toEqual([1.5, 2])
+            expect(layouts).toEqual(["scroll"])
+
+            store.layout = "split"
+            flushSync()
+            expect(scales).toEqual([1.5, 2])
+            expect(layouts).toEqual(["scroll", "split"])
+        } finally {
+            cleanup()
+            await store.dispose()
+        }
+    })
+
+    it("propagates restored and newly opened document settings to rendering effects", async () => {
+        const { store, storage } = reader()
+        const reading = new ReadingStorage(storage)
+        await reading.writeCurrent("book")
+        await reading.writeDocument("book", {
+            pageNumber: 7,
+            scrollPosition: 0.35,
+            scale: 2,
+            layout: "split",
+        })
+        await reading.writeDocument("next", {
+            pageNumber: 3,
+            scrollPosition: 0.2,
+            scale: 3,
+            layout: "single",
+        })
+        const { scales, layouts, cleanup } = observeRenderingSettings(store)
+        try {
+            expect(scales).toEqual([1.5])
+            expect(layouts).toEqual(["scroll"])
+
+            await store.configureStorage(storage)
+            flushSync()
+            expect(store.reading.documentId).toBe("book")
+            expect(store.currentPage).toBe(7)
+            expect(store.scrollPosition).toBe(0.35)
+            expect(scales).toEqual([1.5, 2])
+            expect(layouts).toEqual(["scroll", "split"])
+
+            await store.workspace.open("next")
+            flushSync()
+            expect(store.reading.documentId).toBe("next")
+            expect(store.currentPage).toBe(3)
+            expect(store.scrollPosition).toBe(0.2)
+            expect(scales).toEqual([1.5, 2, 3])
+            expect(layouts).toEqual(["scroll", "split", "single"])
+        } finally {
+            cleanup()
+            await store.dispose()
+        }
+    })
+
     it("preview invalidation preserves current-source annotation access but content supersession fences it", async () => {
         const { store, storage, files, library, invalidate } = reader()
         await store.configureStorage(storage)

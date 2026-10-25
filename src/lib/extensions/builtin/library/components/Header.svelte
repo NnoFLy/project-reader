@@ -10,6 +10,7 @@
 
     import { getLanguageName } from "../state/librarySettings"
     import AppUpdateButton from "$lib/shared/ui/AppUpdateButton.svelte"
+    import SettingsIcon from "$lib/shared/icons/SettingsIcon.svelte"
     import TerminalIcon from "$lib/shared/icons/TerminalIcon.svelte"
     import { vfsStore } from "../state/libraryStore.svelte"
     import Button from "$lib/shared/ui/Button.svelte"
@@ -97,6 +98,19 @@
                     <span class="current-label">{getLanguageName(getLocale())}</span>
                 </Button>
             </div>
+
+            <Button
+                class="global-settings-trigger"
+                size="large"
+                square
+                data-settings-trigger
+                aria-label={m.settings()}
+                aria-keyshortcuts="Control+,"
+                tooltip={`${m.settings()} (Ctrl+,)`}
+                onclick={() => void executeLibraryHostCommand("settings.open")}
+            >
+                <SettingsIcon aria-hidden="true" />
+            </Button>
         </div>
     </div>
 </header>
@@ -146,6 +160,22 @@
     .header-btn-wrapper,
     .switchers-group {
         gap: var(--space-1);
+    }
+    .header-btn-wrapper :global(.global-settings-trigger) {
+        inline-size: var(--control-height-regular);
+        min-block-size: var(--control-height-regular);
+        padding: 0;
+        border: 1px solid var(--color-rule);
+        border-radius: var(--radius-sm);
+        background: var(--color-surface-raised);
+        color: var(--text-color);
+    }
+    .header-btn-wrapper :global(.global-settings-trigger:hover) {
+        background: var(--surface-hover-color);
+    }
+    .header-btn-wrapper :global(.global-settings-trigger:focus-visible) {
+        outline: 2px solid var(--focus-color);
+        outline-offset: 2px;
     }
     .current-label {
         white-space: nowrap;
