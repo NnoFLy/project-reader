@@ -1,6 +1,6 @@
 # Reader
 
-Language for the reader's reading sessions, commands, settings, and editing interactions.
+Language for the reader's reading sessions, commands, settings, files, and writing.
 
 ## Language
 
@@ -31,3 +31,45 @@ _Avoid_: Previous page
 **Note draft**:
 A passage annotation that has not been saved as a note, with its own content and highlight color until saved or discarded. Recovering a draft after reload does not make it a saved note.
 _Avoid_: Temporary note
+
+### Files and writing
+
+**Note file**:
+A standalone Markdown or Org file for writing and organization, distinct from a document-bound passage or region annotation and its Note draft.
+_Avoid_: Note when the distinction from an annotation is unclear
+
+**Managed file**:
+A file whose retained source is managed by the app rather than kept at an external location. Retention does not protect it from browser eviction or cleared local data.
+_Avoid_: Permanent copy
+
+**Linked file**:
+A file whose source remains in a user-managed external location, with access and saving dependent on availability and permission. A local recovery copy does not make it a Managed file.
+_Avoid_: Imported copy, offline copy
+
+**Local recovery**:
+Recovery of pending edits retained locally without implying they reached the file's source. It is neither backup nor a completed Source save.
+_Avoid_: Saved when only recovery is available
+
+**Source save**:
+A completed write to a file's designated source: its managed source or its linked original. Retaining edits for Local recovery alone is not a source save.
+_Avoid_: Saved locally when the source outcome is unclear
+
+**Pending-source edits**:
+Edits not yet confirmed written to the designated source, even if a local recovery copy exists.
+_Avoid_: Synced, saved
+
+**Source conflict**:
+A detected difference between a changed source and the version underlying local edits that requires explicit resolution before replacement.
+_Avoid_: Automatically merged when no merge was performed
+
+**Shared file metadata**:
+The app's folder organization, tags, and pins shared across file experiences, distinct from file content such as Markdown frontmatter or Org properties.
+_Avoid_: Notes-only notebook metadata
+
+**Complete export**:
+An export carrying files, attachments, structure, and app-only metadata needed to reconstruct the exported collection.
+_Avoid_: Raw file export
+
+**Raw file export**:
+An export of file content that does not carry app-only metadata.
+_Avoid_: Complete backup

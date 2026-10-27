@@ -3,6 +3,7 @@ tmp/
 .agents/
 PLAN.md
 .pi-subagents/
+.worktrees/
 
 # Local design verification (screenshots, measurements, and fixture reports)
 .taste-skill/
