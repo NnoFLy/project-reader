@@ -360,5 +360,20 @@
     "settings_animations_description": "Анимация интерфейса во всём приложении.",
     "settings_pdf_title_description": "Использовать встроенное название PDF при именовании импортируемых документов.",
     "settings_open": "Открыть настройки",
-    "reading_controls": "Управление чтением"
+    "reading_controls": "Управление чтением",
+    "settings_ui_font_label": "Шрифт интерфейса",
+    "settings_ui_font_description": "Шрифт меню и элементов управления. Шрифты страниц PDF не меняются.",
+    "settings_ui_font_plex_sans": "IBM Plex Sans · По умолчанию",
+    "settings_ui_font_system": "Системный без засечек",
+    "settings_ui_font_serif": "Source Serif 4 · С засечками",
+    "settings_ui_font_mono": "IBM Plex Mono · Моноширинный",
+    "settings_ui_font_custom": "Свой установленный шрифт",
+    "settings_ui_custom_font_label": "Название установленного шрифта",
+    "settings_ui_custom_font_description": "Для варианта «Свой установленный шрифт». Одно название семейства (до 80 букв, цифр, пробелов или дефисов), например Arial. Без загрузок: если шрифт не найден или имя пустое, используется IBM Plex Sans.",
+    "settings_ui_font_size_label": "Размер текста интерфейса (%)",
+    "settings_ui_font_size_description": "85–150% с шагом 5. Только текст интерфейса: содержимое и масштаб PDF не меняются.",
+    "settings_ui_font_preview_label": "Предпросмотр шрифта",
+    "settings_ui_font_preview_title": "Ваша библиотека",
+    "settings_ui_font_preview_body": "Выберите документ в библиотеке и продолжите чтение с того места, где остановились.",
+    "settings_ui_font_preview_note": "Страницы PDF не изменятся."
 }

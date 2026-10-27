@@ -5,6 +5,16 @@ import type { Disposable, SettingsRegistry, StorageNamespace } from "$lib/extens
 import { safeStorageGet, safeStorageSet } from "$lib/shared/state/safeStorage"
 import { DEFAULT_ANIMATIONS, motionPreferences } from "$lib/shared/state/motion.svelte"
 
+import {
+    interfaceFontFamily,
+    interfaceFontScale,
+    isUiFontPreset,
+    isUiFontSize,
+    isCustomFontFamily,
+    UI_FONT_SIZE,
+    type UiFontPreset,
+} from "$lib/core/settings/interfaceTypography"
+
 export type Theme = "light" | "dark" | "system"
 export type Layout = "single" | "split" | "scroll"
 export type Language = "en" | "ru"
@@ -17,6 +27,9 @@ export interface Settings {
     language: Language
     animations: boolean
     preferPdfTitle: boolean
+    uiFont: UiFontPreset
+    uiCustomFont: string
+    uiFontSize: number
 }
 
 interface Constants {
@@ -43,6 +56,9 @@ export const DEFAULT_SETTINGS: Settings = {
     language: "ru",
     animations: DEFAULT_ANIMATIONS,
     preferPdfTitle: true,
+    uiFont: "plex-sans",
+    uiCustomFont: "",
+    uiFontSize: UI_FONT_SIZE.default,
 }
 
 const BOOTSTRAP_STORAGE_KEY = "settings"
@@ -85,6 +101,9 @@ export const SETTING_IDS = {
     language: "settings.language",
     animations: "settings.animations",
     preferPdfTitle: "settings.prefer-pdf-title",
+    uiFont: "settings.ui-font",
+    uiCustomFont: "settings.ui-custom-font",
+    uiFontSize: "settings.ui-font-size",
 } as const
 
 export type SettingId = (typeof SETTING_IDS)[keyof typeof SETTING_IDS]
@@ -123,6 +142,9 @@ export function sanitizeSettings(parsed: unknown): Partial<Settings> {
     ) {
         sanitized.quality = value.quality
     }
+    if (isUiFontPreset(value.uiFont)) sanitized.uiFont = value.uiFont
+    if (isCustomFontFamily(value.uiCustomFont)) sanitized.uiCustomFont = value.uiCustomFont
+    if (isUiFontSize(value.uiFontSize)) sanitized.uiFontSize = value.uiFontSize
     return sanitized
 }
 
@@ -295,6 +317,9 @@ export class SettingsStore {
             persistBootstrapSetting("theme", value as Theme)
             this.updateDOM()
         }
+        if (key === "uiFont" || key === "uiCustomFont" || key === "uiFontSize") {
+            this.updateTypography()
+        }
         if (key === "animations") {
             motionPreferences.enabled = value as boolean
             if (cacheBootstrap) persistBootstrapSetting("animations", value as boolean)
@@ -365,8 +390,42 @@ export class SettingsStore {
         this.setFromProperty("preferPdfTitle", value)
     }
 
+    get uiFont(): Settings["uiFont"] {
+        return this.settings.uiFont
+    }
+
+    set uiFont(value: Settings["uiFont"]) {
+        this.setFromProperty("uiFont", value)
+    }
+
+    get uiCustomFont(): Settings["uiCustomFont"] {
+        return this.settings.uiCustomFont
+    }
+
+    set uiCustomFont(value: Settings["uiCustomFont"]) {
+        this.setFromProperty("uiCustomFont", value)
+    }
+
+    get uiFontSize(): Settings["uiFontSize"] {
+        return this.settings.uiFontSize
+    }
+
+    set uiFontSize(value: Settings["uiFontSize"]) {
+        this.setFromProperty("uiFontSize", value)
+    }
+
+    private updateTypography() {
+        if (!browser || this.disposed) return
+        const style = document.documentElement.style
+        const family = interfaceFontFamily(this.settings.uiFont, this.settings.uiCustomFont)
+        style.setProperty("--ui-font", family)
+        style.setProperty("--display-font", family)
+        style.setProperty("--ui-font-scale", String(interfaceFontScale(this.settings.uiFontSize)))
+    }
+
     updateDOM() {
         if (!browser || this.disposed) return
+        this.updateTypography()
         const isDark =
             this.theme === "dark" ||
             (this.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)

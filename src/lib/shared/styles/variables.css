@@ -76,22 +76,24 @@
     --space-6: 32px;
     --space-8: 48px;
 
-    /* Compact interface scale. */
-    --font-size-3xs: 0.6875rem;
-    --font-size-2xs: 0.75rem;
-    --font-size-xs: 0.75rem;
-    --font-size-sm: 0.8125rem;
-    --font-size-base: 0.875rem;
-    --font-size-md: 0.875rem;
-    --font-size-lg: 1rem;
-    --font-size-xl: 1.125rem;
-    --font-size-2xl: 1.25rem;
-    --font-size-3xl: 1.5rem;
-    --font-size-4xl: 1.75rem;
-    --font-size-5xl: 2rem;
-    --font-size-6xl: 2.25rem;
-    --font-size-7xl: 3rem;
-    --font-size-input: 1rem;
+    /* Scale interface type tokens, not the root size or PDF rendering coordinates. */
+    --ui-font-scale: 1;
+    --font-size-3xs: calc(0.6875rem * var(--ui-font-scale));
+    --font-size-2xs: calc(0.75rem * var(--ui-font-scale));
+    --font-size-xs: calc(0.75rem * var(--ui-font-scale));
+    --font-size-sm: calc(0.8125rem * var(--ui-font-scale));
+    --font-size-base: calc(0.875rem * var(--ui-font-scale));
+    --font-size-md: calc(0.875rem * var(--ui-font-scale));
+    --font-size-lg: calc(1rem * var(--ui-font-scale));
+    --font-size-xl: calc(1.125rem * var(--ui-font-scale));
+    --font-size-2xl: calc(1.25rem * var(--ui-font-scale));
+    --font-size-3xl: calc(1.5rem * var(--ui-font-scale));
+    --font-size-4xl: calc(1.75rem * var(--ui-font-scale));
+    --font-size-5xl: calc(2rem * var(--ui-font-scale));
+    --font-size-6xl: calc(2.25rem * var(--ui-font-scale));
+    --font-size-7xl: calc(3rem * var(--ui-font-scale));
+    /* Keep controls at least 1rem to avoid mobile focus zoom at smaller text sizes. */
+    --font-size-input: max(1rem, calc(1rem * var(--ui-font-scale)));
 
     --chrome-height-compact: 36px;
     --chrome-height-regular: 44px;

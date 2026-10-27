@@ -51,6 +51,7 @@ import type { PromptRequest, PromptService } from "./prompt"
 export type SettingsTheme = "light" | "dark" | "system"
 export type SettingsLayout = "single" | "split" | "scroll"
 export type SettingsLanguage = "en" | "ru"
+export type UiFontPreset = "plex-sans" | "system" | "source-serif" | "plex-mono" | "custom"
 
 export interface SettingsState {
     layout: SettingsLayout
@@ -60,6 +61,9 @@ export interface SettingsState {
     language: SettingsLanguage
     animations: boolean
     preferPdfTitle: boolean
+    uiFont: UiFontPreset
+    uiCustomFont: string
+    uiFontSize: number
 }
 
 export interface SettingsStore extends SettingsState {

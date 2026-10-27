@@ -1091,6 +1091,123 @@ it("waits for successful pending writes before closing and synchronizes clean co
     }
 })
 
+it.each(["en", "ru"] as const)(
+    "edits and previews interface typography through catalog controls in %s",
+    async (locale) => {
+        const host = createBuiltinHost({ storage: new MemoryStorageBackend() })
+        await host.start()
+        window.history.replaceState({}, "", "/")
+        setLocale(locale, { reload: false })
+        const component = mount(GlobalSettings, {
+            target: document.body,
+            props: { host, onClose: vi.fn() },
+        })
+        const sample = () => document.querySelector<HTMLElement>(".font-preview .sample")!
+        const reset = (name: string) =>
+            field(name).closest("article")!.querySelector<HTMLButtonElement>(".reset")!.click()
+        try {
+            await settle()
+            button(m.settings_appearance()).click()
+            await settle()
+            expect(document.querySelector(".font-preview")?.textContent).toContain(
+                m.settings_ui_font_preview_title(),
+            )
+            expect(document.querySelector(".font-preview")?.textContent).toContain("Aa Бб Вв")
+            const select = field(m.settings_ui_font_label())
+            for (const [index, family] of [
+                [1, "system-ui"],
+                [2, "Source Serif 4"],
+                [3, "IBM Plex Mono"],
+                [0, "IBM Plex Sans"],
+            ] as const) {
+                select.value = String(index)
+                select.dispatchEvent(new Event("change", { bubbles: true }))
+                await settle()
+                expect(sample().style.fontFamily).toContain(family)
+            }
+            select.value = "4"
+            select.dispatchEvent(new Event("change", { bubbles: true }))
+            await settle()
+            input(m.settings_ui_custom_font_label(), "Arial", false)
+            flushSync()
+            expect(sample().style.fontFamily).toContain("Arial")
+            expect(await host.settings.getValue("settings.ui-custom-font")).toBe("")
+            field(m.settings_ui_custom_font_label()).dispatchEvent(
+                new Event("change", { bubbles: true }),
+            )
+            await settle()
+            expect(await host.settings.getValue("settings.ui-custom-font")).toBe("Arial")
+            input(m.settings_ui_font_size_label(), "130", false)
+            flushSync()
+            expect(sample().style.getPropertyValue("--preview-scale")).toBe("1.3")
+            expect(document.querySelector(".preview-size")?.textContent).toBe("130%")
+            expect(await host.settings.getValue("settings.ui-font-size")).toBe(100)
+            field(m.settings_ui_font_size_label()).dispatchEvent(
+                new Event("change", { bubbles: true }),
+            )
+            await settle()
+            input(m.settings_ui_custom_font_label(), "url(https://example.com/font.woff2)")
+            await settle()
+            expect(field(m.settings_ui_custom_font_label()).getAttribute("aria-invalid")).toBe(
+                "true",
+            )
+            expect(sample().style.fontFamily).not.toContain("url")
+            expect(await host.settings.getValue("settings.ui-custom-font")).toBe("Arial")
+            input(m.settings_ui_font_size_label(), "131")
+            await settle()
+            expect(field(m.settings_ui_font_size_label()).getAttribute("aria-invalid")).toBe("true")
+            expect(await host.settings.getValue("settings.ui-font-size")).toBe(130)
+            searchFor(m.settings_ui_font_label())
+            await settle()
+            expect(document.querySelector(".font-preview")).not.toBeNull()
+            button(m.settings_clear_search()).click()
+            await settle()
+            reset(m.settings_ui_custom_font_label())
+            reset(m.settings_ui_font_size_label())
+            reset(m.settings_ui_font_label())
+            await settle()
+            expect(await host.settings.getValue("settings.ui-custom-font")).toBe("")
+            expect(await host.settings.getValue("settings.ui-font")).toBe("plex-sans")
+            expect(await host.settings.getValue("settings.ui-font-size")).toBe(100)
+            expect(sample().style.fontFamily).toContain("IBM Plex Sans")
+            expect(sample().style.getPropertyValue("--preview-scale")).toBe("1")
+        } finally {
+            await unmount(component)
+            await host.dispose()
+            setLocale("en", { reload: false })
+        }
+    },
+)
+
+it("retains failed typography drafts for retry without replacing acknowledged preferences", async () => {
+    const storage = new MemoryStorageBackend()
+    const host = await synthetic(storage)
+    setLocale("en", { reload: false })
+    const component = mount(GlobalSettings, {
+        target: document.body,
+        props: { host, onClose: vi.fn() },
+    })
+    try {
+        await settle()
+        button(m.settings_appearance()).click()
+        await settle()
+        const storageSet = vi.spyOn(storage, "set").mockRejectedValue(new Error("disk full"))
+        input(m.settings_ui_font_size_label(), "140")
+        await settle()
+        expect(field(m.settings_ui_font_size_label()).value).toBe("140")
+        expect(document.body.textContent).toContain(m.settings_not_saved())
+        expect(await host.settings.getValue("settings.ui-font-size")).toBe(100)
+        storageSet.mockRestore()
+        button(m.settings_retry()).click()
+        await settle()
+        expect(await host.settings.getValue("settings.ui-font-size")).toBe(140)
+        expect(document.body.textContent).not.toContain(m.settings_not_saved())
+    } finally {
+        await unmount(component)
+        await host.dispose()
+    }
+})
+
 it("browses real built-in categories and searches the complete catalog", async () => {
     setLocale("en", { reload: false })
     const host = createBuiltinHost({ storage: new MemoryStorageBackend() })

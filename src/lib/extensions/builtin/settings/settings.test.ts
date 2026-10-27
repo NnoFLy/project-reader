@@ -69,7 +69,7 @@ describe("builtin settings", () => {
         }
     })
 
-    it("describes all seven preferences as localized editable application preferences and new-session defaults", async () => {
+    it("describes all preferences as localized editable application preferences and new-session defaults", async () => {
         host = createBuiltinHost({ storage: new MemoryStorageBackend() })
         await host.start()
         const locale = vi.spyOn(localeRuntime, "getLocale").mockReturnValue("en")
@@ -83,6 +83,9 @@ describe("builtin settings", () => {
             ]),
         ).toEqual([
             ["settings.theme", "system", "appearance", undefined],
+            ["settings.ui-font", "plex-sans", "appearance", undefined],
+            ["settings.ui-custom-font", "", "appearance", undefined],
+            ["settings.ui-font-size", 100, "appearance", undefined],
             ["settings.layout", "scroll", "reading", undefined],
             ["settings.scale", 1.5, "reading", undefined],
             ["settings.quality", 3, "reading", undefined],
@@ -121,6 +124,16 @@ describe("builtin settings", () => {
             ["settings.language", "de"],
             ["settings.animations", "false"],
             ["settings.prefer-pdf-title", 0],
+            ["settings.ui-font", "Arial"],
+            ["settings.ui-custom-font", "Arial, serif"],
+            ["settings.ui-custom-font", "url(https://example.com/font.woff2)"],
+            ["settings.ui-custom-font", 'Arial"; color: red'],
+            ["settings.ui-custom-font", "A".repeat(81)],
+            ["settings.ui-font-size", 80],
+            ["settings.ui-font-size", 155],
+            ["settings.ui-font-size", 101],
+            ["settings.ui-font-size", Infinity],
+            ["settings.ui-font-size", "125"],
         ] as const) {
             await expect(host.settings.setValue(id, value)).rejects.toThrow()
         }
@@ -157,6 +170,40 @@ describe("builtin settings", () => {
         expect(await namespaced.get("settings.theme")).toBe("dark")
     })
 
+    it("persists interface typography through the catalog and restores and resets each preference", async () => {
+        const backend = new MemoryStorageBackend()
+        host = createBuiltinHost({ storage: backend })
+        await host.start()
+        await host.settings.setValue("settings.ui-custom-font", "Локальный Шрифт 2")
+        await host.settings.setValue("settings.ui-font", "custom")
+        await host.settings.setValue("settings.ui-font-size", 125)
+        expect(settingsStore.getSettings()).toMatchObject({
+            uiFont: "custom",
+            uiCustomFont: "Локальный Шрифт 2",
+            uiFontSize: 125,
+            scale: DEFAULT_SETTINGS.scale,
+        })
+        const namespaced = createExtensionStorage(backend, "builtin.settings")
+        expect(await namespaced.get("settings.ui-font")).toBe("custom")
+        expect(await namespaced.get("settings.ui-custom-font")).toBe("Локальный Шрифт 2")
+        expect(await namespaced.get("settings.ui-font-size")).toBe(125)
+        await host.dispose()
+        host = createBuiltinHost({ storage: backend })
+        await host.start()
+        expect(settingsStore.getSettings()).toMatchObject({
+            uiFont: "custom",
+            uiCustomFont: "Локальный Шрифт 2",
+            uiFontSize: 125,
+        })
+        await host.settings.resetValue("settings.ui-custom-font")
+        expect(settingsStore.uiCustomFont).toBe("")
+        expect(settingsStore.uiFont).toBe("custom")
+        await host.settings.resetValue("settings.ui-font")
+        await host.settings.resetValue("settings.ui-font-size")
+        expect(settingsStore.uiFont).toBe("plex-sans")
+        expect(settingsStore.uiFontSize).toBe(100)
+    })
+
     it("registers controls and persists changes in extension storage", async () => {
         const backend = new MemoryStorageBackend()
         host = createBuiltinHost({ storage: backend })
@@ -165,6 +212,9 @@ describe("builtin settings", () => {
         const registry = host.contributions.forExtension("builtin.settings").settings
         expect(registry.list().map(({ id }) => id)).toEqual([
             "settings.theme",
+            "settings.ui-font",
+            "settings.ui-custom-font",
+            "settings.ui-font-size",
             "settings.layout",
             "settings.scale",
             "settings.quality",

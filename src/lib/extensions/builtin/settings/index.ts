@@ -19,6 +19,14 @@ import {
 import { getLocalizedCurrentHref, localizedPath } from "./language/language"
 import { getLanguageName } from "./language/locale"
 
+import {
+    CUSTOM_FONT_MAX_LENGTH,
+    UI_FONT_SIZE,
+    isCustomFontFamily,
+    isUiFontPreset,
+    isUiFontSize,
+} from "$lib/core/settings/interfaceTypography"
+
 export const SETTINGS_VIEW_ID = "settings.panel"
 
 const settingDefinitions = [
@@ -38,6 +46,47 @@ const settingDefinitions = [
         defaultValue: "system" as const,
         validate: (value: unknown): value is "light" | "dark" | "system" =>
             value === "light" || value === "dark" || value === "system",
+    },
+    {
+        id: "settings.ui-font",
+        label: m.settings_ui_font_label,
+        description: m.settings_ui_font_description,
+        category: "appearance",
+        editor: {
+            kind: "choice",
+            choices: [
+                { value: "plex-sans", label: m.settings_ui_font_plex_sans },
+                { value: "system", label: m.settings_ui_font_system },
+                { value: "source-serif", label: m.settings_ui_font_serif },
+                { value: "plex-mono", label: m.settings_ui_font_mono },
+                { value: "custom", label: m.settings_ui_font_custom },
+            ],
+        },
+        defaultValue: DEFAULT_SETTINGS.uiFont,
+        validate: isUiFontPreset,
+    },
+    {
+        id: "settings.ui-custom-font",
+        label: m.settings_ui_custom_font_label,
+        description: m.settings_ui_custom_font_description,
+        category: "appearance",
+        editor: { kind: "text", maxLength: CUSTOM_FONT_MAX_LENGTH },
+        defaultValue: DEFAULT_SETTINGS.uiCustomFont,
+        validate: isCustomFontFamily,
+    },
+    {
+        id: "settings.ui-font-size",
+        label: m.settings_ui_font_size_label,
+        description: m.settings_ui_font_size_description,
+        category: "appearance",
+        editor: {
+            kind: "number",
+            min: UI_FONT_SIZE.min,
+            max: UI_FONT_SIZE.max,
+            step: UI_FONT_SIZE.step,
+        },
+        defaultValue: DEFAULT_SETTINGS.uiFontSize,
+        validate: isUiFontSize,
     },
     {
         id: "settings.layout",

@@ -32,6 +32,9 @@ describe("host settings contract", () => {
         for (const [id, category] of [
             ["settings.language", "general"],
             ["settings.theme", "appearance"],
+            ["settings.ui-font", "appearance"],
+            ["settings.ui-custom-font", "appearance"],
+            ["settings.ui-font-size", "appearance"],
             ["settings.animations", "appearance"],
             ["settings.layout", "reading"],
             ["settings.scale", "reading"],

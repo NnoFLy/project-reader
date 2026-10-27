@@ -5,6 +5,7 @@
     import Modal from "$lib/shared/ui/modal/Modal.svelte"
     import * as m from "$lib/paraglide/messages"
     import { SettingsModel, settingText } from "./settingsModel.svelte"
+    import InterfaceFontPreview from "./InterfaceFontPreview.svelte"
 
     let {
         host,
@@ -53,6 +54,11 @@
         return () => model?.dispose()
     })
     let fields = $derived(model?.fields ?? [])
+    let fontFields = $derived(
+        ["settings.ui-font", "settings.ui-custom-font", "settings.ui-font-size"].map((id) =>
+            fields.find((field) => field.entry.id === id),
+        ),
+    )
     let plugins = $derived([
         // Group existing Reading preferences here without changing their owners or durable IDs.
         ...(fields.some(({ entry }) => entry.category === "reading")
@@ -82,6 +88,12 @@
                     ? entry.category === "plugins" && location === `plugin:${entry.extensionId}`
                     : entry.category === location && location !== "plugins",
         ),
+    )
+    let showFontPreview = $derived(
+        fontFields.every((field) => field?.loaded) &&
+            (searching
+                ? visible.some((field) => fontFields.includes(field))
+                : location === "appearance"),
     )
     function select(value: string) {
         selected = value
@@ -309,6 +321,13 @@
                           ? plugins.find(([id]) => location === `plugin:${id}`)?.[1]
                           : titles[location as SettingCategory]()}
                 </h3>
+                {#if showFontPreview}
+                    <InterfaceFontPreview
+                        preset={fontFields[0]?.draft}
+                        customFamily={fontFields[1]?.draft}
+                        size={fontFields[2]?.draft}
+                    />
+                {/if}
                 {#each visible as field (field.entry)}
                     {@const entry = field.entry}
                     {@const editor = entry.editor}

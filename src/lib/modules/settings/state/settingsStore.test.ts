@@ -17,6 +17,36 @@ describe("settings reactivity", () => {
     })
 })
 
+describe("interface typography preferences", () => {
+    it("sanitizes persisted typography independently of PDF zoom", () => {
+        expect(
+            sanitizeSettings({
+                uiFont: "source-serif",
+                uiCustomFont: "Source Serif 4",
+                uiFontSize: 150,
+                scale: 2,
+            }),
+        ).toEqual({
+            uiFont: "source-serif",
+            uiCustomFont: "Source Serif 4",
+            uiFontSize: 150,
+            scale: 2,
+        })
+        expect(
+            sanitizeSettings({
+                uiFont: "unknown",
+                uiCustomFont: "Arial; color: red",
+                uiFontSize: 101,
+            }),
+        ).toEqual({})
+        expect(sanitizeSettings({ uiFontSize: NaN })).toEqual({})
+        expect(sanitizeSettings({ uiFontSize: 85, uiCustomFont: "" })).toEqual({
+            uiFontSize: 85,
+            uiCustomFont: "",
+        })
+    })
+})
+
 describe("PDF title preference", () => {
     it("defaults to enabled", () => {
         expect(DEFAULT_SETTINGS.preferPdfTitle).toBe(true)

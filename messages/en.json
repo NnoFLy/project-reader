@@ -360,5 +360,20 @@
     "settings_animations_description": "Enable interface animations throughout the application.",
     "settings_pdf_title_description": "Prefer the embedded PDF title when naming imported documents.",
     "settings_open": "Open Settings",
-    "reading_controls": "Reading controls"
+    "reading_controls": "Reading controls",
+    "settings_ui_font_label": "Interface font",
+    "settings_ui_font_description": "Choose a typeface for menus and controls. PDF pages keep their original fonts.",
+    "settings_ui_font_plex_sans": "IBM Plex Sans · Default",
+    "settings_ui_font_system": "System sans",
+    "settings_ui_font_serif": "Source Serif 4 · Serif",
+    "settings_ui_font_mono": "IBM Plex Mono · Monospace",
+    "settings_ui_font_custom": "Custom installed font",
+    "settings_ui_custom_font_label": "Installed font name",
+    "settings_ui_custom_font_description": "Used with Custom installed font. Enter one family name (up to 80 letters, digits, spaces or hyphens), such as Arial. No download is made; missing or empty names fall back to IBM Plex Sans.",
+    "settings_ui_font_size_label": "Interface text size (%)",
+    "settings_ui_font_size_description": "85–150%, in steps of 5. Changes interface text only, not PDF content or zoom.",
+    "settings_ui_font_preview_label": "Font preview",
+    "settings_ui_font_preview_title": "Your library",
+    "settings_ui_font_preview_body": "Browse your library, open a document and pick up where you left off.",
+    "settings_ui_font_preview_note": "PDF pages stay unchanged."
 }

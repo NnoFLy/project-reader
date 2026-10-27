@@ -7,6 +7,9 @@ export function settingsPlacement(extensionId: string, settingId: string): Setti
         case "settings.language":
             return "general"
         case "settings.theme":
+        case "settings.ui-font":
+        case "settings.ui-custom-font":
+        case "settings.ui-font-size":
         case "settings.animations":
             return "appearance"
         case "settings.layout":
