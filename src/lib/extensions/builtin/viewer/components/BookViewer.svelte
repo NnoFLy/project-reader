@@ -528,9 +528,12 @@
         }
     })
 
+    // Position updates replace the raw snapshot; only identity changes should reload notes.
+    const readingDocumentId = $derived(viewerStore.reading.documentId)
+
     // Hydrate editing state by stable identity, even when no resource can be loaded.
     $effect(() => {
-        const documentId = viewerStore.reading.documentId
+        const documentId = readingDocumentId
         untrack(() => {
             if (documentId) void notesStore.loadNotesForBook(documentId)
             else notesStore.clear()

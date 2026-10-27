@@ -265,11 +265,13 @@
     })
 
     $effect(() => {
-        if (pdf && layoutMode === "scroll") {
+        const targetPdf = pdf
+        const mode = layoutMode
+        if (targetPdf && mode === "scroll") {
             const controller = new AbortController()
             const loadDimensions = async () => {
                 try {
-                    const dims = await getViewerPageDimensions(pdf, controller.signal)
+                    const dims = await getViewerPageDimensions(targetPdf, controller.signal)
                     if (!controller.signal.aborted) pageDimensions = [...dims]
                 } catch (err) {
                     if (!controller.signal.aborted) {
@@ -283,7 +285,9 @@
                     }
                 }
             }
-            void loadDimensions()
+            // Adapter ownership checks may read reactive Library metadata synchronously.
+            // Only the document and layout should invalidate the dimension load.
+            void untrack(loadDimensions)
             return () => {
                 controller.abort()
                 pageDimensions = []

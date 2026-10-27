@@ -1277,6 +1277,101 @@ describe("Reading workspace browser persistence", () => {
         }
     }, 90000)
 
+    it("keeps annotations stable during native scrolling and loads them on document switches", async () => {
+        const page = await browser!.page()
+        try {
+            await page.call("Emulation.setDeviceMetricsOverride", {
+                width: 1280,
+                height: 800,
+                deviceScaleFactor: 1,
+                mobile: false,
+            })
+            await page.call("Page.navigate", { url: `${origin}/en` })
+            await bind(page)
+            const ids = (await page.evaluate(`(async () => {
+                const results = await window.library.importFiles(['scroll-notes-a.pdf', 'scroll-notes-b.pdf'].map(name => ({name, source: new File([${JSON.stringify(pdf)}], name, {type: 'application/pdf'})})), null);
+                await window.command('viewer.open', {bookId: results[0].id});
+                await window.command('settings.layout', {value: 'scroll'});
+                await window.command('settings.zoom.out', {value: 1.5});
+                return results.map(result => result.id);
+            })()`)) as string[]
+            await page.waitFor(`window.reader.totalPages === 8
+                && document.querySelector('.scroll-page[data-page="1"] .page-container')?.getBoundingClientRect().height === 600
+                && !!document.querySelector('.scroll-page[data-page="1"] .textLayer span')`)
+            await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+                window.annotationLoads = [];
+                window.annotationRangeBuilds = 0;
+                window.initialNotes = window.notes.notes;
+                const load = window.notes.loadNotesForBook.bind(window.notes);
+                window.notes.loadNotesForBook = id => {
+                    window.annotationLoads.push(id);
+                    return load(id);
+                };
+                const register = window.notes.registerPageRanges.bind(window.notes);
+                window.notes.registerPageRanges = (page, ranges) => {
+                    if (page === 1) window.annotationRangeBuilds++;
+                    return register(page, ranges);
+                };
+                window.nativeScrollEvents = 0;
+                document.querySelector('.scroll-mode .canvas-frame').addEventListener('scroll', event => {
+                    if (event.isTrusted) window.nativeScrollEvents++;
+                });
+                resolve(true);
+            })))`)
+            // Stay on the same mounted page, so virtual page entry cannot explain range work.
+            for (const top of [30, 60, 90]) {
+                await page.evaluate(
+                    `document.querySelector('.scroll-mode .canvas-frame').scrollTo({top: ${top}, behavior: 'instant'})`,
+                )
+                await page.waitFor(`window.reader.currentPage === 1
+                    && Math.abs(window.reader.scrollPosition - ${top} / document.querySelector('.scroll-page[data-page="1"] .page-container').getBoundingClientRect().height) < 0.001`)
+                await page.evaluate(
+                    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`,
+                )
+            }
+            expect(await page.evaluate("window.nativeScrollEvents")).toBeGreaterThanOrEqual(3)
+            expect(await page.evaluate("window.annotationLoads")).toEqual([])
+            expect(await page.evaluate("window.notes.notes === window.initialNotes")).toBe(true)
+            expect(await page.evaluate("window.annotationRangeBuilds")).toBe(0)
+
+            const afterMetadata = await page.evaluate(`(async () => {
+                const {PagedPdfDocument} = await import('/src/lib/extensions/builtin/pdf/pdf-document.ts');
+                const getPage = PagedPdfDocument.prototype.getPage;
+                const dimensionReads = [];
+                PagedPdfDocument.prototype.getPage = function(page) {
+                    dimensionReads.push(page);
+                    return getPage.call(this, page);
+                };
+                const text = document.querySelector('.scroll-page[data-page="1"] .textLayer span');
+                try {
+                    await window.reader.updateBook({...window.reader.getCurrentBook()});
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    return {
+                        dimensionReads,
+                        scrollTop: document.querySelector('.scroll-mode .canvas-frame').scrollTop,
+                        sameText: text === document.querySelector('.scroll-page[data-page="1"] .textLayer span'),
+                    };
+                } finally {
+                    PagedPdfDocument.prototype.getPage = getPage;
+                }
+            })()`)
+            expect(afterMetadata).toEqual({ dimensionReads: [], scrollTop: 90, sameText: true })
+            expect(await page.evaluate("window.annotationLoads")).toEqual([])
+            expect(await page.evaluate("window.annotationRangeBuilds")).toBe(0)
+
+            await page.evaluate(
+                `window.command('viewer.open', {bookId: ${JSON.stringify(ids[1])}})`,
+            )
+            await page.waitFor(`window.reader.workspace.snapshot.documentId === ${JSON.stringify(ids[1])}
+                && window.reader.totalPages === 8
+                && window.annotationLoads.includes(${JSON.stringify(ids[1])})`)
+            expect(await page.evaluate("window.annotationLoads")).toEqual([ids[1]])
+            expect(await page.evaluate("window.notes.notes === window.initialNotes")).toBe(false)
+        } finally {
+            await browser!.closeTarget(page.targetId)
+        }
+    }, 90000)
+
     it("restores a negative page-relative position produced by native viewport scrolling after reload", async () => {
         const page = await browser!.page()
         try {
