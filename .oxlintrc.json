@@ -140,5 +140,5 @@
         "builtin": true
     },
     "globals": {},
-    "ignorePatterns": ["src/lib/paraglide/**"]
+    "ignorePatterns": ["src/lib/paraglide/**", ".worktrees/**"]
 }

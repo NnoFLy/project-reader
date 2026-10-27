@@ -5,5 +5,5 @@
     "semi": false,
     "printWidth": 100,
     "svelte": true,
-    "ignorePatterns": ["src/lib/paraglide/**"]
+    "ignorePatterns": ["src/lib/paraglide/**", ".worktrees/**"]
 }
